@@ -15,7 +15,7 @@ func init() {
 			},
 		},
 		Handle: protocols.Handle{
-			NewDialer:     NewSocks4Dialer,
+			NewDialerFunc: NewSocks4Dialer,
 			NewRunnerFunc: NewSocks4Runner,
 		},
 	})

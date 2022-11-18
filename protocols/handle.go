@@ -12,7 +12,7 @@ type Handle struct {
 	ListenConfig        ListenConfig
 	ListenConfigWrapper ListenConfigWrapper
 
-	NewDialer     NewDialerFunc
+	NewDialerFunc NewDialerFunc
 	NewRunnerFunc NewRunnerFunc
 }
 
@@ -73,8 +73,8 @@ func NewDialer(dialer Dialer, uri string) (Dialer, DialConn, error) {
 			return dialer.DialContext(ctx, ep.Network, ep.Address)
 		})
 	}
-	if handler.NewDialer != nil {
-		dialer, err = handler.NewDialer(dialer)
+	if handler.NewDialerFunc != nil {
+		dialer, err = handler.NewDialerFunc(dialer)
 		if err != nil {
 			return nil, nil, err
 		}

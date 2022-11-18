@@ -40,7 +40,7 @@ func (r *runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.Listener = r.listener
+	r.listener = httpproxy.NewListenerCompatibilityReadDeadline(r.listener)
 	return s.Server.Serve(r.listener)
 }
 

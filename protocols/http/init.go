@@ -16,7 +16,7 @@ func init() {
 			},
 		},
 		Handle: protocols.Handle{
-			NewDialer:     NewHttpDialer,
+			NewDialerFunc: NewHttpDialer,
 			NewRunnerFunc: NewHttpRunner,
 		},
 	})

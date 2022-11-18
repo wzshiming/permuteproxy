@@ -9,18 +9,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wzshiming/permuteproxy/internal/netutils"
-	"github.com/wzshiming/permuteproxy/protocols"
 	_ "github.com/wzshiming/permuteproxy/protocols/http"
 	_ "github.com/wzshiming/permuteproxy/protocols/local"
 	_ "github.com/wzshiming/permuteproxy/protocols/snappy"
 	_ "github.com/wzshiming/permuteproxy/protocols/socks4"
 	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
+	_ "github.com/wzshiming/permuteproxy/protocols/ssh"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/protocols"
 )
 
 func TestTCPListenAndDial(t *testing.T) {
 	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
-	uri := "tcp://127.0.0.1:45656"
+	uri := "tcp://127.0.0.1:45678"
 	listenConn, _, err := protocols.NewListenConfig(nil, uri)
 	if err != nil {
 		t.Fatal(err)
@@ -75,24 +77,29 @@ func TestTCPListenAndDial(t *testing.T) {
 
 func TestProxy(t *testing.T) {
 	testdata := []string{
-		"http://127.0.0.1:45656",
+		"http://127.0.0.1:45678",
 		"http+unix://./test.socs",
-		"socks5://127.0.0.1:45656",
+		"socks5://127.0.0.1:45678",
 		"socks5+unix://./test.socs",
-		"socks4://127.0.0.1:45656",
+		"socks4://127.0.0.1:45678",
 		"socks4+unix://./test.socs",
+		"ssh://127.0.0.1:45678",
+		"ssh+unix://./test.socs",
 
-		"http+snappy://127.0.0.1:45656",
+		"http+snappy://127.0.0.1:45678",
 		"http+snappy+unix://./test.socs",
-		"socks5+snappy://127.0.0.1:45656",
+		"socks5+snappy://127.0.0.1:45678",
 		"socks5+snappy+unix://./test.socs",
-		"socks4+snappy://127.0.0.1:45656",
+		"socks4+snappy://127.0.0.1:45678",
 		"socks4+snappy+unix://./test.socs",
+		"ssh+snappy://127.0.0.1:45678",
+		"ssh+snappy+unix://./test.socs",
 	}
 	for _, uri := range testdata {
 		t.Run(uri, func(t *testing.T) {
-			ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
-			_, runner, err := protocols.NewListenConfig(nil, uri)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			t.Cleanup(cancel)
+			_, runner, err := protocols.NewListenConfig(nil, "http+snappy://127.0.0.1:40002")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,10 +109,12 @@ func TestProxy(t *testing.T) {
 					t.Fatal(err)
 				}
 			}()
-			defer runner.Close()
-			time.Sleep(time.Second / 10)
+			t.Cleanup(func() {
+				runner.Close()
+			})
+			time.Sleep(time.Second)
 
-			dialer, _, err := protocols.NewDialer(nil, uri)
+			dialer, _, err := protocols.NewDialer(nil, "http+snappy://127.0.0.1:40001")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +123,9 @@ func TestProxy(t *testing.T) {
 			testserver := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 				rw.Write([]byte(want))
 			}))
-			defer testserver.Close()
+			t.Cleanup(func() {
+				testserver.Close()
+			})
 			cli := testserver.Client()
 			cli.Transport = &http.Transport{
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -126,7 +137,9 @@ func TestProxy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-
+			t.Cleanup(func() {
+				resp.Body.Close()
+			})
 			body, _ := io.ReadAll(resp.Body)
 			if want != string(body) {
 				t.Fatalf("got %q, want %q", body, want)

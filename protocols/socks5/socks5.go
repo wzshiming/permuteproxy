@@ -8,7 +8,7 @@ import (
 	"github.com/wzshiming/socks5"
 )
 
-// NewSocks5Dialer http proxy dialer
+// NewSocks5Dialer socks5 proxy dialer
 func NewSocks5Dialer(d protocols.Dialer) (protocols.Dialer, error) {
 	return &dialer{d}, nil
 }

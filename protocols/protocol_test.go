@@ -439,8 +439,8 @@ func TestNewProtocolFrom(t *testing.T) {
 						Scheme: "ssh",
 						Metadata: Metadata{
 							"username":        "username",
-							"authorized_data": "",
 							"identity_data":   "",
+							"authorized_data": "",
 						},
 					},
 				},
