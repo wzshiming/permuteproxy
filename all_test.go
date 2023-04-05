@@ -3,12 +3,15 @@ package permuteproxy_test
 import (
 	"context"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/local"
 	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"
@@ -79,6 +82,8 @@ func TestTCPListenAndDial(t *testing.T) {
 
 func TestProxy(t *testing.T) {
 	testdata := []string{
+		"any://127.0.0.1:45678",
+		"any+unix://./test.socks",
 		"http://127.0.0.1:45678",
 		"http+unix://./test.socks",
 		"socks5://127.0.0.1:45678",
@@ -89,6 +94,7 @@ func TestProxy(t *testing.T) {
 		"ssh+unix://./test.socks",
 		"ss://127.0.0.1:45678",
 		"ss+unix://./test.socks",
+		"any+snappy://127.0.0.1:45678",
 		"http+snappy://127.0.0.1:45678",
 		"http+snappy+unix://./test.socks",
 		"socks5+snappy://127.0.0.1:45678",
@@ -121,7 +127,17 @@ func TestProxy(t *testing.T) {
 			})
 			time.Sleep(1 * time.Second)
 
-			dialer, _, err := permuteproxy.NewDialer(nil, uri)
+			cliURI := uri
+			if strings.HasPrefix(cliURI, "any") {
+				protos := []string{
+					"socks5",
+					"socks4",
+					"ssh",
+					"http",
+				}
+				cliURI = protos[rand.Intn(len(protos))] + uri[3:]
+			}
+			dialer, _, err := permuteproxy.NewDialer(nil, cliURI)
 			if err != nil {
 				t.Fatal(err)
 			}
