@@ -4,7 +4,6 @@ go 1.18
 
 require (
 	github.com/Microsoft/go-winio v0.6.0
-	github.com/go-logr/logr v1.2.4
 	github.com/golang/snappy v0.0.4
 	github.com/google/go-cmp v0.5.9
 	github.com/wzshiming/hostmatcher v0.0.1
