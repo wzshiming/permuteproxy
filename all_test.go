@@ -12,6 +12,7 @@ import (
 	"time"
 
 	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/command"
 	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/local"
 	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"
@@ -82,6 +83,10 @@ func TestTCPListenAndDial(t *testing.T) {
 
 func TestProxy(t *testing.T) {
 	testdata := []string{
+		"socks5+cmd-nc://127.0.0.1:45670",
+		"socks5+cmd-nc://u:p@127.0.0.1:45671",
+		"socks5+cmd-nc-unix://./test1.socks",
+		"socks5+cmd-nc-unix://u:p@./test2.socks",
 		"any://127.0.0.1:45678",
 		"any://u:p@127.0.0.1:45678",
 		"any+unix://./test.socks",
@@ -141,11 +146,14 @@ func TestProxy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			done := make(chan struct{})
 			go func() {
 				err := runner.Run(ctx)
 				if err != nil && !netutils.IsClosedConnError(err) {
-					t.Fatal(err)
+					t.Fatal("runner.Run: ", err)
 				}
+				done <- struct{}{}
 			}()
 			t.Cleanup(func() {
 				runner.Close()
@@ -191,6 +199,13 @@ func TestProxy(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			if want != string(body) {
 				t.Fatalf("got %q, want %q", body, want)
+			}
+
+			runner.Close()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("expected runner to exit after 10 seconds but it didn't")
 			}
 		})
 	}

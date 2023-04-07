@@ -91,17 +91,21 @@ func (d ListenConnFunc) Listen(ctx context.Context) (Listener, error) {
 	return d(ctx)
 }
 
+// NewRunner creates a new Runner.
 type NewRunner interface {
 	New(listener Listener, metadata Metadata) (Runner, error)
 }
 
+// Runner is a runner.
 type Runner interface {
 	Run(ctx context.Context) error
 	Close() error
 }
 
+// NewRunnerFunc type is an adapter for NewRunner.
 type NewRunnerFunc func(listener Listener, metadata Metadata) (Runner, error)
 
+// New calls n(listener, metadata)
 func (n NewRunnerFunc) New(listener Listener, metadata Metadata) (Runner, error) {
 	return n(listener, metadata)
 }
