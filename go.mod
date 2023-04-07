@@ -9,7 +9,7 @@ require (
 	github.com/wzshiming/anyproxy v0.7.12
 	github.com/wzshiming/hostmatcher v0.0.1
 	github.com/wzshiming/httpproxy v0.5.4
-	github.com/wzshiming/shadowsocks v0.3.2
+	github.com/wzshiming/shadowsocks v0.4.0
 	github.com/wzshiming/socks4 v0.3.2
 	github.com/wzshiming/socks5 v0.4.2
 	github.com/wzshiming/sshd v0.2.2
