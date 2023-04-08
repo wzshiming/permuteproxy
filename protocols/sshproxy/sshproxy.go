@@ -8,10 +8,11 @@ import (
 	_ "github.com/wzshiming/sshd/streamlocalforward"
 	_ "github.com/wzshiming/sshd/tcpforward"
 
+	"github.com/wzshiming/sshproxy"
+
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/protocols"
-	"github.com/wzshiming/sshproxy"
 )
 
 const (
@@ -20,13 +21,19 @@ const (
 )
 
 // NewSSHProxyDialer ssh proxy dialer
-func NewSSHProxyDialer(d permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+func NewSSHProxyDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	u := protocols.EncodeURLWithMetadata("ssh", "localhost", metadata, KeyUsername, KeyPassword)
 	dialer, err := sshproxy.NewDialer(u)
 	if err != nil {
 		return nil, err
 	}
-	dialer.ProxyDial = d.DialContext
+
+	dialer.ProxyDial = proxy.Dialer.DialContext
 	return dialer, nil
 }
 

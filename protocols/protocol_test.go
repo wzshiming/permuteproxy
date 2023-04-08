@@ -1,8 +1,20 @@
-package protocols
+package protocols_test
 
 import (
 	"net/url"
 	"testing"
+
+	"github.com/wzshiming/permuteproxy/protocols"
+	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/command"
+	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/local"
+	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"
+	_ "github.com/wzshiming/permuteproxy/protocols/snappy"
+	_ "github.com/wzshiming/permuteproxy/protocols/socks4"
+	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
+	_ "github.com/wzshiming/permuteproxy/protocols/sshproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -10,13 +22,13 @@ import (
 func TestProtocol_URI(t *testing.T) {
 	tests := []struct {
 		name     string
-		protocol *Protocol
+		protocol *protocols.Protocol
 		want     *url.URL
 	}{
 		{
 			name: "tcp",
-			protocol: &Protocol{
-				Endpoint: Endpoint{
+			protocol: &protocols.Protocol{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -28,13 +40,13 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "http",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -46,17 +58,17 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "http with username and password",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username": []string{"username"},
 							"password": []string{"password"},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -69,20 +81,20 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "https",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 					{
 						Scheme: "tls",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"tls_key_file":  []string{""},
 							"tls_cert_file": []string{""},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -98,13 +110,13 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "http with unix",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "unix",
 					Address: "/tmp/test.sock",
 				},
@@ -116,13 +128,13 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "http with local unix",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "unix",
 					Address: "./test.sock",
 				},
@@ -133,27 +145,9 @@ func TestProtocol_URI(t *testing.T) {
 			},
 		},
 		{
-			name: "http with command",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
-					{
-						Scheme: "http",
-					},
-				},
-				Endpoint: Endpoint{
-					Network: "command",
-					Address: "nc %h %p",
-				},
-			},
-			want: &url.URL{
-				Opaque: "nc %h %p",
-				Scheme: "http+command",
-			},
-		},
-		{
 			name: "http with quic",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
@@ -161,7 +155,7 @@ func TestProtocol_URI(t *testing.T) {
 						Scheme: "quic",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "udp",
 					Address: "127.0.0.1:8080",
 				},
@@ -173,16 +167,16 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "ssh with username",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "ssh",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username": []string{"username"},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:22",
 				},
@@ -195,18 +189,18 @@ func TestProtocol_URI(t *testing.T) {
 		},
 		{
 			name: "ssh with username and key",
-			protocol: &Protocol{
-				Wrappers: []Wrapper{
+			protocol: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "ssh",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username":        []string{"username"},
 							"authorized_data": []string{""},
 							"identity_data":   []string{""},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:22",
 				},
@@ -239,7 +233,7 @@ func TestNewProtocolFrom(t *testing.T) {
 	tests := []struct {
 		name    string
 		uri     *url.URL
-		want    *Protocol
+		want    *protocols.Protocol
 		wantErr bool
 	}{
 		{
@@ -248,8 +242,8 @@ func TestNewProtocolFrom(t *testing.T) {
 				Scheme: "tcp",
 				Host:   "127.0.0.1:8080",
 			},
-			want: &Protocol{
-				Endpoint: Endpoint{
+			want: &protocols.Protocol{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -261,13 +255,13 @@ func TestNewProtocolFrom(t *testing.T) {
 				Host:   "127.0.0.1:8080",
 				Scheme: "http",
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -280,17 +274,17 @@ func TestNewProtocolFrom(t *testing.T) {
 				Host:   "127.0.0.1:8080",
 				User:   url.UserPassword("username", "password"),
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username": []string{"username"},
 							"password": []string{"password"},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -306,20 +300,20 @@ func TestNewProtocolFrom(t *testing.T) {
 					"tls_key_file":  []string{""},
 				}.Encode(),
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 					{
 						Scheme: "tls",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"tls_cert_file": []string{""},
 							"tls_key_file":  []string{""},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:8080",
 				},
@@ -331,13 +325,13 @@ func TestNewProtocolFrom(t *testing.T) {
 				Path:   "/tmp/test.sock",
 				Scheme: "http+unix",
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "unix",
 					Address: "/tmp/test.sock",
 				},
@@ -349,54 +343,15 @@ func TestNewProtocolFrom(t *testing.T) {
 				Path:   "./test.sock",
 				Scheme: "http+unix",
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "http",
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "unix",
 					Address: "./test.sock",
-				},
-			},
-		},
-		{
-			name: "http with command",
-			uri: &url.URL{
-				Opaque: "nc %h %p",
-				Scheme: "http+command",
-			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
-					{
-						Scheme: "http",
-					},
-				},
-				Endpoint: Endpoint{
-					Network: "command",
-					Address: "nc %h %p",
-				},
-			},
-		},
-		{
-			name: "http with quic",
-			uri: &url.URL{
-				Host:   "127.0.0.1:8080",
-				Scheme: "http+quic",
-			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
-					{
-						Scheme: "http",
-					},
-					{
-						Scheme: "quic",
-					},
-				},
-				Endpoint: Endpoint{
-					Network: "udp",
-					Address: "127.0.0.1:8080",
 				},
 			},
 		},
@@ -407,16 +362,16 @@ func TestNewProtocolFrom(t *testing.T) {
 				Scheme: "ssh",
 				User:   url.User("username"),
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "ssh",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username": []string{"username"},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:22",
 				},
@@ -433,18 +388,18 @@ func TestNewProtocolFrom(t *testing.T) {
 					"identity_data":   {""},
 				}.Encode(),
 			},
-			want: &Protocol{
-				Wrappers: []Wrapper{
+			want: &protocols.Protocol{
+				Wrappers: []protocols.Wrapper{
 					{
 						Scheme: "ssh",
-						Metadata: Metadata{
+						Metadata: protocols.Metadata{
 							"username":        []string{"username"},
 							"identity_data":   []string{""},
 							"authorized_data": []string{""},
 						},
 					},
 				},
-				Endpoint: Endpoint{
+				Endpoint: protocols.Endpoint{
 					Network: "tcp",
 					Address: "127.0.0.1:22",
 				},
@@ -453,7 +408,7 @@ func TestNewProtocolFrom(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewProtocolFrom(tt.uri)
+			got, err := protocols.NewProtocolFrom(tt.uri)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewProtocolFrom() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -536,7 +491,7 @@ func TestConsistency(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NewProtocol(tt.rawURI)
+			got, err := protocols.NewProtocol(tt.rawURI)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewProtocol() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -549,105 +504,3 @@ func TestConsistency(t *testing.T) {
 		})
 	}
 }
-
-func init() {
-	for k, v := range aliasRaw {
-		RegisterReverseAlias(k, v)
-		RegisterAlias(k, v)
-	}
-	for scheme, raw := range schemeInfoDataRaw {
-		RegisterScheme(scheme, raw)
-	}
-}
-
-var (
-	aliasRaw = map[string]string{
-		"http+tls": "https",
-	}
-	schemeInfoDataRaw = map[string]SchemeInfo{
-		"invalid": {
-			Kind: KindNone,
-			Base: KindProxy,
-		},
-		"command": {
-			Kind:        KindStream,
-			Base:        KindNone,
-			AddressKind: AddressOpaque,
-		},
-		"tcp": {
-			Kind:        KindStream,
-			Base:        KindNone,
-			AddressKind: AddressHost,
-		},
-		"udp": {
-			Kind:        KindPacket,
-			Base:        KindNone,
-			AddressKind: AddressHost,
-		},
-		"unix": {
-			Kind:        KindStream,
-			Base:        KindNone,
-			AddressKind: AddressPath,
-		},
-		"unixgram": {
-			Kind:        KindPacket,
-			Base:        KindNone,
-			AddressKind: AddressPath,
-		},
-		"snappy": {
-			Kind: KindStream,
-			Base: KindStream,
-		},
-		"quic": {
-			Kind: KindStream,
-			Base: KindPacket,
-			MetaFields: []string{
-				"tls_key_file",
-				"tls_cert_file",
-			},
-		},
-		"tls": {
-			Kind: KindStream,
-			Base: KindStream,
-			MetaFields: []string{
-				"tls_key_file",
-				"tls_cert_file",
-			},
-		},
-		"socks5": {
-			Kind:          KindProxy,
-			Base:          KindStream,
-			UsernameField: "username",
-			PasswordField: "password",
-		},
-		"socks4": {
-			Kind:          KindProxy,
-			Base:          KindStream,
-			UsernameField: "username",
-		},
-		"http": {
-			Kind:          KindProxy,
-			Base:          KindStream,
-			UsernameField: "username",
-			PasswordField: "password",
-		},
-		"shadowsocks": {
-			Kind:          KindProxy,
-			Base:          KindStream,
-			UsernameField: "username",
-			PasswordField: "password",
-		},
-		"ssh": {
-			Kind:          KindProxy,
-			Base:          KindStream,
-			UsernameField: "username",
-			PasswordField: "password",
-			MetaFields: []string{
-				"authenticate",
-				"hostkey_data",
-				"authorized_data",
-				"identity_data",
-			},
-		},
-	}
-)

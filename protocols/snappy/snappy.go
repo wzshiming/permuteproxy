@@ -5,15 +5,24 @@ import (
 	"net"
 
 	"github.com/golang/snappy"
+
 	"github.com/wzshiming/permuteproxy"
 )
 
-func NewSnappyDialer(dialer permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	return snappyDialer{dialer}, nil
+func NewSnappyDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+	return snappyDialer{proxy.Dialer}, nil
 }
 
-func NewSnappyListenConfig(listenConfig permuteproxy.ListenConfig, metadata permuteproxy.Metadata) (permuteproxy.ListenConfig, error) {
-	return snappyListenConfig{listenConfig}, nil
+func NewSnappyListenConfig(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.ListenConfig, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.ListenConfig == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+	return snappyListenConfig{proxy.ListenConfig}, nil
 }
 
 type snappyDialer struct {

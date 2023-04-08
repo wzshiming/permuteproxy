@@ -9,8 +9,9 @@ func init() {
 	metas := map[string]permuteproxy.Define{
 		"cmd": {
 			Handler: permuteproxy.Handler{
-				Dialer:       Command,
-				ListenConfig: Command,
+				Dialer:        Command,
+				ListenConfig:  Command,
+				CommandDialer: Command.CommandDialer,
 			},
 			SchemeInfo: protocols.SchemeInfo{
 				Kind:        protocols.KindStream,

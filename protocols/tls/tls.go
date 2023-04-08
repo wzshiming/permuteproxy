@@ -9,20 +9,31 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/tlsutils"
 )
 
-func NewTLSDialer(dialer permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+func NewTLSDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	tlsConfig, err := tlsutils.NewClient(metadata)
 	if err != nil {
 		return nil, err
 	}
-	return tlsDialer{tlsConfig, dialer}, nil
+
+	return tlsDialer{tlsConfig, proxy.Dialer}, nil
 }
 
-func NewTLSListenConfig(listenConfig permuteproxy.ListenConfig, metadata permuteproxy.Metadata) (permuteproxy.ListenConfig, error) {
+func NewTLSListenConfig(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.ListenConfig, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.ListenConfig == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	tlsConfig, err := tlsutils.NewServer(metadata)
 	if err != nil {
 		return nil, err
 	}
-	return tlsListenConfig{tlsConfig, listenConfig}, nil
+	return tlsListenConfig{tlsConfig, proxy.ListenConfig}, nil
 }
 
 type tlsDialer struct {

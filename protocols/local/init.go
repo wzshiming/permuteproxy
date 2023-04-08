@@ -20,8 +20,7 @@ func init() {
 		},
 		"udp": {
 			Handler: permuteproxy.Handler{
-				Dialer:       LOCAL,
-				ListenConfig: LOCAL,
+				ListenPacketConfig: LOCAL,
 			},
 			SchemeInfo: protocols.SchemeInfo{
 				Kind:        protocols.KindPacket,
@@ -42,8 +41,7 @@ func init() {
 		},
 		"unixgram": {
 			Handler: permuteproxy.Handler{
-				Dialer:       LOCAL,
-				ListenConfig: LOCAL,
+				ListenPacketConfig: LOCAL,
 			},
 			SchemeInfo: protocols.SchemeInfo{
 				Kind:        protocols.KindPacket,

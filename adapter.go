@@ -7,10 +7,11 @@ import (
 )
 
 type (
-	Listener = net.Listener
-	Conn     = net.Conn
-	Addr     = net.Addr
-	Metadata = url.Values
+	Listener   = net.Listener
+	PacketConn = net.PacketConn
+	Conn       = net.Conn
+	Addr       = net.Addr
+	Metadata   = url.Values
 )
 
 // ListenConfig contains options for listening to an address.
@@ -28,15 +29,41 @@ func (l ListenConfigFunc) Listen(ctx context.Context, network, address string) (
 
 // ListenConfigWrapper wraps a ListenConfig with additional options.
 type ListenConfigWrapper interface {
-	ListenConfigWrap(listenConfig ListenConfig, metadata Metadata) (ListenConfig, error)
+	ListenConfigWrap(ctx context.Context, metadata Metadata) (ListenConfig, error)
 }
 
 // ListenConfigWrapperFunc type is an adapter for ListenConfigWrapper.
-type ListenConfigWrapperFunc func(listenConfig ListenConfig, metadata Metadata) (ListenConfig, error)
+type ListenConfigWrapperFunc func(ctx context.Context, metadata Metadata) (ListenConfig, error)
 
 // ListenConfigWrap calls l(listenConfig)
-func (l ListenConfigWrapperFunc) ListenConfigWrap(listenConfig ListenConfig, metadata Metadata) (ListenConfig, error) {
-	return l(listenConfig, metadata)
+func (l ListenConfigWrapperFunc) ListenConfigWrap(ctx context.Context, metadata Metadata) (ListenConfig, error) {
+	return l(ctx, metadata)
+}
+
+// ListenPacketConfig contains options for listening to an address.
+type ListenPacketConfig interface {
+	ListenPacket(ctx context.Context, network, address string) (PacketConn, error)
+}
+
+// ListenPacketConfigFunc type is an adapter for ListenPacketConfig.
+type ListenPacketConfigFunc func(ctx context.Context, network, address string) (PacketConn, error)
+
+// ListenPacket calls b(ctx, network, address)
+func (l ListenPacketConfigFunc) ListenPacket(ctx context.Context, network, address string) (PacketConn, error) {
+	return l(ctx, network, address)
+}
+
+// ListenPacketConfigWrapper wraps a ListenPacketConfig with additional options.
+type ListenPacketConfigWrapper interface {
+	ListenPacketConfigWrap(ctx context.Context, metadata Metadata) (ListenPacketConfig, error)
+}
+
+// ListenPacketConfigWrapperFunc type is an adapter for ListenPacketConfigWrapper.
+type ListenPacketConfigWrapperFunc func(lctx context.Context, metadata Metadata) (ListenPacketConfig, error)
+
+// ListenPacketConfigWrap calls l(listenPacketConfig)
+func (l ListenPacketConfigWrapperFunc) ListenPacketConfigWrap(ctx context.Context, metadata Metadata) (ListenPacketConfig, error) {
+	return l(ctx, metadata)
 }
 
 // Dialer contains options for connecting to an address.
@@ -54,15 +81,15 @@ func (d DialerFunc) DialContext(ctx context.Context, network, address string) (C
 
 // DialerWrapper wraps a Dialer with additional options.
 type DialerWrapper interface {
-	DialerWrap(dialer Dialer, metadata Metadata) (Dialer, error)
+	DialerWrap(ctx context.Context, metadata Metadata) (Dialer, error)
 }
 
 // DialerWrapperFunc type is an adapter for DialerWrapper.
-type DialerWrapperFunc func(dialer Dialer, metadata Metadata) (Dialer, error)
+type DialerWrapperFunc func(ctx context.Context, metadata Metadata) (Dialer, error)
 
 // DialerWrap calls d(dialer)
-func (d DialerWrapperFunc) DialerWrap(dialer Dialer, metadata Metadata) (Dialer, error) {
-	return d(dialer, metadata)
+func (d DialerWrapperFunc) DialerWrap(ctx context.Context, metadata Metadata) (Dialer, error) {
+	return d(ctx, metadata)
 }
 
 // DialConn wraps a net.Conn with additional options.
@@ -89,6 +116,32 @@ type ListenConnFunc func(ctx context.Context) (Listener, error)
 // Listen calls d()
 func (d ListenConnFunc) Listen(ctx context.Context) (Listener, error) {
 	return d(ctx)
+}
+
+// CommandDialer contains options for connecting to an address with command.
+type CommandDialer interface {
+	CommandDialContext(ctx context.Context, name string, args ...string) (net.Conn, error)
+}
+
+// CommandDialFunc type is an adapter for Dialer with command.
+type CommandDialFunc func(ctx context.Context, name string, args ...string) (net.Conn, error)
+
+// CommandDialContext calls d(ctx, name, args...)
+func (d CommandDialFunc) CommandDialContext(ctx context.Context, name string, args ...string) (net.Conn, error) {
+	return d(ctx, name, args...)
+}
+
+// CommandDialerWrapper wraps a CommandDialer with additional options.
+type CommandDialerWrapper interface {
+	CommandDialerWrap(ctx context.Context, metadata Metadata) (CommandDialer, error)
+}
+
+// CommandDialerWrapperFunc type is an adapter for CommandDialerWrapper.
+type CommandDialerWrapperFunc func(ctx context.Context, metadata Metadata) (CommandDialer, error)
+
+// CommandDialerWrap calls d(commandDialer)
+func (d CommandDialerWrapperFunc) CommandDialerWrap(ctx context.Context, metadata Metadata) (CommandDialer, error) {
+	return d(ctx, metadata)
 }
 
 // NewRunner creates a new Runner.

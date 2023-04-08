@@ -3,10 +3,11 @@ package socks5
 import (
 	"context"
 
+	"github.com/wzshiming/socks5"
+
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/protocols"
-	"github.com/wzshiming/socks5"
 )
 
 const (
@@ -15,13 +16,19 @@ const (
 )
 
 // NewSocks5Dialer socks5 proxy dialer
-func NewSocks5Dialer(d permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+func NewSocks5Dialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	u := protocols.EncodeURLWithMetadata("socks5", "localhost", metadata, KeyUsername, KeyPassword)
 	dialer, err := socks5.NewDialer(u)
 	if err != nil {
 		return nil, err
 	}
-	dialer.ProxyDial = d.DialContext
+
+	dialer.ProxyDial = proxy.Dialer.DialContext
 	return dialer, nil
 }
 

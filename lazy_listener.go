@@ -1,6 +1,8 @@
 package permuteproxy
 
-import "github.com/wzshiming/permuteproxy/internal/netutils"
+import (
+	"github.com/wzshiming/permuteproxy/internal/netutils"
+)
 
 type lazyListener struct {
 	newListener func() (Listener, error)

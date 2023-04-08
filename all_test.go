@@ -26,10 +26,12 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
+var proxy = permuteproxy.Proxy{}
+
 func TestTCPListenAndDial(t *testing.T) {
 	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
 	uri := "tcp://127.0.0.1:45678"
-	listenConn, _, err := permuteproxy.NewListenConfig(nil, uri)
+	listenConn, err := proxy.NewListenConn(uri)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,7 @@ func TestTCPListenAndDial(t *testing.T) {
 		}
 	}()
 
-	_, dialConn, err := permuteproxy.NewDialer(nil, uri)
+	dialConn, err := proxy.NewDialConn(uri)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +144,7 @@ func TestProxy(t *testing.T) {
 		t.Run(uri, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			t.Cleanup(cancel)
-			_, runner, err := permuteproxy.NewListenConfig(nil, uri)
+			runner, err := proxy.NewRunner(uri)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +172,7 @@ func TestProxy(t *testing.T) {
 				}
 				cliURI = protos[rand.Intn(len(protos))] + uri[3:]
 			}
-			dialer, _, err := permuteproxy.NewDialer(nil, cliURI)
+			dialer, err := proxy.NewDialer(cliURI)
 			if err != nil {
 				t.Fatal(err)
 			}

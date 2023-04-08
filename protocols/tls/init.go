@@ -25,5 +25,6 @@ func init() {
 		},
 	}
 	permuteproxy.Registry("tls", define)
+	protocols.RegisterAlias("http+tls", "https")
 	protocols.RegisterReverseAlias("http+tls", "https")
 }

@@ -3,10 +3,11 @@ package socks4
 import (
 	"context"
 
+	"github.com/wzshiming/socks4"
+
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/protocols"
-	"github.com/wzshiming/socks4"
 )
 
 const (
@@ -14,13 +15,19 @@ const (
 )
 
 // NewSocks4Dialer socks4 proxy dialer
-func NewSocks4Dialer(d permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+func NewSocks4Dialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	u := protocols.EncodeURLWithMetadata("socks4", "localhost", metadata, KeyUsername, "")
 	dialer, err := socks4.NewDialer(u)
 	if err != nil {
 		return nil, err
 	}
-	dialer.ProxyDial = d.DialContext
+
+	dialer.ProxyDial = proxy.Dialer.DialContext
 	return dialer, nil
 }
 

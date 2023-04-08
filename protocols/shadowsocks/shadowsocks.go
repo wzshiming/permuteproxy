@@ -5,10 +5,11 @@ import (
 
 	_ "github.com/wzshiming/shadowsocks/init"
 
+	"github.com/wzshiming/shadowsocks"
+
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/protocols"
-	"github.com/wzshiming/shadowsocks"
 )
 
 const (
@@ -17,7 +18,12 @@ const (
 )
 
 // NewShadowsocksDialer shadowsocks proxy dialer
-func NewShadowsocksDialer(d permuteproxy.Dialer, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+func NewShadowsocksDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
+	proxy, ok := permuteproxy.FromContext(ctx)
+	if !ok || proxy.Dialer == nil {
+		return nil, permuteproxy.ErrNoProxy
+	}
+
 	if metadata.Get(KeyUsername) == "" {
 		metadata.Set(KeyUsername, "dummy")
 	}
@@ -26,7 +32,8 @@ func NewShadowsocksDialer(d permuteproxy.Dialer, metadata permuteproxy.Metadata)
 	if err != nil {
 		return nil, err
 	}
-	dialer.ProxyDial = d.DialContext
+
+	dialer.ProxyDial = proxy.Dialer.DialContext
 	return dialer, nil
 }
 
