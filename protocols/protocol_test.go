@@ -619,38 +619,23 @@ var (
 			Base:          KindStream,
 			UsernameField: "username",
 			PasswordField: "password",
-			ListenSupport: []string{
-				"tcp",
-			},
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		"socks4": {
 			Kind:          KindProxy,
 			Base:          KindStream,
 			UsernameField: "username",
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		"http": {
 			Kind:          KindProxy,
 			Base:          KindStream,
 			UsernameField: "username",
 			PasswordField: "password",
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		"shadowsocks": {
 			Kind:          KindProxy,
 			Base:          KindStream,
 			UsernameField: "username",
 			PasswordField: "password",
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		"ssh": {
 			Kind:          KindProxy,
@@ -662,12 +647,6 @@ var (
 				"hostkey_data",
 				"authorized_data",
 				"identity_data",
-			},
-			ListenSupport: []string{
-				"tcp", "unix", "command",
-			},
-			DialSupport: []string{
-				"tcp", "unix", "command",
 			},
 		},
 	}

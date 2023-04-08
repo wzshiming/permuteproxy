@@ -11,9 +11,6 @@ func init() {
 			Kind:          protocols.KindProxy,
 			Base:          protocols.KindStream,
 			UsernameField: KeyUsername,
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		Handler: permuteproxy.Handler{
 			DialerWrapper: permuteproxy.DialerWrapperFunc(NewSocks4Dialer),

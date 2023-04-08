@@ -21,9 +21,6 @@ func init() {
 					"hostkey_data",
 					"hostkey_file",
 				},
-				DialSupport: []string{
-					"tcp",
-				},
 			},
 			Handler: permuteproxy.Handler{
 				DialerWrapper: permuteproxy.DialerWrapperFunc(NewSSHProxyDialer),
@@ -40,9 +37,6 @@ func init() {
 					"identity_data",
 					"identity_file",
 				},
-				DialSupport: []string{
-					"tcp",
-				},
 			},
 			Handler: permuteproxy.Handler{
 				DialerWrapper: permuteproxy.DialerWrapperFunc(NewSSHProxyCommandDialer),
@@ -58,9 +52,6 @@ func init() {
 					"identity_data",
 					"identity_file",
 				},
-				DialSupport: []string{
-					"tcp",
-				},
 			},
 			Handler: permuteproxy.Handler{
 				DialerWrapper: permuteproxy.DialerWrapperFunc(NewSSHProxyCommandNetCatDialer),
@@ -75,9 +66,6 @@ func init() {
 				MetaFields: []string{
 					"identity_data",
 					"identity_file",
-				},
-				DialSupport: []string{
-					"tcp",
 				},
 			},
 			Handler: permuteproxy.Handler{

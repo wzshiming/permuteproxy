@@ -241,11 +241,6 @@ type SchemeInfo struct {
 	// Match username/password of url
 	UsernameField string
 	PasswordField string
-
-	// proxy supports listen
-	ListenSupport []string
-	// proxy supports dial
-	DialSupport []string
 }
 
 type AddressKind uint8

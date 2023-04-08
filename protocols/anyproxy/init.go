@@ -12,9 +12,6 @@ func init() {
 			Base:          protocols.KindStream,
 			UsernameField: KeyUsername,
 			PasswordField: KeyPassword,
-			DialSupport: []string{
-				"tcp",
-			},
 		},
 		Handler: permuteproxy.Handler{
 			NewRunner: permuteproxy.NewRunnerFunc(NewAnyProxyRunner),
