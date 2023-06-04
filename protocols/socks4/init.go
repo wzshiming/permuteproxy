@@ -17,6 +17,6 @@ func init() {
 			NewRunner:     permuteproxy.NewRunnerFunc(NewSocks4Runner),
 		},
 	}
-	permuteproxy.Registry("socks4", define)
-	permuteproxy.Registry("socks4s", define)
+	permuteproxy.Register("socks4", define)
+	permuteproxy.Register("socks4s", define)
 }

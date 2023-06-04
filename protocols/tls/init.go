@@ -24,7 +24,7 @@ func init() {
 			ListenConfigWrapper: permuteproxy.ListenConfigWrapperFunc(NewTLSListenConfig),
 		},
 	}
-	permuteproxy.Registry("tls", define)
+	permuteproxy.Register("tls", define)
 	protocols.RegisterAlias("http+tls", "https")
 	protocols.RegisterReverseAlias("http+tls", "https")
 }

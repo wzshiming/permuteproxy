@@ -1,14 +1,10 @@
-package command
+package local
 
 import (
 	"context"
 	"fmt"
 	"net"
 )
-
-var NetCatTCP = &netCatTCP{
-	cmd: Command,
-}
 
 type netCatTCP struct {
 	cmd *command

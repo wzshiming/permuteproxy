@@ -1,24 +1,15 @@
-package command
+package local
 
 import (
 	"context"
 	"net"
 
 	"github.com/google/shlex"
-	"github.com/wzshiming/commandproxy"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
-
-var Command = &command{
-	CommandDialer: permuteproxy.CommandDialFunc(func(ctx context.Context, name string, args ...string) (net.Conn, error) {
-		proxy := commandproxy.ProxyCommand(ctx, name, args...)
-		// proxy.Stderr = os.Stderr
-		return proxy.Stdio()
-	}),
-}
 
 type command struct {
 	CommandDialer permuteproxy.CommandDialer

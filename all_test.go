@@ -12,7 +12,6 @@ import (
 	"time"
 
 	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/command"
 	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/local"
 	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"

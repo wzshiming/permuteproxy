@@ -1,14 +1,10 @@
-package command
+package local
 
 import (
 	"context"
 	"fmt"
 	"net"
 )
-
-var NetCatUnix = &netCatUnix{
-	cmd: Command,
-}
 
 type netCatUnix struct {
 	cmd *command

@@ -16,5 +16,5 @@ func init() {
 			ListenConfigWrapper: permuteproxy.ListenConfigWrapperFunc(NewSnappyListenConfig),
 		},
 	}
-	permuteproxy.Registry("snappy", define)
+	permuteproxy.Register("snappy", define)
 }

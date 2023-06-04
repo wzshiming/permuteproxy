@@ -49,8 +49,42 @@ func init() {
 				AddressKind: protocols.AddressPath,
 			},
 		},
+		"cmd": {
+			Handler: permuteproxy.Handler{
+				Dialer:        LOCAL,
+				ListenConfig:  LOCAL,
+				CommandDialer: LOCAL,
+			},
+			SchemeInfo: protocols.SchemeInfo{
+				Kind:        protocols.KindStream,
+				Base:        protocols.KindNone,
+				AddressKind: protocols.AddressOpaque,
+			},
+		},
+		"cmd-nc": {
+			Handler: permuteproxy.Handler{
+				Dialer:       LOCAL,
+				ListenConfig: LOCAL,
+			},
+			SchemeInfo: protocols.SchemeInfo{
+				Kind:        protocols.KindStream,
+				Base:        protocols.KindNone,
+				AddressKind: protocols.AddressHost,
+			},
+		},
+		"cmd-nc-unix": {
+			Handler: permuteproxy.Handler{
+				Dialer:       LOCAL,
+				ListenConfig: LOCAL,
+			},
+			SchemeInfo: protocols.SchemeInfo{
+				Kind:        protocols.KindStream,
+				Base:        protocols.KindNone,
+				AddressKind: protocols.AddressPath,
+			},
+		},
 	}
 	for scheme, meta := range metas {
-		permuteproxy.Registry(scheme, meta)
+		permuteproxy.Register(scheme, meta)
 	}
 }

@@ -13,7 +13,7 @@ type Define struct {
 	protocols.SchemeInfo
 }
 
-func Registry(scheme string, f Define) {
+func Register(scheme string, f Define) {
 	protocols.RegisterScheme(scheme, f.SchemeInfo)
 	RegisterHandle(scheme, f.Handler)
 }

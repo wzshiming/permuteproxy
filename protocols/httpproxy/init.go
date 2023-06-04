@@ -18,5 +18,5 @@ func init() {
 			NewRunner:     permuteproxy.NewRunnerFunc(NewHttpProxyRunner),
 		},
 	}
-	permuteproxy.Registry("http", define)
+	permuteproxy.Register("http", define)
 }

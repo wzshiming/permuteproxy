@@ -20,6 +20,6 @@ func init() {
 		},
 	}
 	for scheme, meta := range metas {
-		protocols.Register(scheme, meta)
+		permuteproxy.Register(scheme, meta)
 	}
 }
