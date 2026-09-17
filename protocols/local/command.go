@@ -2,49 +2,40 @@ package local
 
 import (
 	"context"
+	"errors"
 	"net"
 
 	"github.com/google/shlex"
 
-	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-type command struct {
-	CommandDialer permuteproxy.CommandDialer
-}
-
 var localAddr = netutils.NewNetAddr("cmd", "")
 
-func (c *command) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	cmd, err := shlex.Split(address)
+func splitCommand(address string) ([]string, error) {
+	args, err := shlex.Split(address)
 	if err != nil {
 		return nil, err
 	}
-	remoteAddr := netutils.NewNetAddr(network, address)
-
-	commandDialer := c.CommandDialer
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if ok && proxy.CommandDialer != nil {
-		commandDialer = proxy.CommandDialer
+	if len(args) == 0 {
+		return nil, errors.New("empty command")
 	}
-
-	return cmdutils.NewCommandListener(ctx, commandDialer, localAddr, remoteAddr, cmd)
+	return args, nil
 }
 
-func (c *command) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	cmd, err := shlex.Split(address)
+func (l *Local) dialCommand(ctx context.Context, network, address string) (net.Conn, error) {
+	args, err := splitCommand(address)
 	if err != nil {
 		return nil, err
 	}
-	remoteAddr := netutils.NewNetAddr(network, address)
+	return cmdutils.DialContext(ctx, l.Command, localAddr, netutils.NewNetAddr(network, address), args)
+}
 
-	commandDialer := c.CommandDialer
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if ok && proxy.CommandDialer != nil {
-		commandDialer = proxy.CommandDialer
+func (l *Local) listenCommand(ctx context.Context, network, address string) (net.Listener, error) {
+	args, err := splitCommand(address)
+	if err != nil {
+		return nil, err
 	}
-
-	return cmdutils.NewCommandDialContext(ctx, commandDialer, localAddr, remoteAddr, cmd)
+	return cmdutils.Listen(ctx, l.Command, localAddr, netutils.NewNetAddr(network, address), args)
 }

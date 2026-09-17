@@ -2,22 +2,19 @@ package socks5
 
 import (
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/protocols"
 )
 
 func init() {
-	define := permuteproxy.Define{
-		SchemeInfo: protocols.SchemeInfo{
-			Kind:          protocols.KindProxy,
-			Base:          protocols.KindStream,
-			UsernameField: KeyUsername,
-			PasswordField: KeyPassword,
-		},
-		Handler: permuteproxy.Handler{
-			DialerWrapper: permuteproxy.DialerWrapperFunc(NewSocks5Dialer),
-			NewRunner:     permuteproxy.NewRunnerFunc(NewSocks5Runner),
-		},
+	spec := permuteproxy.Spec{
+		Kind:           permuteproxy.KindProxy,
+		Requires:       permuteproxy.Stream,
+		Provides:       permuteproxy.Stream,
+		UsernameOption: KeyUsername,
+		PasswordOption: KeyPassword,
+		Client:         NewClient,
+		Server:         NewServer,
 	}
-	permuteproxy.Register("socks5", define)
-	permuteproxy.Register("socks5h", define)
+	permuteproxy.RegisterLayer("socks5", spec)
+	spec.Client = NewClientH
+	permuteproxy.RegisterLayer("socks5h", spec)
 }

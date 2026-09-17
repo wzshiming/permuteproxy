@@ -6,14 +6,10 @@ import (
 	"net"
 )
 
-type netCatUnix struct {
-	cmd *command
+func (l *Local) dialNetcatUnix(ctx context.Context, address string) (net.Conn, error) {
+	return l.dialCommand(ctx, "cmd", fmt.Sprintf("nc -U %s", address))
 }
 
-func (n *netCatUnix) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return n.cmd.DialContext(ctx, "cmd", fmt.Sprintf("nc -U %s", address))
-}
-
-func (n *netCatUnix) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	return n.cmd.Listen(ctx, "cmd", fmt.Sprintf("nc -Ul %s", address))
+func (l *Local) listenNetcatUnix(ctx context.Context, address string) (net.Listener, error) {
+	return l.listenCommand(ctx, "cmd", fmt.Sprintf("nc -Ul %s", address))
 }

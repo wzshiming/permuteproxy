@@ -4,87 +4,96 @@ import (
 	"context"
 	"net"
 	"sync"
-	"sync/atomic"
 
 	"github.com/wzshiming/cmux"
 
-	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-func NewCommandDialContext(ctx context.Context, commandDialer permuteproxy.CommandDialer, localAddr, remoteAddr net.Addr, proxy []string) (net.Conn, error) {
-	conn, err := commandDialer.CommandDialContext(ctx, proxy[0], proxy[1:]...)
+// Dial starts a command whose stdio becomes the connection; cancelling ctx ends the command.
+type Dial func(ctx context.Context, name string, args ...string) (net.Conn, error)
+
+func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Conn, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	stdio, err := dial(ctx, command[0], command[1:]...)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-
-	conn = netutils.ConnWithAddr(conn, localAddr, remoteAddr)
-	return conn, nil
+	conn := netutils.ConnWithCloser(stdio, func() error {
+		cancel()
+		return stdio.Close()
+	})
+	return netutils.ConnWithAddr(conn, localAddr, remoteAddr), nil
 }
 
-func NewCommandListener(ctx context.Context, commandDialer permuteproxy.CommandDialer, localAddr net.Addr, remoteAddr net.Addr, proxy []string) (net.Listener, error) {
+func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Listener, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	return &listener{
-		ctx:           ctx,
-		cancel:        cancel,
-		commandDialer: commandDialer,
-		localAddr:     localAddr,
-		remoteAddr:    remoteAddr,
-		proxy:         proxy,
+		ctx:        ctx,
+		cancel:     cancel,
+		dial:       dial,
+		localAddr:  localAddr,
+		remoteAddr: remoteAddr,
+		command:    command,
 	}, nil
 }
 
 type listener struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	commandDialer permuteproxy.CommandDialer
-	proxy         []string
-	localAddr     net.Addr
-	remoteAddr    net.Addr
-	isClose       uint32
-	mux           sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	dial       Dial
+	command    []string
+	localAddr  net.Addr
+	remoteAddr net.Addr
+	mu         sync.Mutex
 }
 
+type accepted struct {
+	conn net.Conn
+	err  error
+}
+
+// Accept starts one command and hands it over once the peer sends its first byte, the only
+// signal a subprocess offers that a connection arrived.
 func (l *listener) Accept() (net.Conn, error) {
-	l.mux.Lock()
-	defer l.mux.Unlock()
-	if atomic.LoadUint32(&l.isClose) == 1 {
-		return nil, netutils.ErrClosedConn
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ctx.Err() != nil {
+		return nil, net.ErrClosed
 	}
-
-	connCh := make(chan net.Conn)
-	errCh := make(chan error)
+	results := make(chan accepted, 1)
 	go func() {
-		n, err := NewCommandDialContext(l.ctx, l.commandDialer, l.localAddr, l.remoteAddr, l.proxy)
+		conn, err := DialContext(l.ctx, l.dial, l.localAddr, l.remoteAddr, l.command)
 		if err != nil {
-			errCh <- err
+			results <- accepted{err: err}
 			return
 		}
-
-		// Because there is no way to tell if there is a connection coming in from the command line,
-		// the next listen can only be performed if the data is read or closed
-		var tmp [1]byte
-		_, err = n.Read(tmp[:])
+		stop := context.AfterFunc(l.ctx, func() { conn.Close() })
+		var first [1]byte
+		_, err = conn.Read(first[:])
+		stop()
 		if err != nil {
-			errCh <- err
+			conn.Close()
+			results <- accepted{err: err}
 			return
 		}
-		n = cmux.UnreadConn(n, tmp[:])
-		connCh <- n
+		results <- accepted{conn: cmux.UnreadConn(conn, first[:])}
 	}()
-
 	select {
 	case <-l.ctx.Done():
-		return nil, netutils.ErrClosedConn
-	case err := <-errCh:
-		return nil, err
-	case n := <-connCh:
-		return n, nil
+		go func() {
+			if r := <-results; r.conn != nil {
+				r.conn.Close()
+			}
+		}()
+		return nil, net.ErrClosed
+	case r := <-results:
+		return r.conn, r.err
 	}
 }
 
 func (l *listener) Close() error {
-	atomic.StoreUint32(&l.isClose, 1)
 	l.cancel()
 	return nil
 }

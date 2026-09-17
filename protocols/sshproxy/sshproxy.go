@@ -2,6 +2,8 @@ package sshproxy
 
 import (
 	"context"
+	"net"
+	"net/url"
 
 	_ "github.com/wzshiming/sshd/directstreamlocal"
 	_ "github.com/wzshiming/sshd/directtcp"
@@ -12,7 +14,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -20,46 +22,58 @@ const (
 	KeyPassword = "password"
 )
 
-// NewSSHProxyDialer ssh proxy dialer
-func NewSSHProxyDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
-	}
+var options = []string{
+	"identity_data",
+	"identity_file",
+	"authorized_data",
+	"authorized_file",
+	"hostkey_data",
+	"hostkey_file",
+}
 
-	u := protocols.EncodeURLWithMetadata("ssh", "localhost", metadata, KeyUsername, KeyPassword)
-	dialer, err := sshproxy.NewDialer(u)
+// endpoint renders the options as the URL form sshproxy parses; the host is a placeholder since
+// the inner transport decides where connections go.
+func endpoint(opts permuteproxy.Options) string {
+	u := url.URL{
+		Scheme:   "ssh",
+		Host:     "localhost",
+		User:     protoutils.Userinfo(opts, KeyUsername, KeyPassword),
+		RawQuery: protoutils.Values(opts, KeyUsername, KeyPassword).Encode(),
+	}
+	return u.String()
+}
+
+// client keeps the cached SSH connection reachable for Close.
+type client struct {
+	permuteproxy.Network
+	dialer *sshproxy.Dialer
+}
+
+func (c *client) Close() error {
+	return c.dialer.Close()
+}
+
+func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
+	dialer, err := sshproxy.NewDialer(endpoint(opts))
 	if err != nil {
 		return nil, err
 	}
-
-	dialer.ProxyDial = proxy.Dialer.DialContext
-	return dialer, nil
+	dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return inner.Dial(ctx, permuteproxy.Stream)
+	}
+	return &client{protoutils.DialNetwork(dialer.DialContext, "tcp", "tcp4", "tcp6", "unix"), dialer}, nil
 }
 
-type runner struct {
-	listener permuteproxy.Listener
-	server   *sshproxy.SimpleServer
-}
-
-func NewSSHProxyRunner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	u := protocols.EncodeURLWithMetadata("ssh", "localhost", metadata, KeyUsername, KeyPassword)
-	server, err := sshproxy.NewSimpleServer(u)
+func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+	srv, err := sshproxy.NewSimpleServer(endpoint(opts))
 	if err != nil {
 		return nil, err
 	}
-	server.BytesPool = pool.Bytes
-	server.Listener = listener
-	return &runner{
-		listener: listener,
-		server:   server,
-	}, nil
-}
-
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
-}
-
-func (r *runner) Close() error {
-	return r.listener.Close()
+	srv.ProxyDial = upstream.DialContext
+	srv.ProxyListen = upstream.Listen
+	srv.BytesPool = pool.Bytes
+	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
+		srv.Context = ctx
+		return srv.Serve(ln)
+	}), nil
 }

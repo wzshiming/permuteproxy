@@ -32,12 +32,12 @@ func TestEngineTransport(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
 	e := Engine{Base: &fakeNet{name: "base"}}
-	c := parse(t, "snappy+tls://127.0.0.1:1?tls_skip_verify=true")
+	c := parse(t, "test-snappy+test-tls://127.0.0.1:1?tls_skip_verify=true")
 	tr, err := e.Transport(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "tls.adapt stream", "snappy.adapt stream")
+	assertCalls(t, "test-tls.adapt stream", "test-snappy.adapt stream")
 	if tr.Planes() != Stream {
 		t.Fatalf("Planes() = %v", tr.Planes())
 	}
@@ -55,15 +55,15 @@ func TestEngineTransport(t *testing.T) {
 		t.Fatalf("ListenPacket() = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
-	if diff := cmp.Diff(parse(t, "snappy+tls://127.0.0.1:1?tls_skip_verify=true"), c); diff != "" {
+	if diff := cmp.Diff(parse(t, "test-snappy+test-tls://127.0.0.1:1?tls_skip_verify=true"), c); diff != "" {
 		t.Fatalf("chain mutated by build (-want +got):\n%s", diff)
 	}
 	if _, err := e.Transport(c); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "tls.adapt stream", "snappy.adapt stream")
+	assertCalls(t, "test-tls.adapt stream", "test-snappy.adapt stream")
 
-	quic, err := e.Transport(parse(t, "quic://127.0.0.1:1"))
+	quic, err := e.Transport(parse(t, "test-quic://127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEngineTransport(t *testing.T) {
 	if _, err := quic.Listen(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "quic.adapt packet", "base.listenpacket udp 127.0.0.1:1")
+	assertCalls(t, "test-quic.adapt packet", "base.listenpacket udp 127.0.0.1:1")
 }
 
 func TestEngineClientServer(t *testing.T) {
@@ -87,11 +87,11 @@ func TestEngineClientServer(t *testing.T) {
 		client string
 		server string
 	}{
-		{"ss://127.0.0.1:1", "tcp", "ss.client stream|packet base=base", "ss.server stream|packet upstream=upstream"},
-		{"ss+tls://127.0.0.1:1", "tcp", "ss.client stream base=base", "ss.server stream upstream=upstream"},
-		{"ss+udp://127.0.0.1:1", "udp", "ss.client packet base=base", "ss.server packet upstream=upstream"},
-		{"socks5+quic://127.0.0.1:1", "tcp", "socks5.client stream base=base", "socks5.server stream upstream=upstream"},
-		{"http://u:p@127.0.0.1:1", "tcp", "http.client stream base=base", "http.server stream upstream=upstream"},
+		{"test-ss://127.0.0.1:1", "tcp", "test-ss.client stream|packet base=base", "test-ss.server stream|packet upstream=upstream"},
+		{"test-ss+test-tls://127.0.0.1:1", "tcp", "test-ss.client stream base=base", "test-ss.server stream upstream=upstream"},
+		{"test-ss+udp://127.0.0.1:1", "udp", "test-ss.client packet base=base", "test-ss.server packet upstream=upstream"},
+		{"test-socks5+test-quic://127.0.0.1:1", "tcp", "test-socks5.client stream base=base", "test-socks5.server stream upstream=upstream"},
+		{"test-http://u:p@127.0.0.1:1", "tcp", "test-http.client stream base=base", "test-http.server stream upstream=upstream"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
@@ -121,14 +121,14 @@ func TestEngineClientServer(t *testing.T) {
 			}
 		})
 	}
-	if _, err := (Engine{}).Server(parse(t, "ss://127.0.0.1:1")); err != nil {
+	if _, err := (Engine{}).Server(parse(t, "test-ss://127.0.0.1:1")); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "ss.server stream|packet upstream=native")
+	assertCalls(t, "test-ss.server stream|packet upstream=native")
 }
 
 func adapterCarrier(c Chain) string {
-	if c.Layers[1].Scheme == "quic" {
+	if c.Layers[1].Scheme == "test-quic" {
 		return "packet"
 	}
 	return "stream"
@@ -143,11 +143,11 @@ func TestEngineRejects(t *testing.T) {
 		uri  string
 		want error
 	}{
-		{"transport of proxy", func(c Chain) error { _, err := e.Transport(c); return err }, "http://127.0.0.1:1", ErrInvalidChain},
-		{"client of adapter", func(c Chain) error { _, err := e.Client(c); return err }, "tls://127.0.0.1:1", ErrInvalidChain},
-		{"server of adapter", func(c Chain) error { _, err := e.Server(c); return err }, "tls://127.0.0.1:1", ErrInvalidChain},
+		{"transport of proxy", func(c Chain) error { _, err := e.Transport(c); return err }, "test-http://127.0.0.1:1", ErrInvalidChain},
+		{"client of adapter", func(c Chain) error { _, err := e.Client(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
+		{"server of adapter", func(c Chain) error { _, err := e.Server(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
 		{"server of raw endpoint", func(c Chain) error { _, err := e.Server(c); return err }, "tcp://127.0.0.1:1", ErrInvalidChain},
-		{"client without constructor", func(c Chain) error { _, err := e.Client(c); return err }, "any+tls://127.0.0.1:1", ErrUnsupported},
+		{"client without constructor", func(c Chain) error { _, err := e.Client(c); return err }, "test-any+test-tls://127.0.0.1:1", ErrUnsupported},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -158,7 +158,7 @@ func TestEngineRejects(t *testing.T) {
 			assertCalls(t)
 		})
 	}
-	for _, c := range []Chain{mk("tcp", "quic"), mk("udp", "tls"), mk("udp", "ss", "tls")} {
+	for _, c := range []Chain{mk("tcp", "test-quic"), mk("udp", "test-tls"), mk("udp", "test-ss", "test-tls")} {
 		if _, err := e.Transport(c); !errors.Is(err, ErrInvalidChain) {
 			t.Fatalf("Transport(%+v) = %v, want ErrInvalidChain", c, err)
 		}
@@ -314,17 +314,17 @@ func TestEngineRestrictsClient(t *testing.T) {
 		refused []string
 	}{
 		{
-			"http://127.0.0.1:1",
+			"test-http://127.0.0.1:1",
 			[]string{"dial tcp", "dial tcp4", "dial unix", "dial fakenet", "listen tcp6"},
 			[]string{"dial udp", "dial unixgram", "dial bogus", "dial ", "listen udp", "listenpacket tcp", "listenpacket udp"},
 		},
 		{
-			"ss+udp://127.0.0.1:1",
+			"test-ss+udp://127.0.0.1:1",
 			[]string{"dial udp", "dial udp6", "dial unixgram", "listenpacket udp4"},
 			[]string{"dial tcp", "dial bogus", "listen tcp", "listen udp", "listenpacket tcp"},
 		},
 		{
-			"ss://127.0.0.1:1",
+			"test-ss://127.0.0.1:1",
 			[]string{"dial tcp", "dial udp", "listen unix", "listenpacket unixgram"},
 			[]string{"dial bogus", "listen udp", "listenpacket tcp"},
 		},
@@ -372,10 +372,10 @@ func TestEngineForwardsClose(t *testing.T) {
 		proxy bool
 		want  []string
 	}{
-		{"closable+tls://127.0.0.1:1", false, []string{"closable.close"}},
-		{"tls://127.0.0.1:1", false, nil},
+		{"closable+test-tls://127.0.0.1:1", false, []string{"closable.close"}},
+		{"test-tls://127.0.0.1:1", false, nil},
 		{"closableproxy://127.0.0.1:1", true, []string{"closableproxy.close"}},
-		{"http://127.0.0.1:1", true, nil},
+		{"test-http://127.0.0.1:1", true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {

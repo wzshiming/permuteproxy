@@ -2,14 +2,16 @@ package shadowsocks
 
 import (
 	"context"
-
-	_ "github.com/wzshiming/shadowsocks/init"
+	"net"
+	"net/url"
+	"time"
 
 	"github.com/wzshiming/shadowsocks"
+	_ "github.com/wzshiming/shadowsocks/init"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -17,52 +19,50 @@ const (
 	KeyPassword = "password"
 )
 
-// NewShadowsocksDialer shadowsocks proxy dialer
-func NewShadowsocksDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
+// cipher resolves the encryption from the options, defaulting to the plaintext dummy cipher
+// and accepting the legacy base64 "method:password" username form.
+func cipher(opts permuteproxy.Options) (shadowsocks.ConnCipher, error) {
+	method := opts[KeyUsername]
+	if method == "" {
+		method = "dummy"
 	}
-
-	if metadata.Get(KeyUsername) == "" {
-		metadata.Set(KeyUsername, "dummy")
+	user := url.User(method)
+	if password, ok := opts[KeyPassword]; ok {
+		user = url.UserPassword(method, password)
 	}
-	u := protocols.EncodeURLWithMetadata("shadowsocks", "localhost", metadata, KeyUsername, KeyPassword)
-	dialer, err := shadowsocks.NewDialer(u)
+	method, password, err := shadowsocks.GetCipherAndPasswordFromUserinfo(user)
 	if err != nil {
 		return nil, err
 	}
-
-	dialer.ProxyDial = proxy.Dialer.DialContext
-	return dialer, nil
+	return shadowsocks.NewCipher(method, password)
 }
 
-type runner struct {
-	listener permuteproxy.Listener
-	server   *shadowsocks.SimpleServer
-}
-
-func NewShadowsocksRunner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	if metadata.Get(KeyUsername) == "" {
-		metadata.Set(KeyUsername, "dummy")
-	}
-	u := protocols.EncodeURLWithMetadata("shadowsocks", "localhost", metadata, KeyUsername, KeyPassword)
-	server, err := shadowsocks.NewSimpleServer(u)
+func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
+	connCipher, err := cipher(opts)
 	if err != nil {
 		return nil, err
 	}
-	server.BytesPool = pool.Bytes
-	server.Listener = listener
-	return &runner{
-		listener: listener,
-		server:   server,
-	}, nil
+	dialer := &shadowsocks.Dialer{
+		ConnCipher: connCipher,
+		Timeout:    time.Minute,
+		ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return inner.Dial(ctx, permuteproxy.Stream)
+		},
+	}
+	return protoutils.DialNetwork(dialer.DialContext, "tcp", "tcp4", "tcp6"), nil
 }
 
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
-}
-
-func (r *runner) Close() error {
-	return r.listener.Close()
+func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+	connCipher, err := cipher(opts)
+	if err != nil {
+		return nil, err
+	}
+	srv := shadowsocks.NewServer()
+	srv.ConnCipher = connCipher
+	srv.ProxyDial = upstream.DialContext
+	srv.BytesPool = pool.Bytes
+	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
+		srv.Context = ctx
+		return srv.Serve(ln)
+	}), nil
 }

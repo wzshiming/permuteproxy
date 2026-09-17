@@ -2,58 +2,44 @@ package socks4
 
 import (
 	"context"
+	"net"
+	"time"
 
 	"github.com/wzshiming/socks4"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
 	KeyUsername = "username"
+	// KeyPassword is accepted for socks4://u:p@ URIs and discarded: SOCKS4 has no password.
+	KeyPassword = "password"
 )
 
-// NewSocks4Dialer socks4 proxy dialer
-func NewSocks4Dialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
+func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
+	dialer := &socks4.Dialer{
+		Username:  opts[KeyUsername],
+		IsResolve: true,
+		Timeout:   time.Minute,
+		ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return inner.Dial(ctx, permuteproxy.Stream)
+		},
 	}
+	return protoutils.DialNetwork(dialer.DialContext, "tcp", "tcp4", "tcp6"), nil
+}
 
-	u := protocols.EncodeURLWithMetadata("socks4", "localhost", metadata, KeyUsername, "")
-	dialer, err := socks4.NewDialer(u)
-	if err != nil {
-		return nil, err
+func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+	srv := socks4.NewServer()
+	srv.ProxyDial = upstream.DialContext
+	srv.ProxyListenBind = upstream.Listen
+	srv.BytesPool = pool.Bytes
+	if username := opts[KeyUsername]; username != "" {
+		srv.Authentication = socks4.UserAuth(username)
 	}
-
-	dialer.ProxyDial = proxy.Dialer.DialContext
-	return dialer, nil
-}
-
-type runner struct {
-	listener permuteproxy.Listener
-	server   *socks4.SimpleServer
-}
-
-func NewSocks4Runner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	u := protocols.EncodeURLWithMetadata("socks4", "localhost", metadata, KeyUsername, "")
-	server, err := socks4.NewSimpleServer(u)
-	if err != nil {
-		return nil, err
-	}
-	server.BytesPool = pool.Bytes
-	server.Listener = listener
-	return &runner{
-		listener: listener,
-		server:   server,
-	}, nil
-}
-
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
-}
-
-func (r *runner) Close() error {
-	return r.listener.Close()
+	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
+		srv.Context = ctx
+		return srv.Serve(ln)
+	}), nil
 }

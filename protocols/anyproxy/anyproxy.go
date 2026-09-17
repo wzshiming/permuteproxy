@@ -3,9 +3,9 @@ package anyproxy
 import (
 	"context"
 	"net"
+	"net/url"
 
 	"github.com/wzshiming/anyproxy"
-
 	_ "github.com/wzshiming/anyproxy/proxies/httpproxy"
 	_ "github.com/wzshiming/anyproxy/proxies/socks4"
 	_ "github.com/wzshiming/anyproxy/proxies/socks5"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -21,49 +21,28 @@ const (
 	KeyPassword = "password"
 )
 
-type runner struct {
-	listener permuteproxy.Listener
-	server   *anyproxy.AnyProxy
-}
+var protocols = []string{"http", "socks4", "socks5", "ssh"}
 
-func NewAnyProxyRunner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	protos := []string{
-		"http",
-		"socks4",
-		"socks5",
-		"ssh",
+// host keys every handler under one placeholder; the inner transport owns the real endpoint.
+const host = "localhost"
+
+func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+	user := protoutils.Userinfo(opts, KeyUsername, KeyPassword)
+	addrs := make([]string, 0, len(protocols))
+	for _, scheme := range protocols {
+		u := url.URL{Scheme: scheme, Host: host, User: user}
+		addrs = append(addrs, u.String())
 	}
-
-	addrs := make([]string, 0, len(protos))
-	for _, proto := range protos {
-		addrs = append(addrs, protocols.EncodeURLWithMetadata(proto, "localhost", metadata, KeyUsername, KeyPassword))
-	}
-
-	server, err := anyproxy.NewAnyProxy(context.Background(), addrs, &anyproxy.Config{
+	conf := &anyproxy.Config{
+		Dialer:       upstream,
+		ListenConfig: upstream,
 		BytesPool:    pool.Bytes,
-		ListenConfig: &wrapper{listener},
-	})
-	if err != nil {
-		return nil, err
 	}
-	return &runner{
-		server:   server,
-		listener: listener,
-	}, nil
-}
-
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
-}
-
-func (r *runner) Close() error {
-	return r.listener.Close()
-}
-
-type wrapper struct {
-	listener permuteproxy.Listener
-}
-
-func (w *wrapper) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	return w.listener, nil
+	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
+		proxy, err := anyproxy.NewAnyProxy(ctx, addrs, conf)
+		if err != nil {
+			return err
+		}
+		return proxy.Match(host).Serve(ln)
+	}), nil
 }

@@ -134,20 +134,21 @@ func wideAdapter() Spec {
 	}
 }
 
+// Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
-	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
+	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
 	RegisterNetwork("fakenet", NetworkSpec{Plane: Stream, Network: &fakeNet{name: "impl"}})
-	RegisterLayer("tls", fakeAdapter("tls", Stream, Stream, "tls_skip_verify", "tls_self_signed"))
-	RegisterLayer("snappy", fakeAdapter("snappy", Stream, Stream))
-	RegisterLayer("quic", fakeAdapter("quic", Packet, Stream))
-	RegisterLayer("http", fakeProxy("http", Stream, Stream, 0, "username", "password"))
-	RegisterLayer("socks4", fakeProxy("socks4", Stream, Stream, 0, "username", ""))
-	RegisterLayer("ssh", fakeProxy("ssh", Stream, Stream, 0, "username", "password", "identity_file"))
-	RegisterLayer("socks5", fakeProxy("socks5", Stream, Stream|Packet, 0, "username", "password"))
-	RegisterLayer("ss", fakeProxy("ss", 0, 0, Stream|Packet, "username", "password"))
-	anyProxy := fakeProxy("any", Stream, Stream, 0, "username", "password")
+	RegisterLayer("test-tls", fakeAdapter("test-tls", Stream, Stream, "tls_skip_verify", "tls_self_signed", "tls_cert_file", "tls_key_file"))
+	RegisterLayer("test-snappy", fakeAdapter("test-snappy", Stream, Stream))
+	RegisterLayer("test-quic", fakeAdapter("test-quic", Packet, Stream))
+	RegisterLayer("test-http", fakeProxy("test-http", Stream, Stream, 0, "username", "password"))
+	RegisterLayer("test-socks4", fakeProxy("test-socks4", Stream, Stream, 0, "username", ""))
+	RegisterLayer("test-ssh", fakeProxy("test-ssh", Stream, Stream, 0, "username", "password", "identity_file", "identity_data", "authorized_data"))
+	RegisterLayer("test-socks5", fakeProxy("test-socks5", Stream, Stream|Packet, 0, "username", "password"))
+	RegisterLayer("test-ss", fakeProxy("test-ss", 0, 0, Stream|Packet, "username", "password"))
+	anyProxy := fakeProxy("test-any", Stream, Stream, 0, "username", "password")
 	anyProxy.Client = nil
-	RegisterLayer("any", anyProxy)
+	RegisterLayer("test-any", anyProxy)
 	RegisterLayer("wide", wideAdapter())
 	RegisterLayer("niladapter", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
 	RegisterLayer("closable", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(inner Transport, _ Options) (Transport, error) {
@@ -163,8 +164,8 @@ func init() {
 		Client:   func(Transport, Network, Options) (Network, error) { return nil, nil },
 		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
 	})
-	RegisterAlias("https", "http+tls")
-	RegisterAlias("later", "pending+tls")
+	RegisterAlias("test-https", "test-http+test-tls")
+	RegisterAlias("later", "pending+test-tls")
 }
 
 func mustPanic(t *testing.T, name string, f func()) {
@@ -179,10 +180,10 @@ func mustPanic(t *testing.T, name string, f func()) {
 
 func TestRegisterRejects(t *testing.T) {
 	adapter := fakeAdapter("x", Stream, Stream)
-	mustPanic(t, "duplicate layer", func() { RegisterLayer("tls", adapter) })
+	mustPanic(t, "duplicate layer", func() { RegisterLayer("test-tls", adapter) })
 	mustPanic(t, "layer named like network", func() { RegisterLayer("tcp", adapter) })
 	mustPanic(t, "duplicate network", func() { RegisterNetwork("tcp", NetworkSpec{Plane: Stream}) })
-	mustPanic(t, "alias named like layer", func() { RegisterAlias("tls", "http+tls") })
+	mustPanic(t, "alias named like layer", func() { RegisterAlias("test-tls", "test-http+test-tls") })
 	mustPanic(t, "name with plus", func() { RegisterLayer("a+b", adapter) })
 	mustPanic(t, "network without plane", func() { RegisterNetwork("np", NetworkSpec{}) })
 	mustPanic(t, "adapter without Adapt", func() { RegisterLayer("na", Spec{Requires: Stream, Provides: Stream}) })
@@ -205,10 +206,10 @@ func TestRegisterRejects(t *testing.T) {
 	}
 	RegisterLayer("ok.name-1", adapter)
 	mustPanic(t, "dual-plane network", func() { RegisterNetwork("dual", NetworkSpec{Plane: Stream | Packet}) })
-	mustPanic(t, "nested alias", func() { RegisterAlias("nested", "https+tcp") })
+	mustPanic(t, "nested alias", func() { RegisterAlias("nested", "test-https+tcp") })
 	mustPanic(t, "self alias", func() { RegisterAlias("self", "self") })
-	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", "HTTP+tls") })
-	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", "snappy") })
+	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", "HTTP+test-tls") })
+	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", "test-snappy") })
 	if _, ok := lookupLayer("na"); ok {
 		t.Fatal("rejected layer was registered")
 	}
@@ -228,22 +229,22 @@ func TestChainValidate(t *testing.T) {
 		chain Chain
 		ok    bool
 	}{
-		{"ss auto dual", mk("", "ss"), true},
-		{"ss over tls", mk("", "ss", "tls"), true},
-		{"ss over udp", mk("udp", "ss"), true},
-		{"quic over udp", mk("udp", "quic"), true},
-		{"quic auto", mk("", "quic"), true},
-		{"socks5 over quic", mk("", "socks5", "quic"), true},
+		{"ss auto dual", mk("", "test-ss"), true},
+		{"ss over tls", mk("", "test-ss", "test-tls"), true},
+		{"ss over udp", mk("udp", "test-ss"), true},
+		{"quic over udp", mk("udp", "test-quic"), true},
+		{"quic auto", mk("", "test-quic"), true},
+		{"socks5 over quic", mk("", "test-socks5", "test-quic"), true},
 		{"raw tcp", mk("tcp"), true},
 		{"unix", Chain{Endpoint: Endpoint{Network: "unix", Address: "./x.sock"}}, true},
-		{"quic over tcp", mk("tcp", "quic"), false},
-		{"tls over udp", mk("udp", "tls"), false},
-		{"proxy not outermost", mk("", "tls", "socks5"), false},
+		{"quic over tcp", mk("tcp", "test-quic"), false},
+		{"tls over udp", mk("udp", "test-tls"), false},
+		{"proxy not outermost", mk("", "test-tls", "test-socks5"), false},
 		{"unknown scheme", mk("", "xxx"), false},
-		{"unknown network", mk("xxx", "tls"), false},
-		{"unknown option", Chain{Layers: []Layer{{Scheme: "tls", Options: Options{"bogus": "1"}}}, Endpoint: Endpoint{Address: "127.0.0.1:1"}}, false},
+		{"unknown network", mk("xxx", "test-tls"), false},
+		{"unknown option", Chain{Layers: []Layer{{Scheme: "test-tls", Options: Options{"bogus": "1"}}}, Endpoint: Endpoint{Address: "127.0.0.1:1"}}, false},
 		{"auto without layers", mk(""), false},
-		{"empty address", Chain{Layers: []Layer{{Scheme: "tls"}}}, false},
+		{"empty address", Chain{Layers: []Layer{{Scheme: "test-tls"}}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
