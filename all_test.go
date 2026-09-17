@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,16 +28,19 @@ var system permuteproxy.Network = permuteproxy.NetworkFuncs{
 	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
 }
 
-// probe counts the operations a chain performs on an injected network and reports bound addresses.
+// probe counts the operations a chain performs on an injected network, reports bound addresses and
+// accepted connections, and counts the Close calls a borrowed network must never see.
 type probe struct {
 	permuteproxy.Network
-	dials   atomic.Int32
-	listens atomic.Int32
-	bound   chan net.Addr
+	dials    atomic.Int32
+	listens  atomic.Int32
+	closes   atomic.Int32
+	bound    chan net.Addr
+	accepted chan struct{}
 }
 
 func newProbe(n permuteproxy.Network) *probe {
-	return &probe{Network: n, bound: make(chan net.Addr, 1)}
+	return &probe{Network: n, bound: make(chan net.Addr, 1), accepted: make(chan struct{}, 64)}
 }
 
 func (p *probe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -54,7 +58,28 @@ func (p *probe) Listen(ctx context.Context, network, address string) (net.Listen
 	case p.bound <- ln.Addr():
 	default:
 	}
-	return ln, nil
+	return acceptProbe{ln, p.accepted}, nil
+}
+
+func (p *probe) Close() error {
+	p.closes.Add(1)
+	return nil
+}
+
+type acceptProbe struct {
+	net.Listener
+	accepted chan struct{}
+}
+
+func (l acceptProbe) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		select {
+		case l.accepted <- struct{}{}:
+		default:
+		}
+	}
+	return conn, err
 }
 
 func closeIf(v any) {
@@ -242,9 +267,6 @@ func TestProxy(t *testing.T) {
 			}
 			for _, scheme := range clients {
 				t.Run(scheme, func(t *testing.T) {
-					if scheme == "socks5" && c.Layers[0].Scheme == "any" && strings.Contains(uri, "snappy") {
-						t.Skip("cmux drops a partial prefix match and the socks5 greeting arrives as two snappy frames")
-					}
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					cc := c
@@ -333,6 +355,164 @@ func TestServerLifecycle(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// greetings are the leading handshake bytes a client sends before stalling, per proxy scheme.
+var greetings = map[string]string{"http": "GET ", "socks4": "\x04", "socks5": "\x05", "ss": "\x01", "ssh": "SSH-", "any": "\x05"}
+
+// readErr drains conn and reports the error that ends it, failing if none arrives.
+func readErr(t *testing.T, conn net.Conn) error {
+	t.Helper()
+	got := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				got <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-got:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection survived the server stop")
+		return nil
+	}
+}
+
+// holdingTarget accepts connections and keeps them silent until the test ends.
+func holdingTarget(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			conn.Close()
+		}
+	})
+	return ln.Addr().String()
+}
+
+// connect opens a client connection to the proxy at c in the given state: idle sends nothing,
+// partial sends a truncated greeting, tunnel completes the proxy handshake towards target.
+func connect(t *testing.T, ctx context.Context, c permuteproxy.Chain, state, target string) net.Conn {
+	t.Helper()
+	scheme := c.Layers[0].Scheme
+	if state == "tunnel" {
+		if scheme == "any" {
+			c.Layers = append([]permuteproxy.Layer{{Scheme: "socks5", Options: c.Layers[0].Options}}, c.Layers[1:]...)
+		}
+		n, err := permuteproxy.Engine{}.Client(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { closeIf(n) })
+		conn, err := n.DialContext(ctx, "tcp", target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	c.Layers = c.Layers[1:]
+	if c.Endpoint.Network == "" {
+		c.Endpoint.Network = "tcp"
+	}
+	tr, err := permuteproxy.Engine{}.Transport(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == "partial" {
+		if _, err := conn.Write([]byte(greetings[scheme])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return conn
+}
+
+func TestServerStopReleasesConns(t *testing.T) {
+	target := holdingTarget(t)
+	rows := []string{
+		"http://127.0.0.1:0",
+		"socks4://127.0.0.1:0",
+		"socks5://127.0.0.1:0",
+		"ss://127.0.0.1:0",
+		"ss://aes-256-gcm:p@127.0.0.1:0",
+		"ssh://127.0.0.1:0",
+		"any://127.0.0.1:0",
+		"any+snappy://127.0.0.1:0",
+		"socks5+snappy://127.0.0.1:0",
+		"socks5+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	}
+	for _, uri := range rows {
+		c := parse(t, uri)
+		for _, state := range []string{"idle", "partial", "tunnel"} {
+			for _, stop := range []string{"close", "cancel"} {
+				t.Run(uri+"/"+state+"/"+stop, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					base, upstream := newProbe(system), newProbe(system)
+					srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+					if err != nil {
+						t.Fatal(err)
+					}
+					runCtx, stopRun := context.WithCancel(ctx)
+					done := make(chan error, 1)
+					go func() { done <- srv.Run(runCtx) }()
+					t.Cleanup(func() {
+						srv.Close()
+						stopRun()
+					})
+					cc := c
+					cc.Endpoint.Address = waitBound(t, base, done).String()
+					conn := connect(t, ctx, cc, state, target)
+					defer conn.Close()
+					select {
+					case <-base.accepted:
+					case <-time.After(5 * time.Second):
+						t.Fatal("server did not accept the connection")
+					}
+					if stop == "close" {
+						if err := srv.Close(); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						stopRun()
+					}
+					waitDone(t, done)
+					if err := readErr(t, conn); err == nil {
+						t.Fatal("client read succeeded after the server stopped")
+					}
+					if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
+						t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
+					}
+				})
+			}
+		}
 	}
 }
 
