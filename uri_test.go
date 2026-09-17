@@ -46,6 +46,7 @@ func TestParseURI(t *testing.T) {
 			back: "http+cmd:nc host 1?password=p&username=u",
 		},
 		{uri: "http+unix://./a%3Fb%23c.sock", want: Chain{Layers: []Layer{{Scheme: "http"}}, Endpoint: Endpoint{Network: "unix", Address: "./a?b#c.sock"}}},
+		{uri: "http+unix://./u@x.sock", want: Chain{Layers: []Layer{{Scheme: "http"}}, Endpoint: Endpoint{Network: "unix", Address: "./u@x.sock"}}},
 		{
 			uri:  "ssh://u@" + addr + "?identity_file=a&identity_file=b",
 			want: Chain{Layers: []Layer{{Scheme: "ssh", Options: Options{"username": "u", "identity_file": "b"}}}, Endpoint: Endpoint{Address: addr}},
@@ -132,6 +133,10 @@ func TestURIRejectsUnrepresentable(t *testing.T) {
 		{Endpoint: Endpoint{Network: "cmd", Address: "nc host 1?x"}},
 		{Endpoint: Endpoint{Network: "cmd", Address: "nc host#1"}},
 		{Endpoint: Endpoint{Network: "cmd", Address: "/usr/bin/nc host 1"}},
+		{Layers: []Layer{{Scheme: "http"}}, Endpoint: Endpoint{Network: "unix", Address: "u@x.sock"}},
+		{Endpoint: Endpoint{Network: "unix", Address: "a:b.sock"}},
+		{Endpoint: Endpoint{Network: "tcp", Address: "a/b"}},
+		{Layers: []Layer{{Scheme: "http"}}, Endpoint: Endpoint{Address: "a b"}},
 	}
 	for _, c := range tests {
 		if _, err := c.URI(); !errors.Is(err, ErrInvalidChain) {

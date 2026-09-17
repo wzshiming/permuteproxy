@@ -32,6 +32,9 @@ func (n *fakeNet) ListenPacket(_ context.Context, network, address string) (net.
 }
 
 func netName(n Network) string {
+	if b, ok := n.(borrowed); ok {
+		n = b.Network
+	}
 	if f, ok := n.(*fakeNet); ok {
 		return f.name
 	}
@@ -46,6 +49,17 @@ type fakeServer struct{}
 func (fakeServer) Run(context.Context) error { return nil }
 
 func (fakeServer) Close() error { return nil }
+
+type closableNet struct{ fakeNet }
+
+func (n *closableNet) Close() error { record("%s.close", n.name); return nil }
+
+type closableTransport struct {
+	Transport
+	name string
+}
+
+func (t closableTransport) Close() error { record("%s.close", t.name); return nil }
 
 func taint(name string, opts Options) {
 	if opts["seen"] != "" {
@@ -136,6 +150,12 @@ func init() {
 	RegisterLayer("any", anyProxy)
 	RegisterLayer("wide", wideAdapter())
 	RegisterLayer("niladapter", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
+	RegisterLayer("closable", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(inner Transport, _ Options) (Transport, error) {
+		return closableTransport{inner, "closable"}, nil
+	}})
+	RegisterLayer("closableproxy", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Client: func(Transport, Network, Options) (Network, error) {
+		return &closableNet{fakeNet{name: "closableproxy"}}, nil
+	}})
 	RegisterLayer("nilproxy", Spec{
 		Kind:     KindProxy,
 		Requires: Stream,
@@ -144,6 +164,7 @@ func init() {
 		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
 	})
 	RegisterAlias("https", "http+tls")
+	RegisterAlias("later", "pending+tls")
 }
 
 func mustPanic(t *testing.T, name string, f func()) {
@@ -172,6 +193,22 @@ func TestRegisterRejects(t *testing.T) {
 	mustPanic(t, "password without username", func() {
 		RegisterLayer("pw", Spec{Requires: Stream, Provides: Stream, PasswordOption: "p", Adapt: adapter.Adapt})
 	})
+	for name, spec := range map[string]Spec{
+		"requires":  {Requires: 4, Provides: Stream, Adapt: adapter.Adapt},
+		"provides":  {Requires: Stream, Provides: 4, Adapt: adapter.Adapt},
+		"preserves": {Requires: Stream, Provides: Stream, Preserves: 4, Adapt: adapter.Adapt},
+	} {
+		mustPanic(t, "unknown plane bit in "+name, func() { RegisterLayer("bit."+name, spec) })
+	}
+	for _, name := range []string{"Upper", "cmd_nc", "1bad", "a b", "-x", ".x"} {
+		mustPanic(t, "name "+name, func() { RegisterLayer(name, adapter) })
+	}
+	RegisterLayer("ok.name-1", adapter)
+	mustPanic(t, "dual-plane network", func() { RegisterNetwork("dual", NetworkSpec{Plane: Stream | Packet}) })
+	mustPanic(t, "nested alias", func() { RegisterAlias("nested", "https+tcp") })
+	mustPanic(t, "self alias", func() { RegisterAlias("self", "self") })
+	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", "HTTP+tls") })
+	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", "snappy") })
 	if _, ok := lookupLayer("na"); ok {
 		t.Fatal("rejected layer was registered")
 	}

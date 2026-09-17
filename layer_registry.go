@@ -2,6 +2,7 @@ package permuteproxy
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ var (
 	layers     = map[string]Spec{}
 	networks   = map[string]NetworkSpec{}
 	aliases    = map[string][]string{}
+	// validName is what url.Parse yields for a lower-cased scheme token, minus the '+' separator.
+	validName = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 )
 
 func init() {
@@ -28,7 +31,7 @@ func init() {
 }
 
 func checkName(name string) {
-	if name == "" || strings.Contains(name, "+") {
+	if !validName.MatchString(name) {
 		panic(fmt.Sprintf("permuteproxy: malformed name %q", name))
 	}
 	if _, ok := layers[name]; ok {
@@ -46,7 +49,7 @@ func RegisterNetwork(name string, spec NetworkSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	checkName(name)
-	if spec.Plane == 0 || spec.Plane&^(Stream|Packet) != 0 || spec.AddressKind > AddressOpaque {
+	if spec.Plane != Stream && spec.Plane != Packet || spec.AddressKind > AddressOpaque {
 		panic(fmt.Sprintf("permuteproxy: malformed network %q", name))
 	}
 	networks[name] = spec
@@ -58,6 +61,7 @@ func RegisterLayer(name string, spec Spec) {
 	checkName(name)
 	switch {
 	case spec.Requires|spec.Preserves == 0, spec.Provides|spec.Preserves == 0,
+		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
 		spec.PasswordOption != "" && spec.UsernameOption == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
 	case spec.Kind == KindAdapter && (spec.Adapt == nil || spec.Client != nil || spec.Server != nil):
@@ -77,8 +81,15 @@ func RegisterAlias(alias, expansion string) {
 	checkName(alias)
 	tokens := strings.Split(expansion, "+")
 	for _, t := range tokens {
-		if t == "" {
+		if _, nested := aliases[t]; nested || t == alias || !validName.MatchString(t) {
 			panic(fmt.Sprintf("permuteproxy: malformed alias %q=%q", alias, expansion))
+		}
+	}
+	for name, exp := range aliases {
+		for _, t := range exp {
+			if t == alias {
+				panic(fmt.Sprintf("permuteproxy: alias %q is expanded by alias %q", alias, name))
+			}
 		}
 	}
 	aliases[alias] = tokens

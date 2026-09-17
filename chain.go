@@ -120,6 +120,17 @@ func addressKind(network string) AddressKind {
 	return AddressHost
 }
 
+// address is the endpoint text a parsed URI carries for the given kind.
+func address(u *url.URL, kind AddressKind) string {
+	switch kind {
+	case AddressPath:
+		return u.Host + u.Path
+	case AddressOpaque:
+		return u.Opaque
+	}
+	return u.Host
+}
+
 func ParseURI(raw string) (Chain, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -134,14 +145,7 @@ func ParseURI(raw string) (Chain, error) {
 		c.Endpoint.Network = tokens[len(tokens)-1]
 		tokens = tokens[:len(tokens)-1]
 	}
-	switch addressKind(c.Endpoint.Network) {
-	case AddressHost:
-		c.Endpoint.Address = u.Host
-	case AddressPath:
-		c.Endpoint.Address = u.Host + u.Path
-	case AddressOpaque:
-		c.Endpoint.Address = u.Opaque
-	}
+	c.Endpoint.Address = address(u, addressKind(c.Endpoint.Network))
 	for _, t := range tokens {
 		c.Layers = append(c.Layers, Layer{Scheme: t})
 	}
@@ -232,12 +236,14 @@ func (c Chain) URI() (string, error) {
 	case AddressPath:
 		u.Path = c.Endpoint.Address
 	case AddressOpaque:
-		// Opaque text is emitted verbatim, so anything url.Parse would split off cannot round-trip.
-		if strings.ContainsAny(c.Endpoint.Address, "?#") || strings.HasPrefix(c.Endpoint.Address, "/") {
-			return "", fmt.Errorf("endpoint: opaque address not representable as URI: %w", ErrInvalidChain)
-		}
 		u.Opaque = c.Endpoint.Address
 	}
 	u.RawQuery = query.Encode()
-	return u.String(), nil
+	// url.URL escapes or splits some addresses into other components, so only text that reads back is emitted.
+	s := u.String()
+	p, err := url.Parse(s)
+	if err != nil || p.User.String() != u.User.String() || address(p, kind) != c.Endpoint.Address {
+		return "", fmt.Errorf("endpoint: address not representable as URI: %w", ErrInvalidChain)
+	}
+	return s, nil
 }

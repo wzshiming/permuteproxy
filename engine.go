@@ -6,6 +6,8 @@ import (
 
 // Engine builds chains; a nil Base uses the endpoint network's registered implementation or the
 // system net package, a nil Upstream gives servers direct system networking.
+// Transport and Client results implement io.Closer, forwarding to the layer's own result; Base and
+// Upstream are borrowed and never closed through them.
 type Engine struct {
 	Base     Network
 	Upstream Network
@@ -31,7 +33,7 @@ func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 		if next == nil {
 			return nil, fmt.Errorf("layer %q: Adapt returned nil", c.Layers[i].Scheme)
 		}
-		t = TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}
+		t = pinned{TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
 	}
 	return t, nil
 }
@@ -71,7 +73,7 @@ func (e Engine) Client(c Chain) (Network, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := spec.Client(inner, e.network(r), c.Layers[0].Options.clone())
+	n, err := spec.Client(inner, borrowed{e.network(r)}, c.Layers[0].Options.clone())
 	if err != nil {
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
 	}

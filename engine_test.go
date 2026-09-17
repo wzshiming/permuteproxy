@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -361,5 +362,42 @@ func TestEngineRejectsNilResults(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("%s: got %v, want an error naming the nil result", name, err)
 		}
+	}
+}
+
+func TestEngineForwardsClose(t *testing.T) {
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	tests := []struct {
+		uri   string
+		proxy bool
+		want  []string
+	}{
+		{"closable+tls://127.0.0.1:1", false, []string{"closable.close"}},
+		{"tls://127.0.0.1:1", false, nil},
+		{"closableproxy://127.0.0.1:1", true, []string{"closableproxy.close"}},
+		{"http://127.0.0.1:1", true, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.uri, func(t *testing.T) {
+			var got any
+			var err error
+			if tt.proxy {
+				got, err = e.Client(parse(t, tt.uri))
+			} else {
+				got, err = e.Transport(parse(t, tt.uri))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			c, ok := got.(io.Closer)
+			if !ok {
+				t.Fatal("result has no Close")
+			}
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			assertCalls(t, tt.want...)
+		})
 	}
 }

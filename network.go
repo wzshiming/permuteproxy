@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -80,6 +81,27 @@ func (t TransportFuncs) ListenPacket(ctx context.Context) (net.PacketConn, error
 	}
 	return t.ListenPacketFunc(ctx)
 }
+
+func closeIf(v any) error {
+	if c, ok := v.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+// pinned gates a layer's result to its resolved plane; Close reaches the result when it has one.
+type pinned struct {
+	TransportFuncs
+	result Transport
+}
+
+func (p pinned) Close() error {
+	return closeIf(p.result)
+}
+
+// borrowed hides everything but Network on an injected base, so a constructor returning it hands
+// back nothing closable.
+type borrowed struct{ Network }
 
 var native Network = &NetworkFuncs{
 	DialContextFunc:  (&net.Dialer{}).DialContext,
@@ -173,4 +195,8 @@ func (n restricted) ListenPacket(ctx context.Context, network, address string) (
 		return nil, err
 	}
 	return n.network.ListenPacket(ctx, network, address)
+}
+
+func (n restricted) Close() error {
+	return closeIf(n.network)
 }
