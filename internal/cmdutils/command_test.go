@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,5 +104,137 @@ func TestDialCloseCancelsCommand(t *testing.T) {
 	}
 	if ctx.Err() == nil {
 		t.Fatal("command context still alive after Close")
+	}
+}
+
+func TestDialCloseLetsCommandExitBeforeCancel(t *testing.T) {
+	var alive atomic.Bool
+	dial := func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		local, _ := net.Pipe()
+		return netutils.ConnWithCloser(local, func() error {
+			alive.Store(ctx.Err() == nil)
+			return local.Close()
+		}), nil
+	}
+	conn, err := DialContext(context.Background(), dial, testAddr, testAddr, []string{"fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !alive.Load() {
+		t.Fatal("command context cancelled before its stdio was closed")
+	}
+}
+
+// exitDial wraps pipeDial so each conn's Close blocks until exit is closed, like a command that
+// is still running; every start is reported on dials.
+func exitDial(peers chan<- net.Conn, ctxs chan<- context.Context, dials chan<- struct{}, exit <-chan struct{}) Dial {
+	dial := pipeDial(peers, ctxs)
+	return func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		dials <- struct{}{}
+		conn, err := dial(ctx, name, args...)
+		if err != nil {
+			return nil, err
+		}
+		return netutils.ConnWithCloser(conn, func() error {
+			<-exit
+			return conn.Close()
+		}), nil
+	}
+}
+
+func recv[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s did not happen", what)
+		var zero T
+		return zero
+	}
+}
+
+func TestListenerAcceptWaitsForPreviousConnClose(t *testing.T) {
+	peers, ctxs := make(chan net.Conn, 2), make(chan context.Context, 2)
+	dials, exit := make(chan struct{}, 2), make(chan struct{})
+	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for peer := range peers {
+			peer.Write([]byte{1})
+		}
+	}()
+	first, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-dials
+	second := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			conn.Close()
+		}
+		second <- err
+	}()
+	closed := make(chan error, 1)
+	go func() { closed <- first.Close() }()
+	select {
+	case <-dials:
+		t.Fatal("next command started before the previous connection was released")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(exit)
+	if err := recv(t, closed, "Close"); err != nil {
+		t.Fatal(err)
+	}
+	recv(t, dials, "next command")
+	if err := recv(t, second, "second Accept"); err != nil {
+		t.Fatal(err)
+	}
+	close(peers)
+}
+
+func TestListenerCloseInterruptsWaitForPreviousConn(t *testing.T) {
+	peers, ctxs := make(chan net.Conn, 2), make(chan context.Context, 2)
+	dials, exit := make(chan struct{}, 2), make(chan struct{})
+	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		peer := <-peers
+		peer.Write([]byte{1})
+	}()
+	first, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-dials
+	second := make(chan error, 1)
+	go func() {
+		_, err := ln.Accept()
+		second <- err
+	}()
+	closed := make(chan error, 1)
+	go func() { closed <- first.Close() }()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := recv(t, second, "second Accept"); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Accept = %v, want net.ErrClosed", err)
+	}
+	if len(dials) != 0 {
+		t.Fatal("next command started after Close")
+	}
+	close(exit)
+	if err := recv(t, closed, "Close"); err != nil {
+		t.Fatal(err)
 	}
 }

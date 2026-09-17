@@ -12,8 +12,6 @@ github.com/wzshiming/anyproxy v0.8.0 h1:WWN1O6hZlDCWaXE1oI4k3r/3eva1np7RMMg2tQh5
 github.com/wzshiming/anyproxy v0.8.0/go.mod h1:XFQD/eE9Bx+KTkuKSx1n6HSV5QKPIi1anZkkfz6mdS4=
 github.com/wzshiming/cmux v0.4.2 h1:tI73lL5ztVfiqw7R5m5BkxT1+vQ2PBo/oV6qPbNGPiA=
 github.com/wzshiming/cmux v0.4.2/go.mod h1:JgE61QfZAjEyNMX0iZo9zIKY6pr9bHVY132yYPwHW5U=
-github.com/wzshiming/commandproxy v0.2.0 h1:uPVhgIj2YSncRUo6g9smGR6OMzsIg7lwklcMHPPmEeM=
-github.com/wzshiming/commandproxy v0.2.0/go.mod h1:wS6+aJ9KMHciqYX3xmDO0W+QVY0zvngeBvmoIFMfq8A=
 github.com/wzshiming/hostmatcher v0.0.1 h1:vPrUEXsd+khvN5W7I4rJ73vYaUvnBCodvtuyCU+q1HQ=
 github.com/wzshiming/hostmatcher v0.0.1/go.mod h1:3EyfIDuzQyo0tqrCtcUkD5UvAsdxOUb/RbcYOiPTh1E=
 github.com/wzshiming/httpproxy v0.6.1 h1:XZ2LhrgyLkwa/IiaZM9u4pMYy15uPE7/AAA4HKIScMU=

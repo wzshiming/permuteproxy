@@ -10,7 +10,8 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-// Dial starts a command whose stdio becomes the connection; cancelling ctx ends the command.
+// Dial starts a command whose stdio becomes the connection. Closing the conn ends the command's
+// input and returns once the command has exited; cancelling ctx kills it.
 type Dial func(ctx context.Context, name string, args ...string) (net.Conn, error)
 
 func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Conn, error) {
@@ -21,8 +22,9 @@ func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr,
 		return nil, err
 	}
 	conn := netutils.ConnWithCloser(stdio, func() error {
+		err := stdio.Close()
 		cancel()
-		return stdio.Close()
+		return err
 	})
 	return netutils.ConnWithAddr(conn, localAddr, remoteAddr), nil
 }
@@ -47,6 +49,7 @@ type listener struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 	mu         sync.Mutex
+	released   <-chan struct{}
 }
 
 type accepted struct {
@@ -55,10 +58,18 @@ type accepted struct {
 }
 
 // Accept starts one command and hands it over once the peer sends its first byte, the only
-// signal a subprocess offers that a connection arrived.
+// signal a subprocess offers that a connection arrived. The command starts only after the
+// previous connection has been closed, since its process still holds the listening address.
 func (l *listener) Accept() (net.Conn, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.released != nil {
+		select {
+		case <-l.released:
+		case <-l.ctx.Done():
+			return nil, net.ErrClosed
+		}
+	}
 	if l.ctx.Err() != nil {
 		return nil, net.ErrClosed
 	}
@@ -89,7 +100,17 @@ func (l *listener) Accept() (net.Conn, error) {
 		}()
 		return nil, net.ErrClosed
 	case r := <-results:
-		return r.conn, r.err
+		if r.err != nil {
+			return nil, r.err
+		}
+		released := make(chan struct{})
+		l.released = released
+		var once sync.Once
+		return netutils.ConnWithCloser(r.conn, func() error {
+			err := r.conn.Close()
+			once.Do(func() { close(released) })
+			return err
+		}), nil
 	}
 }
 

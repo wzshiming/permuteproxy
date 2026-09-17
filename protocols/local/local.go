@@ -2,9 +2,9 @@ package local
 
 import (
 	"context"
+	"io"
 	"net"
-
-	"github.com/wzshiming/commandproxy"
+	"os/exec"
 )
 
 // Local is the process-local Network: system networking plus the cmd-* subprocess transports.
@@ -15,8 +15,40 @@ type Local struct {
 
 var Network = &Local{Command: command}
 
+// command runs name with its stdin fed by the conn's writes and its stdout readable from the conn.
+// Closing the conn ends the command's input and returns once it has exited; ctx kills it.
 func command(ctx context.Context, name string, args ...string) (net.Conn, error) {
-	return commandproxy.ProxyCommand(ctx, name, args...).Stdio()
+	cmd := exec.CommandContext(ctx, name, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	local, peer := net.Pipe()
+	cmd.Stdin = peer
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		io.Copy(peer, stdout)
+		peer.Close()
+		// Keep draining so the command can still exit after the conn stopped reading.
+		io.Copy(io.Discard, stdout)
+		cmd.Wait()
+	}()
+	return &commandConn{Conn: local, exited: exited}, nil
+}
+
+type commandConn struct {
+	net.Conn
+	exited <-chan struct{}
+}
+
+func (c *commandConn) Close() error {
+	err := c.Conn.Close()
+	<-c.exited
+	return err
 }
 
 func (l *Local) DialContext(ctx context.Context, network, address string) (net.Conn, error) {

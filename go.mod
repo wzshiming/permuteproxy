@@ -9,7 +9,6 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/wzshiming/anyproxy v0.8.0
 	github.com/wzshiming/cmux v0.4.2
-	github.com/wzshiming/commandproxy v0.2.0
 	github.com/wzshiming/hostmatcher v0.0.1
 	github.com/wzshiming/httpproxy v0.6.1
 	github.com/wzshiming/shadowsocks v0.4.2

@@ -53,6 +53,7 @@ func assertClosed(t *testing.T, addr net.Addr) {
 
 func TestServerCloseStopsRun(t *testing.T) {
 	bound := make(chan net.Addr, 1)
+	started := make(chan struct{})
 	var served atomic.Int32
 	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
@@ -62,10 +63,12 @@ func TestServerCloseStopsRun(t *testing.T) {
 		return ln, err
 	}, func(ctx context.Context, ln net.Listener) error {
 		served.Add(1)
+		close(started)
 		return acceptLoop(ctx, ln)
 	})
 	done := run(s, context.Background())
 	addr := <-bound
+	<-started
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
