@@ -41,6 +41,12 @@ func netName(n Network) string {
 	return "?"
 }
 
+type fakeServer struct{}
+
+func (fakeServer) Run(context.Context) error { return nil }
+
+func (fakeServer) Close() error { return nil }
+
 func taint(name string, opts Options) {
 	if opts["seen"] != "" {
 		record("%s.dirty", name)
@@ -91,7 +97,25 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 		Server: func(inner Transport, upstream Network, opts Options) (Server, error) {
 			record("%s.server %v upstream=%s", name, inner.Planes(), netName(upstream))
 			taint(name, opts)
-			return nil, nil
+			return fakeServer{}, nil
+		},
+	}
+}
+
+// wideAdapter declares Stream but hands back a transport exposing both planes.
+func wideAdapter() Spec {
+	return Spec{
+		Kind:     KindAdapter,
+		Requires: Stream,
+		Provides: Stream,
+		Adapt: func(inner Transport, _ Options) (Transport, error) {
+			record("wide.adapt %v", inner.Planes())
+			return TransportFuncs{
+				Plane:            Stream | Packet,
+				DialFunc:         func(_ context.Context, plane Plane) (net.Conn, error) { record("wide.dial %v", plane); return nil, nil },
+				ListenFunc:       func(context.Context) (net.Listener, error) { record("wide.listen"); return nil, nil },
+				ListenPacketFunc: func(context.Context) (net.PacketConn, error) { record("wide.listenpacket"); return nil, nil },
+			}, nil
 		},
 	}
 }
@@ -110,6 +134,15 @@ func init() {
 	anyProxy := fakeProxy("any", Stream, Stream, 0, "username", "password")
 	anyProxy.Client = nil
 	RegisterLayer("any", anyProxy)
+	RegisterLayer("wide", wideAdapter())
+	RegisterLayer("niladapter", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
+	RegisterLayer("nilproxy", Spec{
+		Kind:     KindProxy,
+		Requires: Stream,
+		Provides: Stream,
+		Client:   func(Transport, Network, Options) (Network, error) { return nil, nil },
+		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
+	})
 	RegisterAlias("https", "http+tls")
 }
 

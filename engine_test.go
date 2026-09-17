@@ -3,6 +3,8 @@ package permuteproxy
 import (
 	"context"
 	"errors"
+	"net"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -75,18 +77,20 @@ func TestEngineTransport(t *testing.T) {
 
 func TestEngineClientServer(t *testing.T) {
 	calls = nil
+	ctx := context.Background()
 	base, upstream := &fakeNet{name: "base"}, &fakeNet{name: "upstream"}
 	e := Engine{Base: base, Upstream: upstream}
 	tests := []struct {
 		uri    string
+		dial   string
 		client string
 		server string
 	}{
-		{"ss://127.0.0.1:1", "ss.client stream|packet base=base", "ss.server stream|packet upstream=upstream"},
-		{"ss+tls://127.0.0.1:1", "ss.client stream base=base", "ss.server stream upstream=upstream"},
-		{"ss+udp://127.0.0.1:1", "ss.client packet base=base", "ss.server packet upstream=upstream"},
-		{"socks5+quic://127.0.0.1:1", "socks5.client stream base=base", "socks5.server stream upstream=upstream"},
-		{"http://u:p@127.0.0.1:1", "http.client stream base=base", "http.server stream upstream=upstream"},
+		{"ss://127.0.0.1:1", "tcp", "ss.client stream|packet base=base", "ss.server stream|packet upstream=upstream"},
+		{"ss+tls://127.0.0.1:1", "tcp", "ss.client stream base=base", "ss.server stream upstream=upstream"},
+		{"ss+udp://127.0.0.1:1", "udp", "ss.client packet base=base", "ss.server packet upstream=upstream"},
+		{"socks5+quic://127.0.0.1:1", "tcp", "socks5.client stream base=base", "socks5.server stream upstream=upstream"},
+		{"http://u:p@127.0.0.1:1", "tcp", "http.client stream base=base", "http.server stream upstream=upstream"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
@@ -95,8 +99,8 @@ func TestEngineClientServer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n != Network(base) {
-				t.Fatalf("Client() returned %v, want the base passed to the constructor", n)
+			if _, err := n.DialContext(ctx, tt.dial, "x:1"); err != nil {
+				t.Fatal(err)
 			}
 			if _, err := e.Server(c); err != nil {
 				t.Fatal(err)
@@ -105,7 +109,7 @@ func TestEngineClientServer(t *testing.T) {
 			if len(c.Layers) > 1 {
 				want = append(want, c.Layers[1].Scheme+".adapt "+adapterCarrier(c))
 			}
-			want = append(want, tt.client)
+			want = append(want, tt.client, "base.dial "+tt.dial+" x:1")
 			if len(c.Layers) > 1 {
 				want = append(want, c.Layers[1].Scheme+".adapt "+adapterCarrier(c))
 			}
@@ -181,6 +185,48 @@ func TestFuncsUnsupported(t *testing.T) {
 	}
 }
 
+func TestFuncsPlaneGating(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	stream := TransportFuncs{
+		Plane:            Stream,
+		DialFunc:         func(_ context.Context, plane Plane) (net.Conn, error) { record("dial %v", plane); return nil, nil },
+		ListenFunc:       func(context.Context) (net.Listener, error) { record("listen"); return nil, nil },
+		ListenPacketFunc: func(context.Context) (net.PacketConn, error) { record("listenpacket"); return nil, nil },
+	}
+	packet, dual := stream, stream
+	packet.Plane, dual.Plane = Packet, Stream|Packet
+	refused := map[string]func() error{
+		"stream dial none":    func() error { _, err := stream.Dial(ctx, 0); return err },
+		"stream dial both":    func() error { _, err := stream.Dial(ctx, Stream|Packet); return err },
+		"stream dial packet":  func() error { _, err := stream.Dial(ctx, Packet); return err },
+		"stream listenpacket": func() error { _, err := stream.ListenPacket(ctx); return err },
+		"packet dial stream":  func() error { _, err := packet.Dial(ctx, Stream); return err },
+		"packet listen":       func() error { _, err := packet.Listen(ctx); return err },
+		"dual dial both":      func() error { _, err := dual.Dial(ctx, Stream|Packet); return err },
+		"dual dial none":      func() error { _, err := dual.Dial(ctx, 0); return err },
+	}
+	for name, op := range refused {
+		if err := op(); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%s = %v, want ErrUnsupported", name, err)
+		}
+		assertCalls(t)
+	}
+	for _, op := range []func() error{
+		func() error { _, err := stream.Dial(ctx, Stream); return err },
+		func() error { _, err := stream.Listen(ctx); return err },
+		func() error { _, err := packet.Dial(ctx, Packet); return err },
+		func() error { _, err := packet.ListenPacket(ctx); return err },
+		func() error { _, err := dual.Dial(ctx, Packet); return err },
+		func() error { _, err := dual.Listen(ctx); return err },
+	} {
+		if err := op(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCalls(t, "dial stream", "listen", "dial packet", "listenpacket", "dial packet", "listen")
+}
+
 func TestEngineBaseSelection(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
@@ -201,11 +247,119 @@ func TestEngineBaseSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "base.dial fakenet x")
-	tr, err = Engine{}.Transport(mk("tcp"))
+	tr, err = Engine{}.Transport(Chain{Endpoint: Endpoint{Network: "tcp", Address: "127.0.0.1:0"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, ok := tr.(*bound); !ok || b.network != native {
-		t.Fatalf("zero Engine bound %#v, want native", tr)
+	ln, err := tr.Listen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if ln.Addr().Network() != "tcp" {
+		t.Fatalf("zero Engine listened on %v, want the system tcp network", ln.Addr())
+	}
+	assertCalls(t)
+}
+
+func TestEngineRestrictsTransport(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(parse(t, "wide://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "wide.adapt stream")
+	if tr.Planes() != Stream {
+		t.Fatalf("Planes() = %v, want the declared stream", tr.Planes())
+	}
+	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Packet) = %v, want ErrUnsupported", err)
+	}
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ListenPacket() = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+	if _, err := tr.Dial(ctx, Stream); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Listen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "wide.dial stream", "wide.listen")
+}
+
+func netOp(ctx context.Context, n Network, op string) error {
+	kind, network, _ := strings.Cut(op, " ")
+	var err error
+	switch kind {
+	case "dial":
+		_, err = n.DialContext(ctx, network, "x:1")
+	case "listen":
+		_, err = n.Listen(ctx, network, "x:1")
+	case "listenpacket":
+		_, err = n.ListenPacket(ctx, network, "x:1")
+	}
+	return err
+}
+
+func TestEngineRestrictsClient(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		uri     string
+		allowed []string
+		refused []string
+	}{
+		{
+			"http://127.0.0.1:1",
+			[]string{"dial tcp", "dial tcp4", "dial unix", "dial fakenet", "listen tcp6"},
+			[]string{"dial udp", "dial unixgram", "dial bogus", "dial ", "listen udp", "listenpacket tcp", "listenpacket udp"},
+		},
+		{
+			"ss+udp://127.0.0.1:1",
+			[]string{"dial udp", "dial udp6", "dial unixgram", "listenpacket udp4"},
+			[]string{"dial tcp", "dial bogus", "listen tcp", "listen udp", "listenpacket tcp"},
+		},
+		{
+			"ss://127.0.0.1:1",
+			[]string{"dial tcp", "dial udp", "listen unix", "listenpacket unixgram"},
+			[]string{"dial bogus", "listen udp", "listenpacket tcp"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.uri, func(t *testing.T) {
+			n, err := e.Client(parse(t, tt.uri))
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			for _, op := range tt.refused {
+				if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
+					t.Fatalf("%q = %v, want ErrUnsupported", op, err)
+				}
+				assertCalls(t)
+			}
+			for _, op := range tt.allowed {
+				if err := netOp(ctx, n, op); err != nil {
+					t.Fatalf("%q = %v", op, err)
+				}
+				assertCalls(t, "base."+op+" x:1")
+			}
+		})
+	}
+}
+
+func TestEngineRejectsNilResults(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	for name, err := range map[string]error{
+		"adapter": func() error { _, err := e.Transport(parse(t, "niladapter://x:1")); return err }(),
+		"client":  func() error { _, err := e.Client(parse(t, "nilproxy://x:1")); return err }(),
+		"server":  func() error { _, err := e.Server(parse(t, "nilproxy://x:1")); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "nil") {
+			t.Fatalf("%s: got %v, want an error naming the nil result", name, err)
+		}
 	}
 }

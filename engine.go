@@ -24,11 +24,14 @@ func (e Engine) network(r *resolved) Network {
 func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 	var t Transport = &bound{network: e.network(r), stream: r.stream, packet: r.packet, address: c.Endpoint.Address}
 	for i := len(c.Layers) - 1; i >= from; i-- {
-		var err error
-		t, err = r.specs[i].Adapt(t, c.Layers[i].Options.clone())
+		next, err := r.specs[i].Adapt(t, c.Layers[i].Options.clone())
 		if err != nil {
 			return nil, fmt.Errorf("layer %q: %w", c.Layers[i].Scheme, err)
 		}
+		if next == nil {
+			return nil, fmt.Errorf("layer %q: Adapt returned nil", c.Layers[i].Scheme)
+		}
+		t = TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}
 	}
 	return t, nil
 }
@@ -72,7 +75,10 @@ func (e Engine) Client(c Chain) (Network, error) {
 	if err != nil {
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
 	}
-	return n, nil
+	if n == nil {
+		return nil, fmt.Errorf("layer %q: Client returned nil", scheme)
+	}
+	return restricted{network: n, plane: r.planes[0]}, nil
 }
 
 func (e Engine) Server(c Chain) (Server, error) {
@@ -95,6 +101,9 @@ func (e Engine) Server(c Chain) (Server, error) {
 	s, err := spec.Server(inner, upstream, c.Layers[0].Options.clone())
 	if err != nil {
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
+	}
+	if s == nil {
+		return nil, fmt.Errorf("layer %q: Server returned nil", scheme)
 	}
 	return s, nil
 }

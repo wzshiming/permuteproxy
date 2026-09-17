@@ -41,6 +41,12 @@ func TestParseURI(t *testing.T) {
 		{uri: "cmd:ssh -W %h:%p host", want: Chain{Endpoint: Endpoint{Network: "cmd", Address: "ssh -W %h:%p host"}}},
 		{uri: "socks5+cmd:nc host 1", want: Chain{Layers: []Layer{{Scheme: "socks5"}}, Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}}},
 		{
+			uri:  "http+cmd:nc host 1?username=u&password=p",
+			want: Chain{Layers: []Layer{{Scheme: "http", Options: Options{"username": "u", "password": "p"}}}, Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}},
+			back: "http+cmd:nc host 1?password=p&username=u",
+		},
+		{uri: "http+unix://./a%3Fb%23c.sock", want: Chain{Layers: []Layer{{Scheme: "http"}}, Endpoint: Endpoint{Network: "unix", Address: "./a?b#c.sock"}}},
+		{
 			uri:  "ssh://u@" + addr + "?identity_file=a&identity_file=b",
 			want: Chain{Layers: []Layer{{Scheme: "ssh", Options: Options{"username": "u", "identity_file": "b"}}}, Endpoint: Endpoint{Address: addr}},
 			back: "ssh://u@" + addr + "?identity_file=b",
@@ -100,14 +106,18 @@ func TestParseURIErrors(t *testing.T) {
 		"tls+socks5://x",
 		"http://x?bogus=1",
 		"socks4://u:p@x",
+		"http://u:p%qZ@x",
+		"http://u:p@x?password=%qZ",
+		"http://x?%qZ=1",
+		"http://u:p@x:qZ",
 	} {
 		t.Run(uri, func(t *testing.T) {
 			_, err := ParseURI(uri)
 			if !errors.Is(err, ErrInvalidChain) {
 				t.Fatalf("ParseURI(%q) = %v, want ErrInvalidChain", uri, err)
 			}
-			if strings.Contains(err.Error(), "u:p") {
-				t.Fatalf("error leaks credentials: %v", err)
+			if msg := err.Error(); strings.Contains(msg, "u:p") || strings.Contains(msg, "qZ") {
+				t.Fatalf("error echoes input: %v", err)
 			}
 		})
 	}
@@ -119,6 +129,9 @@ func TestURIRejectsUnrepresentable(t *testing.T) {
 		{Layers: []Layer{{Scheme: "tls", Options: Options{"tls_skip_verify": "true"}}, {Scheme: "tls", Options: Options{"tls_skip_verify": "true"}}}, Endpoint: Endpoint{Address: "x:1"}},
 		{Layers: []Layer{{Scheme: "http", Options: Options{"bogus": "1"}}}, Endpoint: Endpoint{Address: "x:1"}},
 		{Layers: []Layer{{Scheme: "xxx"}}, Endpoint: Endpoint{Address: "x:1"}},
+		{Endpoint: Endpoint{Network: "cmd", Address: "nc host 1?x"}},
+		{Endpoint: Endpoint{Network: "cmd", Address: "nc host#1"}},
+		{Endpoint: Endpoint{Network: "cmd", Address: "/usr/bin/nc host 1"}},
 	}
 	for _, c := range tests {
 		if _, err := c.URI(); !errors.Is(err, ErrInvalidChain) {

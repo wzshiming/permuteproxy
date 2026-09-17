@@ -61,21 +61,21 @@ func (t TransportFuncs) Planes() Plane {
 }
 
 func (t TransportFuncs) Dial(ctx context.Context, plane Plane) (net.Conn, error) {
-	if t.DialFunc == nil || t.Plane&plane != plane {
+	if t.DialFunc == nil || (plane != Stream && plane != Packet) || t.Plane&plane == 0 {
 		return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 	}
 	return t.DialFunc(ctx, plane)
 }
 
 func (t TransportFuncs) Listen(ctx context.Context) (net.Listener, error) {
-	if t.ListenFunc == nil {
+	if t.ListenFunc == nil || t.Plane&Stream == 0 {
 		return nil, fmt.Errorf("listen: %w", ErrUnsupported)
 	}
 	return t.ListenFunc(ctx)
 }
 
 func (t TransportFuncs) ListenPacket(ctx context.Context) (net.PacketConn, error) {
-	if t.ListenPacketFunc == nil {
+	if t.ListenPacketFunc == nil || t.Plane&Packet == 0 {
 		return nil, fmt.Errorf("listen packet: %w", ErrUnsupported)
 	}
 	return t.ListenPacketFunc(ctx)
@@ -125,4 +125,52 @@ func (b *bound) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 		return nil, fmt.Errorf("listen packet on %s: %w", b.address, ErrUnsupported)
 	}
 	return b.network.ListenPacket(ctx, b.packet, b.address)
+}
+
+// familyPlane maps a Go network name to its plane; unknown names are refused rather than assumed tcp.
+func familyPlane(network string) (Plane, bool) {
+	switch network {
+	case "tcp4", "tcp6":
+		return Stream, true
+	case "udp4", "udp6":
+		return Packet, true
+	}
+	if ns, ok := lookupNetwork(network); ok {
+		return ns.Plane, true
+	}
+	return 0, false
+}
+
+// restricted refuses Network operations outside the chain's declared planes before they reach the layer.
+type restricted struct {
+	network Network
+	plane   Plane
+}
+
+func (n restricted) check(op, network string, want Plane) error {
+	if p, ok := familyPlane(network); !ok || p&want&n.plane == 0 {
+		return fmt.Errorf("%s %s: %w", op, network, ErrUnsupported)
+	}
+	return nil
+}
+
+func (n restricted) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if err := n.check("dial", network, Stream|Packet); err != nil {
+		return nil, err
+	}
+	return n.network.DialContext(ctx, network, address)
+}
+
+func (n restricted) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	if err := n.check("listen", network, Stream); err != nil {
+		return nil, err
+	}
+	return n.network.Listen(ctx, network, address)
+}
+
+func (n restricted) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	if err := n.check("listen packet", network, Packet); err != nil {
+		return nil, err
+	}
+	return n.network.ListenPacket(ctx, network, address)
 }

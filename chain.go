@@ -23,8 +23,10 @@ type Chain struct {
 	Endpoint Endpoint `json:"endpoint"`
 }
 
+// resolved holds the looked-up specs; planes[i] is what the chain exposes above layer i.
 type resolved struct {
 	specs  []Spec
+	planes []Plane
 	impl   Network
 	stream string
 	packet string
@@ -49,7 +51,7 @@ func (c Chain) resolve() (*resolved, error) {
 	if c.Endpoint.Address == "" {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
 	}
-	r := &resolved{specs: make([]Spec, len(c.Layers))}
+	r := &resolved{specs: make([]Spec, len(c.Layers)), planes: make([]Plane, len(c.Layers))}
 	for i, l := range c.Layers {
 		spec, ok := lookupLayer(l.Scheme)
 		if !ok {
@@ -101,6 +103,7 @@ func (c Chain) resolve() (*resolved, error) {
 		if avail == 0 {
 			return nil, fmt.Errorf("layer %q provides no plane: %w", c.Layers[i].Scheme, ErrInvalidChain)
 		}
+		r.planes[i] = avail
 	}
 	return r, nil
 }
@@ -120,10 +123,7 @@ func addressKind(network string) AddressKind {
 func ParseURI(raw string) (Chain, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		if ue, ok := err.(*url.Error); ok {
-			err = ue.Err
-		}
-		return Chain{}, fmt.Errorf("uri: %v: %w", err, ErrInvalidChain)
+		return Chain{}, fmt.Errorf("uri: malformed: %w", ErrInvalidChain)
 	}
 	if u.Scheme == "" {
 		return Chain{}, fmt.Errorf("uri: missing scheme: %w", ErrInvalidChain)
@@ -151,7 +151,7 @@ func ParseURI(raw string) (Chain, error) {
 	}
 	query, err := url.ParseQuery(u.RawQuery)
 	if err != nil {
-		return Chain{}, fmt.Errorf("uri: %v: %w", err, ErrInvalidChain)
+		return Chain{}, fmt.Errorf("uri: malformed query: %w", ErrInvalidChain)
 	}
 	for k, vs := range query {
 		i := r.owner(k)
@@ -209,7 +209,9 @@ func (c Chain) URI() (string, error) {
 			query.Set(k, v)
 		}
 	}
-	if len(c.Layers) > 0 {
+	kind := addressKind(c.Endpoint.Network)
+	// url.URL drops userinfo when Opaque is set, so opaque endpoints keep credentials in the query.
+	if len(c.Layers) > 0 && kind != AddressOpaque {
 		spec, opts := r.specs[0], c.Layers[0].Options
 		if username, ok := opts[spec.UsernameOption]; ok {
 			query.Del(spec.UsernameOption)
@@ -224,12 +226,16 @@ func (c Chain) URI() (string, error) {
 		tokens = append(tokens, c.Endpoint.Network)
 	}
 	u.Scheme = strings.Join(foldAliases(tokens), "+")
-	switch addressKind(c.Endpoint.Network) {
+	switch kind {
 	case AddressHost:
 		u.Host = c.Endpoint.Address
 	case AddressPath:
 		u.Path = c.Endpoint.Address
 	case AddressOpaque:
+		// Opaque text is emitted verbatim, so anything url.Parse would split off cannot round-trip.
+		if strings.ContainsAny(c.Endpoint.Address, "?#") || strings.HasPrefix(c.Endpoint.Address, "/") {
+			return "", fmt.Errorf("endpoint: opaque address not representable as URI: %w", ErrInvalidChain)
+		}
 		u.Opaque = c.Endpoint.Address
 	}
 	u.RawQuery = query.Encode()
