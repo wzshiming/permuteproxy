@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,5 +280,223 @@ func TestSOCKS5ServerStopEndsAssociations(t *testing.T) {
 				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
 			}
 		})
+	}
+}
+
+// okTarget serves "OK" over http for the stream side of dual-plane checks.
+func okTarget(t *testing.T) string {
+	t.Helper()
+	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Write([]byte("OK"))
+	}))
+	t.Cleanup(target.Close)
+	return target.URL
+}
+
+func TestShadowsocksPacketEcho(t *testing.T) {
+	for _, uri := range []string{"ss://", "ss://aes-256-gcm:p@"} {
+		t.Run(uri, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			c := parse(t, uri+reservePort(t))
+			base, upstream := newProbe(system), newProbe(system)
+			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+			tcp, udp := waitBound(t, base, done), waitBoundPacket(t, base, done)
+			if tcp.String() != udp.String() {
+				t.Fatalf("bound tcp %v and udp %v, want the declared address on both", tcp, udp)
+			}
+			clientBase := newProbe(system)
+			n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeIf(n)
+			conn := dialPacket(t, ctx, n, udpEcho(t).String())
+			for _, msg := range packetMessages {
+				roundTrip(t, conn, msg)
+			}
+			otherPeer(t, conn)
+			if body, err := fetch(ctx, n, okTarget(t)); err != nil || body != "OK" {
+				t.Fatalf("tcp through the same server: %q, %v", body, err)
+			}
+			if clientBase.dials.Load() != 1 || clientBase.packets.Load() != 1 {
+				t.Fatalf("client base dials %d packets %d, want 1 and 1", clientBase.dials.Load(), clientBase.packets.Load())
+			}
+			// The packet server keeps one outgoing socket per client and target pair.
+			if upstream.dials.Load() != 1 || upstream.packets.Load() != 2 {
+				t.Fatalf("upstream dials %d packets %d, want 1 and 2", upstream.dials.Load(), upstream.packets.Load())
+			}
+		})
+	}
+}
+
+func TestShadowsocksServerStopClosesSessions(t *testing.T) {
+	for _, stop := range []string{"close", "cancel"} {
+		t.Run(stop, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			c := parse(t, "ss://"+reservePort(t))
+			base, upstream := newProbe(system), newProbe(system)
+			srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runCtx, stopRun := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() { done <- srv.Run(runCtx) }()
+			t.Cleanup(func() {
+				srv.Close()
+				stopRun()
+			})
+			waitBound(t, base, done)
+			waitBoundPacket(t, base, done)
+			n, err := permuteproxy.Engine{}.Client(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeIf(n)
+			roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "before")
+			if stop == "close" {
+				if err := srv.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				stopRun()
+			}
+			waitDone(t, done)
+			signaled(t, base.packetClosed, "listening socket close")
+			signaled(t, upstream.packetClosed, "session socket close")
+			if err := srv.Close(); err != nil {
+				t.Fatalf("Close after stop = %v", err)
+			}
+			if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
+				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
+			}
+		})
+	}
+}
+
+func TestShadowsocksExplicitPlanes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	t.Run("udp", func(t *testing.T) {
+		c := parse(t, "ss+udp://127.0.0.1:0")
+		base, upstream := newProbe(system), newProbe(system)
+		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+		c.Endpoint.Address = waitBoundPacket(t, base, done).String()
+		if base.listens.Load() != 0 {
+			t.Fatalf("base listens = %d for a udp-only server", base.listens.Load())
+		}
+		clientBase := newProbe(system)
+		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeIf(n)
+		if _, err := n.DialContext(ctx, "tcp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("DialContext(tcp) over ss+udp = %v, want ErrUnsupported", err)
+		}
+		roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "udp only")
+		if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {
+			t.Fatalf("client base dials %d packets %d, want 0 and 1", clientBase.dials.Load(), clientBase.packets.Load())
+		}
+	})
+	t.Run("tls", func(t *testing.T) {
+		c := parse(t, "ss+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
+		base, upstream := newProbe(system), newProbe(system)
+		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+		c.Endpoint.Address = waitBound(t, base, done).String()
+		clientBase := newProbe(system)
+		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeIf(n)
+		if _, err := n.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("DialContext(udp) over ss+tls = %v, want ErrUnsupported", err)
+		}
+		if _, err := n.ListenPacket(ctx, "udp", ":0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("ListenPacket over ss+tls = %v, want ErrUnsupported", err)
+		}
+		if body, err := fetch(ctx, n, okTarget(t)); err != nil || body != "OK" {
+			t.Fatalf("tcp over ss+tls: %q, %v", body, err)
+		}
+		if clientBase.packets.Load() != 0 || base.packets.Load() != 0 {
+			t.Fatalf("sockets opened for a stream-only carrier: client %d server %d", clientBase.packets.Load(), base.packets.Load())
+		}
+	})
+}
+
+type closeCountListener struct {
+	net.Listener
+	closes *atomic.Int32
+}
+
+func (l closeCountListener) Close() error {
+	l.closes.Add(1)
+	return l.Listener.Close()
+}
+
+func TestShadowsocksBindFailureReleasesListener(t *testing.T) {
+	bindErr := errors.New("udp bind refused")
+	var closes atomic.Int32
+	base := permuteproxy.NetworkFuncs{
+		ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
+			ln, err := system.Listen(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			return closeCountListener{ln, &closes}, nil
+		},
+		ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, bindErr },
+	}
+	srv, err := permuteproxy.Engine{Base: base}.Server(parse(t, "ss://127.0.0.1:0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(context.Background()) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, bindErr) {
+			t.Fatalf("Run = %v, want the udp bind error", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run kept serving with only the listener bound")
+	}
+	if closes.Load() != 1 {
+		t.Fatalf("listener closed %d times after the udp bind failed, want 1", closes.Load())
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close after the failed bind = %v", err)
+	}
+}
+
+func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := parse(t, "ss://aes-256-gcm:p@"+reservePort(t))
+	base, upstream := newProbe(system), newProbe(system)
+	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	waitBound(t, base, done)
+	udp := waitBoundPacket(t, base, done)
+	garbage, err := net.Dial("udp", udp.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := garbage.Write([]byte("not shadowsocks")); err != nil {
+		t.Fatal(err)
+	}
+	garbage.Close()
+	n, err := permuteproxy.Engine{}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(n)
+	roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "after garbage")
+	select {
+	case err := <-done:
+		t.Fatalf("server stopped after a garbage datagram: %v", err)
+	default:
 	}
 }

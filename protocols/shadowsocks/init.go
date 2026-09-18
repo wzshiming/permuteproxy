@@ -5,10 +5,9 @@ import (
 )
 
 func init() {
-	// Preserves grows to Stream|Packet once the UDP side lands.
 	spec := permuteproxy.Spec{
 		Kind:           permuteproxy.KindProxy,
-		Preserves:      permuteproxy.Stream,
+		Preserves:      permuteproxy.Stream | permuteproxy.Packet,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
 		Client:         NewClient,
