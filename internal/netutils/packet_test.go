@@ -399,3 +399,34 @@ func TestDialPacketUnixgramPath(t *testing.T) {
 		t.Fatalf("peer socket removed: %v", err)
 	}
 }
+
+func TestWrapPacket(t *testing.T) {
+	peer := echo(t, "udp")
+	raw, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := WrapPacket(raw, peer)
+	if _, ok := conn.(net.PacketConn); !ok {
+		t.Fatal("conn is not a net.PacketConn")
+	}
+	if conn.RemoteAddr() != peer || conn.LocalAddr().String() != raw.LocalAddr().String() {
+		t.Fatalf("addresses %v -> %v, want %v -> %v", conn.LocalAddr(), conn.RemoteAddr(), raw.LocalAddr(), peer)
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 16)
+	if n, err := conn.Read(buf); err != nil || string(buf[:n]) != "ping" {
+		t.Fatalf("Read = %q, %v", buf[:n], err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.WriteTo([]byte("x"), peer); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("raw conn survived Close: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("second Close = %v", err)
+	}
+}

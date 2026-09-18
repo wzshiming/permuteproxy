@@ -56,6 +56,12 @@ func DialPacket(ctx context.Context, network, address string, listen ListenPacke
 	return c, nil
 }
 
+// WrapPacket presents pc as the conn DialPacket returns: Write reaches remote, Read accepts any
+// source, and it stays a net.PacketConn whose Close closes pc.
+func WrapPacket(pc net.PacketConn, remote net.Addr) net.Conn {
+	return &packetConn{PacketConn: pc, remote: remote, cleanup: func() {}}
+}
+
 // resolveUDP is net.ResolveUDPAddr with ctx reaching DNS, so a canceled dial stops waiting on it.
 func resolveUDP(ctx context.Context, network, address string) (*net.UDPAddr, error) {
 	host, port, err := net.SplitHostPort(address)

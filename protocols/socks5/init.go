@@ -8,7 +8,7 @@ func init() {
 	spec := permuteproxy.Spec{
 		Kind:           permuteproxy.KindProxy,
 		Requires:       permuteproxy.Stream,
-		Provides:       permuteproxy.Stream,
+		Provides:       permuteproxy.Stream | permuteproxy.Packet,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
 		Client:         NewClient,

@@ -29,18 +29,22 @@ var system permuteproxy.Network = permuteproxy.NetworkFuncs{
 }
 
 // probe counts the operations a chain performs on an injected network, reports bound addresses and
-// accepted connections, and counts the Close calls a borrowed network must never see.
+// accepted connections, signals closes of the sockets it handed out, and counts the Close calls a
+// borrowed network must never see.
 type probe struct {
 	permuteproxy.Network
-	dials    atomic.Int32
-	listens  atomic.Int32
-	closes   atomic.Int32
-	bound    chan net.Addr
-	accepted chan struct{}
+	dials        atomic.Int32
+	listens      atomic.Int32
+	packets      atomic.Int32
+	closes       atomic.Int32
+	bound        chan net.Addr
+	boundPacket  chan net.Addr
+	accepted     chan struct{}
+	packetClosed chan struct{}
 }
 
 func newProbe(n permuteproxy.Network) *probe {
-	return &probe{Network: n, bound: make(chan net.Addr, 1), accepted: make(chan struct{}, 64)}
+	return &probe{Network: n, bound: make(chan net.Addr, 1), boundPacket: make(chan net.Addr, 1), accepted: make(chan struct{}, 64), packetClosed: make(chan struct{}, 64)}
 }
 
 func (p *probe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -61,9 +65,36 @@ func (p *probe) Listen(ctx context.Context, network, address string) (net.Listen
 	return acceptProbe{ln, p.accepted}, nil
 }
 
+func (p *probe) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	pc, err := p.Network.ListenPacket(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	p.packets.Add(1)
+	select {
+	case p.boundPacket <- pc.LocalAddr():
+	default:
+	}
+	return closeSignal{pc, p.packetClosed}, nil
+}
+
 func (p *probe) Close() error {
 	p.closes.Add(1)
 	return nil
+}
+
+type closeSignal struct {
+	net.PacketConn
+	closed chan struct{}
+}
+
+func (c closeSignal) Close() error {
+	err := c.PacketConn.Close()
+	select {
+	case c.closed <- struct{}{}:
+	default:
+	}
+	return err
 }
 
 type acceptProbe struct {
@@ -554,7 +585,7 @@ func TestProxyRejectsBadCredentials(t *testing.T) {
 }
 
 func TestClientRefusesPacket(t *testing.T) {
-	for _, uri := range []string{"http://127.0.0.1:1", "socks5://127.0.0.1:1", "socks4://127.0.0.1:1", "ssh://127.0.0.1:1", "ss://127.0.0.1:1"} {
+	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1", "ssh://127.0.0.1:1", "ss://127.0.0.1:1"} {
 		t.Run(uri, func(t *testing.T) {
 			base := newProbe(system)
 			n, err := permuteproxy.Engine{Base: base}.Client(parse(t, uri))
