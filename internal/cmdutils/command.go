@@ -2,6 +2,8 @@ package cmdutils
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync"
 
@@ -11,33 +13,60 @@ import (
 )
 
 // Dial starts a command whose stdio becomes the connection. Closing the conn ends the command's
-// input and returns once the command has exited; cancelling ctx kills it.
+// input; a conn that also implements netutils.Process lets callers follow the command's exit.
 type Dial func(ctx context.Context, name string, args ...string) (net.Conn, error)
 
+// DialContext starts the command; ctx only bounds the start, the conn then lives until Close
+// cancels the context the command was started with.
 func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Conn, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	stdio, err := dial(ctx, command[0], command[1:]...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	own, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, cancel)
+	stdio, err := dial(own, command[0], command[1:]...)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
+	if !stop() {
+		discard(stdio)
+		return nil, ctx.Err()
+	}
+	var once sync.Once
+	var closeErr error
 	conn := netutils.ConnWithCloser(stdio, func() error {
-		err := stdio.Close()
-		cancel()
-		return err
+		once.Do(func() {
+			closeErr = stdio.Close()
+			cancel()
+		})
+		return closeErr
 	})
 	return netutils.ConnWithAddr(conn, localAddr, remoteAddr), nil
 }
 
+// discard ends a command nobody will use: killed at once when it exposes its process.
+func discard(conn net.Conn) {
+	if p, ok := conn.(netutils.Process); ok {
+		p.Kill()
+	}
+	conn.Close()
+}
+
+// Listen prepares a listener; ctx only bounds the call, the listener lives until Close.
 func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Listener, error) {
-	ctx, cancel := context.WithCancel(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	own, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	return &listener{
-		ctx:        ctx,
+		ctx:        own,
 		cancel:     cancel,
 		dial:       dial,
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
 		command:    command,
+		accepting:  make(chan struct{}, 1),
 	}, nil
 }
 
@@ -48,74 +77,126 @@ type listener struct {
 	command    []string
 	localAddr  net.Addr
 	remoteAddr net.Addr
-	mu         sync.Mutex
-	released   <-chan struct{}
-}
-
-type accepted struct {
-	conn net.Conn
-	err  error
+	accepting  chan struct{}
+	// gate is owned by the Accept holding accepting; pending is shared with Close.
+	gate    <-chan struct{}
+	mu      sync.Mutex
+	pending net.Conn
 }
 
 // Accept starts one command and hands it over once the peer sends its first byte, the only
 // signal a subprocess offers that a connection arrived. The command starts only after the
-// previous connection has been closed, since its process still holds the listening address.
+// previous one has exited, since its process still holds the listening address; a command that
+// exits cleanly before any byte was seen is started again.
 func (l *listener) Accept() (net.Conn, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.released != nil {
+	select {
+	case l.accepting <- struct{}{}:
+		defer func() { <-l.accepting }()
+	case <-l.ctx.Done():
+		return nil, net.ErrClosed
+	}
+	for {
+		if l.gate != nil {
+			select {
+			case <-l.gate:
+			case <-l.ctx.Done():
+				return nil, net.ErrClosed
+			}
+		}
+		conn, err := DialContext(l.ctx, l.dial, l.localAddr, l.remoteAddr, l.command)
+		if err != nil {
+			if l.ctx.Err() != nil {
+				return nil, net.ErrClosed
+			}
+			return nil, err
+		}
+		if !l.hold(conn) {
+			discard(conn)
+			return nil, net.ErrClosed
+		}
+		var first [1]byte
+		_, err = conn.Read(first[:])
+		if err == nil {
+			if accepted := l.admit(conn, first[:]); accepted != nil {
+				return accepted, nil
+			}
+			return nil, net.ErrClosed
+		}
+		l.release(conn)
+		conn.Close()
+		if l.ctx.Err() != nil {
+			return nil, net.ErrClosed
+		}
+		p, ok := conn.(netutils.Process)
+		if !ok {
+			return nil, err
+		}
 		select {
-		case <-l.released:
+		case <-p.Done():
 		case <-l.ctx.Done():
 			return nil, net.ErrClosed
 		}
-	}
-	if l.ctx.Err() != nil {
-		return nil, net.ErrClosed
-	}
-	results := make(chan accepted, 1)
-	go func() {
-		conn, err := DialContext(l.ctx, l.dial, l.localAddr, l.remoteAddr, l.command)
-		if err != nil {
-			results <- accepted{err: err}
-			return
+		if perr := p.Err(); perr != nil {
+			return nil, perr
 		}
-		stop := context.AfterFunc(l.ctx, func() { conn.Close() })
-		var first [1]byte
-		_, err = conn.Read(first[:])
-		stop()
-		if err != nil {
-			conn.Close()
-			results <- accepted{err: err}
-			return
+		if !errors.Is(err, io.EOF) {
+			return nil, err
 		}
-		results <- accepted{conn: cmux.UnreadConn(conn, first[:])}
-	}()
-	select {
-	case <-l.ctx.Done():
-		go func() {
-			if r := <-results; r.conn != nil {
-				r.conn.Close()
-			}
-		}()
-		return nil, net.ErrClosed
-	case r := <-results:
-		if r.err != nil {
-			return nil, r.err
-		}
-		released := make(chan struct{})
-		l.released = released
-		var once sync.Once
-		return netutils.ConnWithCloser(r.conn, func() error {
-			err := r.conn.Close()
-			once.Do(func() { close(released) })
-			return err
-		}), nil
 	}
 }
 
+// hold registers a started command as pending unless the listener already closed.
+func (l *listener) hold(conn net.Conn) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ctx.Err() != nil {
+		return false
+	}
+	l.pending = conn
+	return true
+}
+
+func (l *listener) release(conn net.Conn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.pending == conn {
+		l.pending = nil
+	}
+}
+
+// admit hands the pending command over; after Close it returns nil and Close discards it.
+func (l *listener) admit(conn net.Conn, first []byte) net.Conn {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ctx.Err() != nil {
+		return nil
+	}
+	l.pending = nil
+	accepted := netutils.WithProcess(cmux.UnreadConn(conn, first), conn)
+	if p, ok := conn.(netutils.Process); ok {
+		l.gate = p.Done()
+		return accepted
+	}
+	released := make(chan struct{})
+	l.gate = released
+	var once sync.Once
+	return netutils.ConnWithCloser(accepted, func() error {
+		err := accepted.Close()
+		once.Do(func() { close(released) })
+		return err
+	})
+}
+
+// Close kills the command nobody accepted yet; accepted connections stay usable.
 func (l *listener) Close() error {
+	l.mu.Lock()
 	l.cancel()
+	pending := l.pending
+	l.pending = nil
+	l.mu.Unlock()
+	if pending != nil {
+		discard(pending)
+	}
 	return nil
 }
 

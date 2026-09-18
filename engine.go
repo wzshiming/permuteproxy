@@ -100,7 +100,7 @@ func (e Engine) Server(c Chain) (Server, error) {
 	if upstream == nil {
 		upstream = native
 	}
-	s, err := spec.Server(inner, upstream, c.Layers[0].Options.clone())
+	s, err := spec.Server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
 	if err != nil {
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
 	}

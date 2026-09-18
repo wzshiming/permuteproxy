@@ -427,6 +427,35 @@ func TestServerCanceledContextDoesNotBind(t *testing.T) {
 	}
 }
 
+func TestServerBindFailingOnStopReturnsNil(t *testing.T) {
+	for _, cancelCtx := range []bool{true, false} {
+		name := "close"
+		if cancelCtx {
+			name = "cancel"
+		}
+		t.Run(name, func(t *testing.T) {
+			entered := make(chan struct{}, 1)
+			s := NewServer(func(ctx context.Context) (net.Listener, error) {
+				entered <- struct{}{}
+				<-ctx.Done()
+				return nil, fmt.Errorf("bind: %w", ctx.Err())
+			}, acceptLoop)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := run(s, ctx)
+			recv(t, entered, "listen")
+			if cancelCtx {
+				cancel()
+			} else if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := wait(t, done); err != nil {
+				t.Fatalf("Run = %v, want nil for a bind that failed because of the stop", err)
+			}
+		})
+	}
+}
+
 func TestServerStopDuringBind(t *testing.T) {
 	for _, cancelCtx := range []bool{true, false} {
 		name := "close"

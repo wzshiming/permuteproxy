@@ -24,9 +24,10 @@ import (
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 )
 
-// closeProbe counts Close calls on connections handed out by the base network.
+// closeProbe counts dials and the Close calls on connections handed out by the base network.
 type closeProbe struct {
 	permuteproxy.Network
+	dials  atomic.Int32
 	closed atomic.Int32
 }
 
@@ -41,6 +42,7 @@ func (c countingConn) Close() error {
 }
 
 func (p *closeProbe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	p.dials.Add(1)
 	conn, err := p.Network.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
@@ -222,5 +224,73 @@ func TestServerConfigIsLazy(t *testing.T) {
 	}
 	if _, err := tr.ListenPacket(context.Background()); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("ListenPacket = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestClientConfigIsLazy(t *testing.T) {
+	_, certFile, keyFile := issue(t, "proxy.test")
+	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
+	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
+	addr := echoServer(t, uri)
+	base := &closeProbe{Network: system}
+	c, err := permuteproxy.ParseURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Endpoint.Address = addr.String()
+	tr, err := permuteproxy.Engine{Base: base}.Transport(c)
+	if err != nil {
+		t.Fatalf("Transport with an unreadable client CA = %v, want the server side to build", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i := 0; i < 2; i++ {
+		conn, err := tr.Dial(ctx, permuteproxy.Stream)
+		if err == nil {
+			conn.Close()
+			t.Fatal("Dial succeeded without its CA file")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Dial = %v, want the missing CA file", err)
+		}
+	}
+	if base.dials.Load() != 0 {
+		t.Fatalf("base dialed %d times before the client config was ready", base.dials.Load())
+	}
+}
+
+func TestCanceledHandshakeClosesSocketOnce(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+	base := &closeProbe{Network: system}
+	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+ln.Addr().String()+"?tls_skip_verify=true")
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		conn := <-accepted
+		defer conn.Close()
+		// The server stays silent; cancel once the ClientHello has arrived.
+		conn.Read(make([]byte, 1))
+		cancel()
+	}()
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err == nil {
+		conn.Close()
+		t.Fatal("handshake succeeded against a silent server")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Dial = %v, want context.Canceled", err)
+	}
+	if base.closed.Load() != 1 {
+		t.Fatalf("underlying connection closed %d times, want 1", base.closed.Load())
 	}
 }

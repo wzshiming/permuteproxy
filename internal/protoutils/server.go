@@ -38,6 +38,9 @@ func (s *Server) Run(parent context.Context) error {
 	}
 	raw, err := s.listen(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return err
 	}
 	ln := newListener(raw)

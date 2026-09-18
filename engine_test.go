@@ -365,6 +365,29 @@ func TestEngineRejectsNilResults(t *testing.T) {
 	}
 }
 
+func TestEngineBorrowsUpstream(t *testing.T) {
+	var got Network
+	RegisterLayer("borrowing", Spec{
+		Kind:     KindProxy,
+		Requires: Stream,
+		Provides: Stream,
+		Server: func(_ Transport, upstream Network, _ Options) (Server, error) {
+			got = upstream
+			return fakeServer{}, nil
+		},
+	})
+	upstream := &closableNet{fakeNet{name: "upstream"}}
+	if _, err := (Engine{Upstream: upstream}).Server(parse(t, "borrowing://127.0.0.1:1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.(io.Closer); ok {
+		t.Fatal("server received a closable upstream")
+	}
+	if b, ok := got.(borrowed); !ok || b.Network != Network(upstream) {
+		t.Fatalf("server upstream = %#v, want the injected network borrowed", got)
+	}
+}
+
 func TestEngineForwardsClose(t *testing.T) {
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
 	tests := []struct {

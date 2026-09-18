@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"sync"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
@@ -23,25 +24,29 @@ var options = []string{
 
 func Adapt(inner permuteproxy.Transport, opts permuteproxy.Options) (permuteproxy.Transport, error) {
 	values := protoutils.Values(opts)
-	clientConfig, err := tlsutils.NewClient(values)
-	if err != nil {
-		return nil, err
-	}
+	// Each side's config is built where it is needed: the CA file only by dialers, key material
+	// only by listeners.
+	clientConfig := sync.OnceValues(func() (*tls.Config, error) { return tlsutils.NewClient(values) })
 	return permuteproxy.TransportFuncs{
 		Plane: permuteproxy.Stream,
 		DialFunc: func(ctx context.Context, _ permuteproxy.Plane) (net.Conn, error) {
+			config, err := clientConfig()
+			if err != nil {
+				return nil, err
+			}
 			raw, err := inner.Dial(ctx, permuteproxy.Stream)
 			if err != nil {
 				return nil, err
 			}
-			conn := tls.Client(raw, clientConfig)
+			// A canceled handshake closes raw itself, so the error path must not close it again.
+			raw = &closeOnce{Conn: raw}
+			conn := tls.Client(raw, config)
 			if err := conn.HandshakeContext(ctx); err != nil {
 				raw.Close()
 				return nil, err
 			}
 			return conn, nil
 		},
-		// Key material is only required from listeners, so the server config is built here.
 		ListenFunc: func(ctx context.Context) (net.Listener, error) {
 			serverConfig, err := tlsutils.NewServer(values)
 			if err != nil {
@@ -54,4 +59,15 @@ func Adapt(inner permuteproxy.Transport, opts permuteproxy.Options) (permuteprox
 			return tls.NewListener(ln, serverConfig), nil
 		},
 	}, nil
+}
+
+type closeOnce struct {
+	net.Conn
+	once sync.Once
+	err  error
+}
+
+func (c *closeOnce) Close() error {
+	c.once.Do(func() { c.err = c.Conn.Close() })
+	return c.err
 }
