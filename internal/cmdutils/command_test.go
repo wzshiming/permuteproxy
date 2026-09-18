@@ -18,12 +18,14 @@ var testAddr = netutils.NewNetAddr("cmd", "fake")
 // fakeProcess stands in for a command: the test drives peer, ends it with exit and sees Kill.
 type fakeProcess struct {
 	net.Conn
-	peer   net.Conn
-	ctx    context.Context
-	done   chan struct{}
-	once   sync.Once
-	err    error
-	killed atomic.Int32
+	peer      net.Conn
+	ctx       context.Context
+	done      chan struct{}
+	closed    chan struct{}
+	once      sync.Once
+	closeOnce sync.Once
+	err       error
+	killed    atomic.Int32
 }
 
 func (p *fakeProcess) Done() <-chan struct{} { return p.done }
@@ -36,11 +38,21 @@ func (p *fakeProcess) Kill() error {
 	return nil
 }
 
+func (p *fakeProcess) Close() error {
+	p.closeOnce.Do(func() { close(p.closed) })
+	return p.Conn.Close()
+}
+
 // exit ends the command: its output closes and it is reaped with err.
 func (p *fakeProcess) exit(err error) {
+	p.peer.Close()
+	p.finish(err)
+}
+
+// finish reaps the command with err while its output stays open, as when a descendant inherited it.
+func (p *fakeProcess) finish(err error) {
 	p.once.Do(func() {
 		p.err = err
-		p.peer.Close()
 		close(p.done)
 	})
 }
@@ -58,7 +70,7 @@ func newSpawner() *spawner {
 
 func (s *spawner) dial(ctx context.Context, name string, args ...string) (net.Conn, error) {
 	local, peer := net.Pipe()
-	p := &fakeProcess{Conn: local, peer: peer, ctx: ctx, done: make(chan struct{})}
+	p := &fakeProcess{Conn: local, peer: peer, ctx: ctx, done: make(chan struct{}), closed: make(chan struct{})}
 	s.mu.Lock()
 	s.all = append(s.all, p)
 	s.mu.Unlock()
@@ -124,6 +136,46 @@ func TestDialContextCanceledBeforeStart(t *testing.T) {
 }
 
 type ctxKey struct{}
+
+// afterFuncCtx counts the AfterFunc registrations context.AfterFunc delegates to it and the stops.
+type afterFuncCtx struct {
+	context.Context
+	done    chan struct{}
+	added   atomic.Int32
+	stopped atomic.Int32
+}
+
+func (c *afterFuncCtx) Done() <-chan struct{} { return c.done }
+
+func (c *afterFuncCtx) AfterFunc(f func()) func() bool {
+	c.added.Add(1)
+	var once sync.Once
+	return func() bool {
+		stopped := false
+		once.Do(func() {
+			stopped = true
+			c.stopped.Add(1)
+		})
+		return stopped
+	}
+}
+
+func TestDialContextFailedStartReleasesCallerContext(t *testing.T) {
+	ctx := &afterFuncCtx{Context: context.Background(), done: make(chan struct{})}
+	fail := errors.New("no such command")
+	dial := func(ctx context.Context, name string, args ...string) (net.Conn, error) { return nil, fail }
+	for i := 0; i < 3; i++ {
+		if _, err := DialContext(ctx, dial, testAddr, testAddr, []string{"fake"}); !errors.Is(err, fail) {
+			t.Fatalf("DialContext = %v, want %v", err, fail)
+		}
+	}
+	if ctx.added.Load() == 0 {
+		t.Fatal("caller context's AfterFunc not used")
+	}
+	if added, stopped := ctx.added.Load(), ctx.stopped.Load(); stopped != added {
+		t.Fatalf("failed starts left %d of %d AfterFunc registrations on the caller's context", added-stopped, added)
+	}
+}
 
 func TestDialConnSurvivesCallerCancel(t *testing.T) {
 	s := newSpawner()
@@ -210,6 +262,83 @@ func TestListenerCloseKillsPendingSpawn(t *testing.T) {
 	}
 	if s.count() != 1 {
 		t.Fatalf("%d commands started, want 1", s.count())
+	}
+}
+
+func TestListenerCloseKillsSpawnAwaitingReap(t *testing.T) {
+	s := newSpawner()
+	ln := listenSpawner(t, context.Background(), s)
+	res := acceptAsync(ln)
+	p := recv(t, s.started, "spawn")
+	p.peer.Close()
+	recv(t, p.closed, "conn Close after EOF")
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r := recv(t, res, "Accept"); !errors.Is(r.err, net.ErrClosed) {
+		t.Fatalf("Accept = %v, want net.ErrClosed", r.err)
+	}
+	recv(t, p.done, "reap")
+	if p.killed.Load() != 1 {
+		t.Fatalf("command lingering after EOF killed %d times by Close, want 1", p.killed.Load())
+	}
+}
+
+func TestListenerRespawnsWhenExitedCommandLeavesStdoutOpen(t *testing.T) {
+	s := newSpawner()
+	ln := listenSpawner(t, context.Background(), s)
+	defer ln.Close()
+	res := acceptAsync(ln)
+	first := recv(t, s.started, "spawn")
+	first.finish(nil)
+	second := recv(t, s.started, "respawn while a descendant holds stdout")
+	go second.peer.Write([]byte{1})
+	r := recv(t, res, "Accept")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	r.conn.Close()
+	if first.killed.Load() != 0 {
+		t.Fatal("cleanly exited command was killed")
+	}
+}
+
+func TestListenerReportsFailedSpawnLeavingStdoutOpen(t *testing.T) {
+	s := newSpawner()
+	ln := listenSpawner(t, context.Background(), s)
+	defer ln.Close()
+	res := acceptAsync(ln)
+	exitErr := errors.New("exit status 1")
+	recv(t, s.started, "spawn").finish(exitErr)
+	if r := recv(t, res, "Accept"); !errors.Is(r.err, exitErr) {
+		t.Fatalf("Accept = %v, want %v", r.err, exitErr)
+	}
+	if s.count() != 1 {
+		t.Fatalf("%d commands started, want 1", s.count())
+	}
+}
+
+func TestListenerAcceptsOutputWrittenBeforeExit(t *testing.T) {
+	s := newSpawner()
+	ln := listenSpawner(t, context.Background(), s)
+	defer ln.Close()
+	res := acceptAsync(ln)
+	p := recv(t, s.started, "spawn")
+	p.finish(nil)
+	go p.peer.Write([]byte{1})
+	r := recv(t, res, "Accept")
+	if r.err != nil {
+		t.Fatalf("Accept = %v, want the byte written before exit", r.err)
+	}
+	defer r.conn.Close()
+	if s.count() != 1 {
+		t.Fatalf("%d commands started, want 1", s.count())
+	}
+	time.Sleep(exitGrace + 100*time.Millisecond)
+	go p.peer.Write([]byte("more"))
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(r.conn, buf); err != nil || string(buf) != "\x01more" {
+		t.Fatalf("read %q, %v: accepted conn kept the exit deadline", buf, err)
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
+	"time"
 
 	"github.com/wzshiming/cmux"
 
@@ -26,6 +28,7 @@ func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr,
 	stop := context.AfterFunc(ctx, cancel)
 	stdio, err := dial(own, command[0], command[1:]...)
 	if err != nil {
+		stop()
 		cancel()
 		return nil, err
 	}
@@ -114,27 +117,27 @@ func (l *listener) Accept() (net.Conn, error) {
 			discard(conn)
 			return nil, net.ErrClosed
 		}
-		var first [1]byte
-		_, err = conn.Read(first[:])
+		first, err := l.first(conn)
 		if err == nil {
-			if accepted := l.admit(conn, first[:]); accepted != nil {
+			if accepted := l.admit(conn, first); accepted != nil {
 				return accepted, nil
 			}
 			return nil, net.ErrClosed
 		}
-		l.release(conn)
 		conn.Close()
+		p, ok := conn.(netutils.Process)
+		if ok {
+			select {
+			case <-p.Done():
+			case <-l.ctx.Done():
+			}
+		}
+		l.release(conn)
 		if l.ctx.Err() != nil {
 			return nil, net.ErrClosed
 		}
-		p, ok := conn.(netutils.Process)
 		if !ok {
 			return nil, err
-		}
-		select {
-		case <-p.Done():
-		case <-l.ctx.Done():
-			return nil, net.ErrClosed
 		}
 		if perr := p.Err(); perr != nil {
 			return nil, perr
@@ -143,6 +146,36 @@ func (l *listener) Accept() (net.Conn, error) {
 			return nil, err
 		}
 	}
+}
+
+// exitGrace bounds how long output a command wrote before exiting may take to arrive.
+const exitGrace = time.Second
+
+// first reads the command's first byte; once its process has exited only output already on its
+// way can follow, so the wait is then bounded by exitGrace since a descendant may hold stdout open.
+func (l *listener) first(conn net.Conn) ([]byte, error) {
+	var buf [1]byte
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(buf[:])
+		read <- err
+	}()
+	var done <-chan struct{}
+	if p, ok := conn.(netutils.Process); ok {
+		done = p.Done()
+	}
+	select {
+	case err := <-read:
+		return buf[:], err
+	case <-done:
+	}
+	conn.SetReadDeadline(time.Now().Add(exitGrace))
+	err := <-read
+	conn.SetReadDeadline(time.Time{})
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = io.EOF
+	}
+	return buf[:], err
 }
 
 // hold registers a started command as pending unless the listener already closed.

@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 func TestMain(m *testing.M) {
@@ -97,9 +99,9 @@ func requireCommand(t *testing.T, name string) {
 	}
 }
 
-func process(t *testing.T, conn net.Conn) Process {
+func process(t *testing.T, conn net.Conn) netutils.Process {
 	t.Helper()
-	p, ok := conn.(Process)
+	p, ok := conn.(netutils.Process)
 	if !ok {
 		t.Fatal("conn hides its process")
 	}
@@ -227,20 +229,43 @@ func TestCommandClosedStdoutKeepsStdin(t *testing.T) {
 	}
 }
 
-// killPID ends the descendant a test left behind.
-func killPID(t *testing.T, pidFile string) {
+// waitPIDs polls for the pids a script appends to pidFile and kills those processes when the test ends.
+func waitPIDs(t *testing.T, pidFile string, count int) {
 	t.Helper()
-	data, err := os.ReadFile(pidFile)
+	var pids []int
+	t.Cleanup(func() {
+		for _, pid := range pids {
+			if p, err := os.FindProcess(pid); err == nil {
+				p.Kill()
+			}
+		}
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		data, _ := os.ReadFile(pidFile)
+		pids = pids[:0]
+		for _, line := range strings.Fields(string(data)) {
+			if pid, err := strconv.Atoi(line); err == nil {
+				pids = append(pids, pid)
+			}
+		}
+		if len(pids) >= count {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s: %d pids not written", pidFile, count)
+}
+
+// pidPath returns a fresh pid file path without spaces, safe to pass through a cmd address.
+func pidPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "pid")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p, err := os.FindProcess(pid); err == nil {
-		p.Kill()
-	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "pid")
 }
 
 func TestCommandDoneNotPinnedByDescendant(t *testing.T) {
@@ -253,7 +278,7 @@ func TestCommandDoneNotPinnedByDescendant(t *testing.T) {
 		"cancel": {`sleep 30 & echo $! > "$0"; wait`, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			pidFile := filepath.Join(t.TempDir(), "pid")
+			pidFile := pidPath(t)
 			n := &Local{WaitDelay: 200 * time.Millisecond}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -261,11 +286,11 @@ func TestCommandDoneNotPinnedByDescendant(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			waitPIDs(t, pidFile, 1)
 			if tt.cancel {
 				cancel()
 			}
 			err = reaped(t, conn)
-			defer killPID(t, pidFile)
 			if tt.cancel && !signaled(err) {
 				t.Fatalf("shell ended with %v after cancel, want a kill while its child held stdout", err)
 			}
@@ -279,6 +304,77 @@ func TestCommandDoneNotPinnedByDescendant(t *testing.T) {
 				t.Fatal("Read succeeded after Close")
 			}
 		})
+	}
+}
+
+// The shell leaves a child holding stdout and exits before any byte: Accept must not hang on it.
+func TestListenerFirstByteNotPinnedByDescendant(t *testing.T) {
+	requireCommand(t, "sh")
+	t.Run("failure", func(t *testing.T) {
+		pidFile := pidPath(t)
+		ln, err := Network.Listen(context.Background(), "cmd", `sh -c 'sleep 30 & echo $! >> "$0"; exit 3' `+pidFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		res := acceptAsync(ln)
+		waitPIDs(t, pidFile, 1)
+		var exit *exec.ExitError
+		select {
+		case r := <-res:
+			if !errors.As(r.err, &exit) || exit.ExitCode() != 3 {
+				t.Fatalf("Accept = %v, want exit status 3", r.err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Accept hung after the shell exited while its child held stdout")
+		}
+	})
+	t.Run("restart", func(t *testing.T) {
+		pidFile := pidPath(t)
+		stopped := errors.New("enough")
+		var spawns int
+		n := &Local{}
+		n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+			if spawns++; spawns > 2 {
+				return nil, stopped
+			}
+			return n.command(ctx, name, args...)
+		}
+		ln, err := n.Listen(context.Background(), "cmd", `sh -c 'sleep 30 & echo $! >> "$0"' `+pidFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		res := acceptAsync(ln)
+		defer waitPIDs(t, pidFile, 2)
+		select {
+		case r := <-res:
+			if !errors.Is(r.err, stopped) {
+				t.Fatalf("Accept = %v, want %v after two clean exits", r.err, stopped)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Accept hung instead of starting over after a clean exit")
+		}
+	})
+}
+
+func TestListenerDeliversOutputOfShortLivedCommand(t *testing.T) {
+	requireCommand(t, "sh")
+	ln, err := Network.Listen(context.Background(), "cmd", "sh -c 'echo hi'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	for i := 0; i < 10; i++ {
+		conn, err := ln.Accept()
+		if err != nil {
+			t.Fatalf("Accept %d = %v", i, err)
+		}
+		got, err := io.ReadAll(conn)
+		conn.Close()
+		if err != nil || string(got) != "hi\n" {
+			t.Fatalf("Accept %d read %q, %v", i, got, err)
+		}
 	}
 }
 
@@ -544,9 +640,60 @@ func waitPath(t *testing.T, path string, exists bool) {
 	t.Fatalf("%s: exists=%v did not happen", path, exists)
 }
 
+func TestNetcatUnixKeepsUnclaimedPendingSocket(t *testing.T) {
+	requireCommand(t, "nc")
+	address := socketPath(t)
+	ln, err := Network.Listen(context.Background(), "cmd-nc-unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := acceptAsync(ln)
+	waitPath(t, address, true)
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-res:
+		if !errors.Is(r.err, net.ErrClosed) {
+			t.Fatalf("Accept = %v, want net.ErrClosed", r.err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Accept did not return after Close")
+	}
+	// No peer ever reached this nc, so nothing proves the file is its socket: it stays.
+	if fi, err := os.Lstat(address); err != nil || fi.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("unclaimed socket after Close: %v, %v", fi, err)
+	}
+}
+
 func TestNetcatUnixRemovesOwnedSocket(t *testing.T) {
 	requireCommand(t, "nc")
-	t.Run("pending", func(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	address := socketPath(t)
+	ln, err := Network.Listen(ctx, "cmd-nc-unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	failed, conns := make(chan error, 1), make(chan net.Conn, 1)
+	go func() { failed <- answer(ln, conns) }()
+	if err := exchange(ctx, Network, "cmd-nc-unix", address, failed); err != nil {
+		t.Fatal(err)
+	}
+	if err := reaped(t, <-conns); err != nil {
+		t.Fatalf("nc ended with %v", err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitPath(t, address, false)
+}
+
+// Whatever replaces the socket of an idle pending nc must survive the listener's Close.
+func TestNetcatUnixKeepsSwappedPendingPath(t *testing.T) {
+	requireCommand(t, "nc")
+	t.Run("live listener", func(t *testing.T) {
 		address := socketPath(t)
 		ln, err := Network.Listen(context.Background(), "cmd-nc-unix", address)
 		if err != nil {
@@ -554,43 +701,169 @@ func TestNetcatUnixRemovesOwnedSocket(t *testing.T) {
 		}
 		res := acceptAsync(ln)
 		waitPath(t, address, true)
+		os.Remove(address)
+		foreign, err := net.Listen("unix", address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer foreign.Close()
 		if err := ln.Close(); err != nil {
 			t.Fatal(err)
 		}
 		select {
-		case r := <-res:
-			if !errors.Is(r.err, net.ErrClosed) {
-				t.Fatalf("Accept = %v, want net.ErrClosed", r.err)
-			}
+		case <-res:
 		case <-time.After(10 * time.Second):
 			t.Fatal("Accept did not return after Close")
 		}
-		if _, err := os.Lstat(address); !os.IsNotExist(err) {
-			t.Fatalf("socket of the killed nc left behind: %v", err)
+		conn, err := net.Dial("unix", address)
+		if err != nil {
+			t.Fatalf("foreign listener unreachable after Close: %v", err)
 		}
+		conn.Close()
 	})
-	t.Run("accepted", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
+	t.Run("regular file", func(t *testing.T) {
 		address := socketPath(t)
-		ln, err := Network.Listen(ctx, "cmd-nc-unix", address)
+		ln, err := Network.Listen(context.Background(), "cmd-nc-unix", address)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer ln.Close()
-		failed, conns := make(chan error, 1), make(chan net.Conn, 1)
-		go func() { failed <- answer(ln, conns) }()
-		if err := exchange(ctx, Network, "cmd-nc-unix", address, failed); err != nil {
+		res := acceptAsync(ln)
+		waitPath(t, address, true)
+		os.Remove(address)
+		if err := os.WriteFile(address, []byte("keep"), 0o600); err != nil {
 			t.Fatal(err)
-		}
-		if err := reaped(t, <-conns); err != nil {
-			t.Fatalf("nc ended with %v", err)
 		}
 		if err := ln.Close(); err != nil {
 			t.Fatal(err)
 		}
+		select {
+		case <-res:
+		case <-time.After(10 * time.Second):
+			t.Fatal("Accept did not return after Close")
+		}
+		if got, err := os.ReadFile(address); err != nil || string(got) != "keep" {
+			t.Fatalf("file after Close: %q, %v", got, err)
+		}
+	})
+}
+
+// fakeSpawn stands in for an nc run through a custom Command: the test drives peer and reaps it.
+type fakeSpawn struct {
+	net.Conn
+	peer net.Conn
+	done chan struct{}
+	once sync.Once
+	err  error
+}
+
+func (p *fakeSpawn) Done() <-chan struct{} { return p.done }
+func (p *fakeSpawn) Err() error            { return p.err }
+
+func (p *fakeSpawn) Kill() error {
+	p.peer.Close()
+	p.finish(errors.New("signal: killed"))
+	return nil
+}
+
+// finish reaps the command with err while its output stays open.
+func (p *fakeSpawn) finish(err error) {
+	p.once.Do(func() {
+		p.err = err
+		close(p.done)
+	})
+}
+
+// bindSocket places a live socket at address the way nc -Ul does.
+func bindSocket(t *testing.T, address string) {
+	t.Helper()
+	ln, err := net.Listen("unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+}
+
+func TestNetcatUnixClaimAgainstExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets")
+	}
+	newSpawn := func() *fakeSpawn {
+		local, peer := net.Pipe()
+		return &fakeSpawn{Conn: local, peer: peer, done: make(chan struct{})}
+	}
+	t.Run("claim then exit removes", func(t *testing.T) {
+		address := socketPath(t)
+		bindSocket(t, address)
+		p := newSpawn()
+		conn := (&socketFile{path: address}).track(p)
+		go p.peer.Write([]byte{1})
+		if _, err := conn.Read(make([]byte, 1)); err != nil {
+			t.Fatal(err)
+		}
+		p.finish(nil)
 		waitPath(t, address, false)
 	})
+	t.Run("exit then claim keeps", func(t *testing.T) {
+		address := socketPath(t)
+		bindSocket(t, address)
+		p := newSpawn()
+		socket := &socketFile{path: address}
+		conn := socket.track(p)
+		p.finish(nil)
+		socket.before()
+		go p.peer.Write([]byte{1})
+		if _, err := conn.Read(make([]byte, 1)); err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+		socket.before()
+		if _, err := os.Lstat(address); err != nil {
+			t.Fatalf("socket removed on a claim made after nc had exited: %v", err)
+		}
+	})
+}
+
+func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets")
+	}
+	address := socketPath(t)
+	bindSocket(t, address)
+	peers := make(chan net.Conn, 1)
+	n := &Local{}
+	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		local, peer := net.Pipe()
+		peers <- peer
+		return local, nil
+	}
+	ln, err := n.Listen(context.Background(), "cmd-nc-unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := acceptAsync(ln)
+	peer := <-peers
+	go peer.Write([]byte("ping"))
+	r := <-res
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	go peer.Write([]byte("more"))
+	buf := make([]byte, 8)
+	if _, err := io.ReadFull(r.conn, buf); err != nil || string(buf) != "pingmore" {
+		t.Fatalf("read %q, %v after listener Close", buf, err)
+	}
+	if _, err := os.Lstat(address); err != nil {
+		t.Fatalf("socket removed while its connection was open: %v", err)
+	}
+	if err := r.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(address); !os.IsNotExist(err) {
+		t.Fatalf("socket of a closed connection without a process left behind: %v", err)
+	}
 }
 
 func TestNetcatUnixKeepsReplacedSocket(t *testing.T) {

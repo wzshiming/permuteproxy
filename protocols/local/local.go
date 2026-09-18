@@ -14,8 +14,10 @@ import (
 
 // Local is the process-local Network: system networking plus the cmd-* subprocess transports.
 type Local struct {
-	// Command starts a subprocess whose stdio carries the connection; nil runs it through
-	// os/exec with the lifecycle described on Process.
+	// Command starts a subprocess whose stdio carries the connection. nil runs it through os/exec:
+	// Close returns at once, the command sees EOF on stdin, output it still writes is discarded and
+	// it is killed if it is still running WaitDelay later. Only the command itself is waited for;
+	// pipes a descendant inherited are closed once it has exited and the connection is closed.
 	Command func(ctx context.Context, name string, args ...string) (net.Conn, error)
 	// WaitDelay bounds how long a command may keep running after its connection was closed
 	// before it is killed; zero means 5s, negative values are rejected.
@@ -24,22 +26,13 @@ type Local struct {
 
 var Network = &Local{}
 
-// Process is implemented by the connections of the built-in Command. Closing one returns at
-// once: the command sees EOF on stdin, output it still writes is discarded, and it is killed if
-// it is still running WaitDelay later. Only the command itself is waited for; pipes a descendant
-// inherited are closed once it has exited and the connection is closed. Done closes when the
-// command has been reaped, Err then reports how it ended and Kill terminates it immediately.
-type Process interface {
-	Done() <-chan struct{}
-	Err() error
-	Kill() error
-}
-
 const defaultWaitDelay = 5 * time.Second
 
 var errNegativeWaitDelay = errors.New("negative WaitDelay")
 
 // command runs name with its stdin fed by the conn's writes and its stdout readable from the conn.
+// The conn implements netutils.Process: Done closes once the command has been reaped, Err then
+// reports how it ended and Kill terminates it immediately.
 func (l *Local) command(ctx context.Context, name string, args ...string) (net.Conn, error) {
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
