@@ -3,27 +3,117 @@ package protoutils
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
+
+	"github.com/wzshiming/permuteproxy"
 )
 
 var errRunning = errors.New("server already running")
 
-// Server binds a listener on Run and serves it until Close or context cancellation, either of
+// Server binds its resource on Run and serves it until Close or context cancellation, either of
 // which makes Run return nil; the bind and serve steps are supplied by the protocol.
 type Server struct {
-	listen func(ctx context.Context) (net.Listener, error)
-	serve  func(ctx context.Context, ln net.Listener) error
+	bind  func(ctx context.Context) (io.Closer, error)
+	serve func(ctx context.Context, res io.Closer) error
 
 	mu      sync.Mutex
 	closed  bool
 	running bool
 	cancel  context.CancelFunc
-	ln      *listener
+	res     io.Closer
 }
 
+func newServer[R io.Closer](bind func(ctx context.Context) (R, error), serve func(ctx context.Context, res R) error) *Server {
+	return &Server{
+		bind: func(ctx context.Context) (io.Closer, error) {
+			res, err := bind(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return res, nil
+		},
+		serve: func(ctx context.Context, res io.Closer) error { return serve(ctx, res.(R)) },
+	}
+}
+
+// NewServer serves one listener, whose accepted connections are closed along with it.
 func NewServer(listen func(ctx context.Context) (net.Listener, error), serve func(ctx context.Context, ln net.Listener) error) *Server {
-	return &Server{listen: listen, serve: serve}
+	return newServer(func(ctx context.Context) (*listener, error) {
+		raw, err := listen(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return newListener(raw), nil
+	}, func(ctx context.Context, ln *listener) error { return serve(ctx, ln) })
+}
+
+// NewPlaneServer binds a listener for Stream and a packet conn for Packet, as inner declares,
+// before serving either; a failed bind releases what was bound and the first serve to return
+// stops the other.
+func NewPlaneServer(inner permuteproxy.Transport, serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
+	planes := inner.Planes()
+	return newServer(func(ctx context.Context) (*resources, error) {
+		res := &resources{}
+		if planes&permuteproxy.Stream != 0 {
+			ln, err := inner.Listen(ctx)
+			if err != nil {
+				return nil, err
+			}
+			res.ln = newListener(ln)
+		}
+		if planes&permuteproxy.Packet != 0 {
+			pc, err := inner.ListenPacket(ctx)
+			if err != nil {
+				res.Close()
+				return nil, err
+			}
+			res.pc = pc
+		}
+		return res, nil
+	}, func(ctx context.Context, res *resources) error {
+		errs := make(chan error, 2)
+		n := 0
+		if res.ln != nil {
+			n++
+			go func() { errs <- serveStream(ctx, res.ln) }()
+		}
+		if res.pc != nil {
+			n++
+			go func() { errs <- servePacket(ctx, res.pc) }()
+		}
+		err := <-errs
+		res.Close()
+		for i := 1; i < n; i++ {
+			if e := <-errs; err == nil {
+				err = e
+			}
+		}
+		return err
+	})
+}
+
+// resources is what a plane server binds; Close is idempotent since serve, Run and Close all reach it.
+type resources struct {
+	ln   *listener
+	pc   net.PacketConn
+	once sync.Once
+	err  error
+}
+
+func (r *resources) Close() error {
+	r.once.Do(func() {
+		if r.ln != nil {
+			r.err = r.ln.Close()
+		}
+		if r.pc != nil {
+			if err := r.pc.Close(); r.err == nil {
+				r.err = err
+			}
+		}
+	})
+	return r.err
 }
 
 func (s *Server) Run(parent context.Context) error {
@@ -36,20 +126,19 @@ func (s *Server) Run(parent context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	raw, err := s.listen(ctx)
+	res, err := s.bind(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
 		}
 		return err
 	}
-	ln := newListener(raw)
-	defer ln.Close()
-	if ctx.Err() != nil || !s.bind(ln) {
+	defer res.Close()
+	if ctx.Err() != nil || !s.hold(res) {
 		return nil
 	}
-	defer context.AfterFunc(ctx, func() { ln.Close() })()
-	err = s.serve(ctx, ln)
+	defer context.AfterFunc(ctx, func() { res.Close() })()
+	err = s.serve(ctx, res)
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -62,13 +151,13 @@ func (s *Server) Close() error {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	ln := s.ln
-	s.ln = nil
+	res := s.res
+	s.res = nil
 	s.mu.Unlock()
-	if ln == nil {
+	if res == nil {
 		return nil
 	}
-	return ln.Close()
+	return res.Close()
 }
 
 // begin claims the server for one Run; after Close it reports false without an error.
@@ -85,20 +174,20 @@ func (s *Server) begin(cancel context.CancelFunc) (bool, error) {
 	return true, nil
 }
 
-func (s *Server) bind(ln *listener) bool {
+func (s *Server) hold(res io.Closer) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return false
 	}
-	s.ln = ln
+	s.res = res
 	return true
 }
 
 func (s *Server) end() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.running, s.cancel, s.ln = false, nil, nil
+	s.running, s.cancel, s.res = false, nil, nil
 }
 
 // listener closes accepted connections along with itself; the wrapped servers honor the context only after the handshake.

@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/wzshiming/permuteproxy"
 )
 
 func listenLoopback(ctx context.Context) (net.Listener, error) {
@@ -536,5 +538,181 @@ func TestServerRunIsExclusive(t *testing.T) {
 	assertClosed(t, addr)
 	if listens.Load() != 2 {
 		t.Fatalf("listen called %d times, want 2", listens.Load())
+	}
+}
+
+func listenPacketLoopback(ctx context.Context) (net.PacketConn, error) {
+	return (&net.ListenConfig{}).ListenPacket(ctx, "udp", "127.0.0.1:0")
+}
+
+// readLoop mimics a library ServePacket: it blocks in ReadFrom until the conn closes.
+func readLoop(_ context.Context, pc net.PacketConn) error {
+	buf := make([]byte, 64)
+	for {
+		if _, _, err := pc.ReadFrom(buf); err != nil {
+			return err
+		}
+	}
+}
+
+type countingPacketConn struct {
+	net.PacketConn
+	closes atomic.Int32
+}
+
+func (c *countingPacketConn) Close() error {
+	c.closes.Add(1)
+	return c.PacketConn.Close()
+}
+
+func planeInner(planes permuteproxy.Plane, listen func(context.Context) (net.Listener, error), listenPacket func(context.Context) (net.PacketConn, error)) permuteproxy.Transport {
+	return permuteproxy.TransportFuncs{Plane: planes, ListenFunc: listen, ListenPacketFunc: listenPacket}
+}
+
+func TestPlaneServerBindsBothBeforeServing(t *testing.T) {
+	var binds atomic.Int32
+	seen := make(chan int32, 2)
+	var pc *countingPacketConn
+	bound := make(chan net.Addr, 1)
+	s := NewPlaneServer(planeInner(permuteproxy.Stream|permuteproxy.Packet,
+		func(ctx context.Context) (net.Listener, error) {
+			binds.Add(1)
+			ln, err := listenLoopback(ctx)
+			if err == nil {
+				bound <- ln.Addr()
+			}
+			return ln, err
+		},
+		func(ctx context.Context) (net.PacketConn, error) {
+			binds.Add(1)
+			raw, err := listenPacketLoopback(ctx)
+			if err != nil {
+				return nil, err
+			}
+			pc = &countingPacketConn{PacketConn: raw}
+			return pc, nil
+		}),
+		func(ctx context.Context, ln net.Listener) error { seen <- binds.Load(); return acceptLoop(ctx, ln) },
+		func(ctx context.Context, pc net.PacketConn) error { seen <- binds.Load(); return readLoop(ctx, pc) })
+	done := run(s, context.Background())
+	for i := 0; i < 2; i++ {
+		if got := recv(t, seen, "serve"); got != 2 {
+			t.Fatalf("serve started after %d binds, want 2", got)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := wait(t, done); err != nil {
+		t.Fatalf("Run = %v after Close, want nil", err)
+	}
+	assertClosed(t, recv(t, bound, "bind"))
+	if got := pc.closes.Load(); got != 1 {
+		t.Fatalf("packet conn closed %d times, want 1", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second Close = %v", err)
+	}
+}
+
+func TestPlaneServerBindFailureReleasesFirst(t *testing.T) {
+	bindErr := errors.New("packet bind failed")
+	fake := &fakeListener{conns: make(chan net.Conn)}
+	var served atomic.Int32
+	s := NewPlaneServer(planeInner(permuteproxy.Stream|permuteproxy.Packet,
+		func(context.Context) (net.Listener, error) { return fake, nil },
+		func(context.Context) (net.PacketConn, error) { return nil, bindErr }),
+		func(context.Context, net.Listener) error { served.Add(1); return nil },
+		func(context.Context, net.PacketConn) error { served.Add(1); return nil })
+	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
+		t.Fatalf("Run = %v, want the packet bind error", err)
+	}
+	if got := fake.closes.Load(); got != 1 {
+		t.Fatalf("listener closed %d times after the packet bind failed, want 1", got)
+	}
+	if served.Load() != 0 {
+		t.Fatal("serve started after a failed bind")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close after failed bind = %v", err)
+	}
+}
+
+func TestPlaneServerServeErrorStopsBoth(t *testing.T) {
+	serveErr := errors.New("packet serve failed")
+	var pc *countingPacketConn
+	bound := make(chan net.Addr, 1)
+	streamDone := make(chan error, 1)
+	s := NewPlaneServer(planeInner(permuteproxy.Stream|permuteproxy.Packet,
+		func(ctx context.Context) (net.Listener, error) {
+			ln, err := listenLoopback(ctx)
+			if err == nil {
+				bound <- ln.Addr()
+			}
+			return ln, err
+		},
+		func(ctx context.Context) (net.PacketConn, error) {
+			raw, err := listenPacketLoopback(ctx)
+			if err != nil {
+				return nil, err
+			}
+			pc = &countingPacketConn{PacketConn: raw}
+			return pc, nil
+		}),
+		func(ctx context.Context, ln net.Listener) error {
+			err := acceptLoop(ctx, ln)
+			streamDone <- err
+			return err
+		},
+		func(context.Context, net.PacketConn) error { return serveErr })
+	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
+		t.Fatalf("Run = %v, want the packet serve error", err)
+	}
+	if err := recv(t, streamDone, "stream serve exit"); err == nil {
+		t.Fatal("stream serve returned nil, want the closed listener error")
+	}
+	assertClosed(t, recv(t, bound, "bind"))
+	if got := pc.closes.Load(); got != 1 {
+		t.Fatalf("packet conn closed %d times, want 1", got)
+	}
+}
+
+func TestPlaneServerBindsDeclaredPlanesOnly(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		planes      permuteproxy.Plane
+		wantListens int32
+		wantPackets int32
+	}{
+		{"stream", permuteproxy.Stream, 1, 0},
+		{"packet", permuteproxy.Packet, 0, 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var listens, packets atomic.Int32
+			started := make(chan string, 2)
+			s := NewPlaneServer(planeInner(tt.planes,
+				func(ctx context.Context) (net.Listener, error) { listens.Add(1); return listenLoopback(ctx) },
+				func(ctx context.Context) (net.PacketConn, error) { packets.Add(1); return listenPacketLoopback(ctx) }),
+				func(ctx context.Context, ln net.Listener) error { started <- "stream"; return acceptLoop(ctx, ln) },
+				func(ctx context.Context, pc net.PacketConn) error { started <- "packet"; return readLoop(ctx, pc) })
+			done := run(s, context.Background())
+			if got := recv(t, started, "serve"); got != tt.name {
+				t.Fatalf("%s serve started, want %s", got, tt.name)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := wait(t, done); err != nil {
+				t.Fatalf("Run = %v after Close, want nil", err)
+			}
+			if listens.Load() != tt.wantListens || packets.Load() != tt.wantPackets {
+				t.Fatalf("listens %d packets %d, want %d and %d", listens.Load(), packets.Load(), tt.wantListens, tt.wantPackets)
+			}
+			select {
+			case got := <-started:
+				t.Fatalf("%s serve started too", got)
+			default:
+			}
+		})
 	}
 }
