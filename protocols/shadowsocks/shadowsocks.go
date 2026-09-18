@@ -2,11 +2,11 @@ package shadowsocks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wzshiming/shadowsocks"
@@ -135,16 +135,31 @@ func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts
 		psrv.ProxyPacket = owned.ListenPacket
 		psrv.BytesPool = pool.Bytes
 		psrv.Timeout = time.Minute
+		c := &carrier{PacketConn: pc}
 		for {
-			err := psrv.ServePacket(pc)
-			var opErr *net.OpError
-			if ctx.Err() != nil || errors.As(err, &opErr) {
+			err := psrv.ServePacket(c)
+			if c.failed.Load() || ctx.Err() != nil {
 				return err
 			}
 			// A datagram that fails to decrypt or parse ends ServePacket; the socket is still good.
 		}
 	}
 	return protoutils.NewPlaneServer(inner, serveStream, servePacket), nil
+}
+
+// carrier records whether its ReadFrom failed, since the library returns that error raw, like a
+// decrypt or parse error.
+type carrier struct {
+	net.PacketConn
+	failed atomic.Bool
+}
+
+func (c *carrier) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, addr, err := c.PacketConn.ReadFrom(b)
+	if err != nil {
+		c.failed.Store(true)
+	}
+	return n, addr, err
 }
 
 // sessions owns the outgoing sockets the packet server opens per client and target, which the

@@ -500,3 +500,43 @@ func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 	default:
 	}
 }
+
+func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	addr := reservePort(t)
+	c := parse(t, "ss://aes-256-gcm:p@"+addr)
+	base, upstream := newProbe(system), newProbe(system)
+	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	waitBound(t, base, done)
+	waitBoundPacket(t, base, done)
+	intruder, err := permuteproxy.Engine{}.Client(parse(t, "ss://aes-256-gcm:x@"+addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(intruder)
+	echo := udpEcho(t)
+	// A well-formed datagram under another key fails authentication; it must not reach the target.
+	wrong := dialPacket(t, ctx, intruder, echo.String())
+	if _, err := wrong.Write([]byte("wrong key")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := permuteproxy.Engine{}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(n)
+	roundTrip(t, dialPacket(t, ctx, n, echo.String()), "after wrong key")
+	if upstream.packets.Load() != 1 {
+		t.Fatalf("upstream sockets = %d, want only the valid client's", upstream.packets.Load())
+	}
+	wrong.SetReadDeadline(time.Now())
+	if n, err := wrong.Read(make([]byte, 64)); err == nil {
+		t.Fatalf("the wrong-key client received %d bytes", n)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("server stopped after a wrong-key datagram: %v", err)
+	default:
+	}
+}
