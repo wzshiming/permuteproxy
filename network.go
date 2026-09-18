@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 var ErrUnsupported = errors.New("unsupported")
@@ -104,9 +106,18 @@ func (p pinned) Close() error {
 type borrowed struct{ Network }
 
 var native Network = &NetworkFuncs{
-	DialContextFunc:  (&net.Dialer{}).DialContext,
+	DialContextFunc:  dialNative,
 	ListenFunc:       (&net.ListenConfig{}).Listen,
 	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
+}
+
+// dialNative binds datagram networks to an unconnected socket; the rest go through net.Dialer.
+func dialNative(ctx context.Context, network, address string) (net.Conn, error) {
+	switch network {
+	case "udp", "udp4", "udp6", "unixgram":
+		return netutils.DialPacket(ctx, network, address, (&net.ListenConfig{}).ListenPacket)
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, address)
 }
 
 // bound binds a Network to one endpoint; stream/packet hold the network names per plane.
@@ -129,8 +140,11 @@ func (b *bound) Planes() Plane {
 }
 
 func (b *bound) Dial(ctx context.Context, plane Plane) (net.Conn, error) {
-	if plane == Stream && b.stream != "" {
+	switch {
+	case plane == Stream && b.stream != "":
 		return b.network.DialContext(ctx, b.stream, b.address)
+	case plane == Packet && b.packet != "":
+		return netutils.DialPacket(ctx, b.packet, b.address, b.network.ListenPacket)
 	}
 	return nil, fmt.Errorf("dial %v on %s: %w", plane, b.address, ErrUnsupported)
 }

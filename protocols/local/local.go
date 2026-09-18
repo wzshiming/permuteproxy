@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // Local is the process-local Network: system networking plus the cmd-* subprocess transports.
@@ -159,6 +161,8 @@ func (l *Local) DialContext(ctx context.Context, network, address string) (net.C
 		return l.dialNetcat(ctx, address)
 	case "cmd-nc-unix":
 		return l.dialNetcatUnix(ctx, address)
+	case "udp", "udp4", "udp6", "unixgram":
+		return netutils.DialPacket(ctx, network, address, l.ListenPacket)
 	}
 	return (&net.Dialer{}).DialContext(ctx, network, address)
 }

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -261,6 +264,124 @@ func TestEngineBaseSelection(t *testing.T) {
 		t.Fatalf("zero Engine listened on %v, want the system tcp network", ln.Addr())
 	}
 	assertCalls(t)
+}
+
+func TestBoundDialPacket(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(parse(t, "udp://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Planes() != Packet {
+		t.Fatalf("Planes() = %v, want packet", tr.Planes())
+	}
+	if _, err := tr.Dial(ctx, Packet); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "base.listenpacket udp :0")
+	if _, err := tr.Dial(ctx, Stream); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Stream) = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+}
+
+// datagramPeer listens on an ephemeral address of network, a temp path for unixgram.
+func datagramPeer(t *testing.T, network string) net.PacketConn {
+	t.Helper()
+	address := "127.0.0.1:0"
+	if network == "unixgram" {
+		if runtime.GOOS == "windows" {
+			t.Skip("unixgram needs a POSIX system")
+		}
+		address = filepath.Join(t.TempDir(), "p")
+	}
+	pc, err := net.ListenPacket(network, address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	return pc
+}
+
+// exchange proves conn is an unconnected datagram socket bound to target: Write reaches target,
+// WriteTo reaches a second peer and that peer's reply arrives through ReadFrom with its address.
+func exchange(t *testing.T, conn net.Conn, target net.PacketConn) {
+	t.Helper()
+	pc, ok := conn.(net.PacketConn)
+	if !ok {
+		t.Fatal("conn is not a net.PacketConn")
+	}
+	if conn.RemoteAddr().String() != target.LocalAddr().String() {
+		t.Fatalf("RemoteAddr() = %v, want %v", conn.RemoteAddr(), target.LocalAddr())
+	}
+	other := datagramPeer(t, target.LocalAddr().Network())
+	buf := make([]byte, 16)
+	for _, step := range []struct {
+		to   net.Addr
+		peer net.PacketConn
+	}{{nil, target}, {other.LocalAddr(), other}} {
+		var err error
+		if step.to == nil {
+			_, err = conn.Write([]byte("ping"))
+		} else {
+			_, err = pc.WriteTo([]byte("ping"), step.to)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, from, err := step.peer.ReadFrom(buf)
+		if err != nil || string(buf[:n]) != "ping" {
+			t.Fatalf("peer read %q, %v", buf[:n], err)
+		}
+		if _, err := step.peer.WriteTo([]byte("pong"), from); err != nil {
+			t.Fatal(err)
+		}
+		n, from, err = pc.ReadFrom(buf)
+		if err != nil || string(buf[:n]) != "pong" || from.String() != step.peer.LocalAddr().String() {
+			t.Fatalf("ReadFrom = %q from %v, %v; want \"pong\" from %v", buf[:n], from, err, step.peer.LocalAddr())
+		}
+	}
+}
+
+// closedPacket closes conn and checks a unixgram conn's private socket directory is gone.
+func closedPacket(t *testing.T, conn net.Conn) {
+	t.Helper()
+	local := conn.LocalAddr()
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if local.Network() != "unixgram" {
+		return
+	}
+	if _, err := os.Stat(filepath.Dir(local.String())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private directory of %v survived Close: %v", local, err)
+	}
+}
+
+func TestNativeDialPacket(t *testing.T) {
+	ctx := context.Background()
+	for _, network := range []string{"udp", "unixgram"} {
+		t.Run(network, func(t *testing.T) {
+			target := datagramPeer(t, network)
+			tr, err := Engine{}.Transport(Chain{Endpoint: Endpoint{Network: network, Address: target.LocalAddr().String()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dialed, err := tr.Dial(ctx, Packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exchange(t, dialed, target)
+			closedPacket(t, dialed)
+			direct, err := native.DialContext(ctx, network, target.LocalAddr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			exchange(t, direct, target)
+			closedPacket(t, direct)
+		})
+	}
 }
 
 func TestEngineRestrictsTransport(t *testing.T) {
