@@ -36,7 +36,7 @@ func (l *Local) listenNetcatUnix(ctx context.Context, address string) (net.Liste
 		}
 		return socket.track(conn), nil
 	}
-	return cmdutils.Listen(ctx, spawn, localAddr, netutils.NewNetAddr("cmd", "nc -Ul "+address), []string{"nc", "-Ul", address})
+	return cmdutils.Listen(ctx, spawn, localAddr, netutils.NewNetAddr("cmd", "nc -Ul "+address), []string{"nc", "-Ul", address}, l.waitDelay())
 }
 
 type socketFile struct {

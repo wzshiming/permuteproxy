@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"time"
 
 	"github.com/google/shlex"
 
@@ -34,6 +35,14 @@ func (l *Local) dial() (cmdutils.Dial, error) {
 	return l.command, nil
 }
 
+// waitDelay is WaitDelay with its zero default applied.
+func (l *Local) waitDelay() time.Duration {
+	if l.WaitDelay == 0 {
+		return defaultWaitDelay
+	}
+	return l.WaitDelay
+}
+
 func (l *Local) dialCommand(ctx context.Context, network, address string) (net.Conn, error) {
 	args, err := splitCommand(address)
 	if err != nil {
@@ -55,5 +64,5 @@ func (l *Local) listenCommand(ctx context.Context, network, address string) (net
 	if err != nil {
 		return nil, err
 	}
-	return cmdutils.Listen(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args)
+	return cmdutils.Listen(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args, l.waitDelay())
 }

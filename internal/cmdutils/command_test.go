@@ -15,6 +15,11 @@ import (
 
 var testAddr = netutils.NewNetAddr("cmd", "fake")
 
+// testExitGrace keeps the exit-output window short so probes of it stay bounded.
+const testExitGrace = 50 * time.Millisecond
+
+var errDeadline = errors.New("deadline unsupported")
+
 // fakeProcess stands in for a command: the test drives peer, ends it with exit and sees Kill.
 type fakeProcess struct {
 	net.Conn
@@ -22,10 +27,33 @@ type fakeProcess struct {
 	ctx       context.Context
 	done      chan struct{}
 	closed    chan struct{}
-	once      sync.Once
-	closeOnce sync.Once
-	err       error
-	killed    atomic.Int32
+	deadlines chan time.Time
+	// failDeadline, when set, may refuse a read deadline; a refused one is not applied to the pipe.
+	failDeadline func(time.Time) error
+	once         sync.Once
+	closeOnce    sync.Once
+	err          error
+	killed       atomic.Int32
+	reading      atomic.Int32
+}
+
+func (p *fakeProcess) Read(b []byte) (int, error) {
+	p.reading.Add(1)
+	defer p.reading.Add(-1)
+	return p.Conn.Read(b)
+}
+
+// SetReadDeadline reports t on deadlines once it has been applied or refused.
+func (p *fakeProcess) SetReadDeadline(t time.Time) error {
+	var err error
+	if p.failDeadline != nil {
+		err = p.failDeadline(t)
+	}
+	if err == nil {
+		err = p.Conn.SetReadDeadline(t)
+	}
+	p.deadlines <- t
+	return err
 }
 
 func (p *fakeProcess) Done() <-chan struct{} { return p.done }
@@ -70,7 +98,7 @@ func newSpawner() *spawner {
 
 func (s *spawner) dial(ctx context.Context, name string, args ...string) (net.Conn, error) {
 	local, peer := net.Pipe()
-	p := &fakeProcess{Conn: local, peer: peer, ctx: ctx, done: make(chan struct{}), closed: make(chan struct{})}
+	p := &fakeProcess{Conn: local, peer: peer, ctx: ctx, done: make(chan struct{}), closed: make(chan struct{}), deadlines: make(chan time.Time, 4)}
 	s.mu.Lock()
 	s.all = append(s.all, p)
 	s.mu.Unlock()
@@ -100,7 +128,7 @@ func acceptAsync(ln net.Listener) <-chan result {
 
 func listenSpawner(t *testing.T, ctx context.Context, s *spawner) net.Listener {
 	t.Helper()
-	ln, err := Listen(ctx, s.dial, testAddr, testAddr, []string{"fake"})
+	ln, err := Listen(ctx, s.dial, testAddr, testAddr, []string{"fake"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +155,7 @@ func TestDialContextCanceledBeforeStart(t *testing.T) {
 	if _, err := DialContext(ctx, s.dial, testAddr, testAddr, []string{"fake"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("DialContext = %v, want context.Canceled", err)
 	}
-	if _, err := Listen(ctx, s.dial, testAddr, testAddr, []string{"fake"}); !errors.Is(err, context.Canceled) {
+	if _, err := Listen(ctx, s.dial, testAddr, testAddr, []string{"fake"}, testExitGrace); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Listen = %v, want context.Canceled", err)
 	}
 	if s.count() != 0 {
@@ -334,11 +362,142 @@ func TestListenerAcceptsOutputWrittenBeforeExit(t *testing.T) {
 	if s.count() != 1 {
 		t.Fatalf("%d commands started, want 1", s.count())
 	}
-	time.Sleep(exitGrace + 100*time.Millisecond)
+	time.Sleep(testExitGrace + 100*time.Millisecond)
 	go p.peer.Write([]byte("more"))
 	buf := make([]byte, 5)
 	if _, err := io.ReadFull(r.conn, buf); err != nil || string(buf) != "\x01more" {
 		t.Fatalf("read %q, %v: accepted conn kept the exit deadline", buf, err)
+	}
+}
+
+func TestListenerExitWindowFollowsConfig(t *testing.T) {
+	s := newSpawner()
+	ln := listenSpawner(t, context.Background(), s)
+	defer ln.Close()
+	res := acceptAsync(ln)
+	p := recv(t, s.started, "spawn")
+	before := time.Now()
+	p.finish(nil)
+	if d := recv(t, p.deadlines, "exit deadline"); d.Sub(before) < testExitGrace || d.Sub(before) > testExitGrace+500*time.Millisecond {
+		t.Fatalf("exit deadline %v after exit, want the configured %v", d.Sub(before), testExitGrace)
+	}
+	if d := recv(t, p.deadlines, "deadline reset"); !d.IsZero() {
+		t.Fatalf("read deadline left at %v before Accept, want zero", d)
+	}
+	second := recv(t, s.started, "respawn")
+	go second.peer.Write([]byte{1})
+	r := recv(t, res, "Accept")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	r.conn.Close()
+}
+
+func TestListenerReportsDeadlineErrorWithoutLeak(t *testing.T) {
+	for name, fails := range map[string]func(time.Time) error{
+		"set": func(time.Time) error { return errDeadline },
+		"reset": func(d time.Time) error {
+			if d.IsZero() {
+				return errDeadline
+			}
+			return nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newSpawner()
+			ln := listenSpawner(t, context.Background(), s)
+			defer ln.Close()
+			res := acceptAsync(ln)
+			p := recv(t, s.started, "spawn")
+			p.failDeadline = fails
+			p.finish(nil)
+			if r := recv(t, res, "Accept"); !errors.Is(r.err, errDeadline) {
+				t.Fatalf("Accept = %v, want %v", r.err, errDeadline)
+			}
+			recv(t, p.closed, "Close of the unaccepted command")
+			if p.reading.Load() != 0 {
+				t.Fatal("first-byte reader still running after Accept returned")
+			}
+			if s.count() != 1 {
+				t.Fatalf("%d commands started, want 1", s.count())
+			}
+		})
+	}
+}
+
+// A deadline refused because the conn is closed, as a pipe whose peer is gone refuses it, leaves
+// the read to end by itself: a byte still opens the connection and EOF still starts over.
+func TestListenerRefusedDeadlineKeepsRead(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		reset bool // refuse the reset to zero instead of the exit deadline
+		data  bool // the peer sends a byte instead of closing
+	}{
+		{"set byte", false, true},
+		{"set EOF", false, false},
+		{"reset EOF", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSpawner()
+			ln := listenSpawner(t, context.Background(), s)
+			defer ln.Close()
+			res := acceptAsync(ln)
+			p := recv(t, s.started, "spawn")
+			p.failDeadline = func(d time.Time) error {
+				if d.IsZero() == tt.reset {
+					return io.ErrClosedPipe
+				}
+				return nil
+			}
+			p.finish(nil)
+			recv(t, p.deadlines, "exit deadline")
+			if tt.data {
+				go p.peer.Write([]byte{1})
+			} else {
+				p.peer.Close()
+				second := recv(t, s.started, "respawn after the clean exit")
+				go second.peer.Write([]byte{1})
+			}
+			r := recv(t, res, "Accept")
+			if r.err != nil {
+				t.Fatalf("Accept = %v, want the read kept after the refused deadline", r.err)
+			}
+			r.conn.Close()
+		})
+	}
+}
+
+// eofConn is a command whose only output arrives together with its EOF.
+type eofConn struct {
+	net.Conn
+	read atomic.Bool
+}
+
+func (c *eofConn) Read(b []byte) (int, error) {
+	if c.read.CompareAndSwap(false, true) {
+		b[0] = 'x'
+		return 1, io.EOF
+	}
+	return 0, io.EOF
+}
+
+func TestListenerAcceptsFirstByteWithEOF(t *testing.T) {
+	dial := func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		local, _ := net.Pipe()
+		return &eofConn{Conn: local}, nil
+	}
+	ln, err := Listen(context.Background(), dial, testAddr, testAddr, []string{"fake"}, testExitGrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("Accept = %v, want the byte that arrived with EOF", err)
+	}
+	defer conn.Close()
+	if got, err := io.ReadAll(conn); err != nil || string(got) != "x" {
+		t.Fatalf("read %q, %v, want \"x\" then EOF", got, err)
 	}
 }
 
@@ -440,7 +599,7 @@ func TestListenerReportsFailedSpawn(t *testing.T) {
 
 func TestListenerFallbackReportsEOFBeforeFirstByte(t *testing.T) {
 	peers, ctxs := make(chan net.Conn, 1), make(chan context.Context, 1)
-	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"})
+	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +655,7 @@ func pipeDial(peers chan<- net.Conn, ctxs chan<- context.Context) Dial {
 
 func TestListenerAcceptKeepsFirstByte(t *testing.T) {
 	peers, ctxs := make(chan net.Conn, 1), make(chan context.Context, 1)
-	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"})
+	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +680,7 @@ func TestListenerAcceptKeepsFirstByte(t *testing.T) {
 
 func TestListenerCloseWhileWaitingFirstByte(t *testing.T) {
 	peers, ctxs := make(chan net.Conn, 1), make(chan context.Context, 1)
-	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"})
+	ln, err := Listen(context.Background(), pipeDial(peers, ctxs), testAddr, testAddr, []string{"fake", "a", "b"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +786,7 @@ func recv[T any](t *testing.T, ch <-chan T, what string) T {
 func TestListenerAcceptWaitsForPreviousConnClose(t *testing.T) {
 	peers, ctxs := make(chan net.Conn, 2), make(chan context.Context, 2)
 	dials, exit := make(chan struct{}, 2), make(chan struct{})
-	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"})
+	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +830,7 @@ func TestListenerAcceptWaitsForPreviousConnClose(t *testing.T) {
 func TestListenerCloseInterruptsWaitForPreviousConn(t *testing.T) {
 	peers, ctxs := make(chan net.Conn, 2), make(chan context.Context, 2)
 	dials, exit := make(chan struct{}, 2), make(chan struct{})
-	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"})
+	ln, err := Listen(context.Background(), exitDial(peers, ctxs, dials, exit), testAddr, testAddr, []string{"fake", "a", "b"}, testExitGrace)
 	if err != nil {
 		t.Fatal(err)
 	}

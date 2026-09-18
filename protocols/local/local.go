@@ -20,7 +20,8 @@ type Local struct {
 	// pipes a descendant inherited are closed once it has exited and the connection is closed.
 	Command func(ctx context.Context, name string, args ...string) (net.Conn, error)
 	// WaitDelay bounds how long a command may keep running after its connection was closed
-	// before it is killed; zero means 5s, negative values are rejected.
+	// before it is killed, and how long a listener waits for output a command wrote before
+	// exiting; zero means 5s, negative values are rejected.
 	WaitDelay time.Duration
 }
 

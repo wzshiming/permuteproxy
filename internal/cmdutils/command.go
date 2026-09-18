@@ -56,8 +56,9 @@ func discard(conn net.Conn) {
 	conn.Close()
 }
 
-// Listen prepares a listener; ctx only bounds the call, the listener lives until Close.
-func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Listener, error) {
+// Listen prepares a listener; ctx only bounds the call, the listener lives until Close. exitGrace
+// bounds how long output a command wrote before exiting may take to arrive.
+func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string, exitGrace time.Duration) (net.Listener, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -69,6 +70,7 @@ func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, comm
 		localAddr:  localAddr,
 		remoteAddr: remoteAddr,
 		command:    command,
+		exitGrace:  exitGrace,
 		accepting:  make(chan struct{}, 1),
 	}, nil
 }
@@ -80,6 +82,7 @@ type listener struct {
 	command    []string
 	localAddr  net.Addr
 	remoteAddr net.Addr
+	exitGrace  time.Duration
 	accepting  chan struct{}
 	// gate is owned by the Accept holding accepting; pending is shared with Close.
 	gate    <-chan struct{}
@@ -148,16 +151,17 @@ func (l *listener) Accept() (net.Conn, error) {
 	}
 }
 
-// exitGrace bounds how long output a command wrote before exiting may take to arrive.
-const exitGrace = time.Second
-
 // first reads the command's first byte; once its process has exited only output already on its
 // way can follow, so the wait is then bounded by exitGrace since a descendant may hold stdout open.
 func (l *listener) first(conn net.Conn) ([]byte, error) {
 	var buf [1]byte
 	read := make(chan error, 1)
 	go func() {
-		_, err := conn.Read(buf[:])
+		n, err := conn.Read(buf[:])
+		if n > 0 {
+			// A byte arriving with EOF still opens the connection; the EOF surfaces on the next Read.
+			err = nil
+		}
 		read <- err
 	}()
 	var done <-chan struct{}
@@ -169,13 +173,26 @@ func (l *listener) first(conn net.Conn) ([]byte, error) {
 		return buf[:], err
 	case <-done:
 	}
-	conn.SetReadDeadline(time.Now().Add(exitGrace))
+	if err := conn.SetReadDeadline(time.Now().Add(l.exitGrace)); !bounded(err) {
+		conn.Close()
+		<-read
+		return nil, err
+	}
 	err := <-read
-	conn.SetReadDeadline(time.Time{})
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		err = io.EOF
 	}
+	if rerr := conn.SetReadDeadline(time.Time{}); !bounded(rerr) {
+		conn.Close()
+		return nil, rerr
+	}
 	return buf[:], err
+}
+
+// bounded reports whether a read is bounded after SetReadDeadline returned err: the deadline took
+// effect, or the conn refused it because it is already closed and so ends the read by itself.
+func bounded(err error) bool {
+	return err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, io.ErrClosedPipe)
 }
 
 // hold registers a started command as pending unless the listener already closed.
