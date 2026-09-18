@@ -677,6 +677,103 @@ func TestPlaneServerServeErrorStopsBoth(t *testing.T) {
 	}
 }
 
+// waitCtx mimics a serve whose handlers wait on the context alone, never touching the resource.
+func waitCtx(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func returns(err error) func(context.Context) error {
+	return func(context.Context) error { return err }
+}
+
+func TestPlaneServerFirstReturnCancelsOther(t *testing.T) {
+	serveErr := errors.New("serve failed")
+	for _, tt := range []struct {
+		name           string
+		stream, packet func(context.Context) error
+		want           error
+	}{
+		{"stream error first", returns(serveErr), waitCtx, serveErr},
+		{"packet error first", waitCtx, returns(serveErr), serveErr},
+		{"stream success first", returns(nil), waitCtx, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var pc *countingPacketConn
+			bound := make(chan net.Addr, 1)
+			exits := make(chan error, 2)
+			report := func(serve func(context.Context) error) func(context.Context) error {
+				return func(ctx context.Context) error {
+					err := serve(ctx)
+					exits <- err
+					return err
+				}
+			}
+			stream, packet := report(tt.stream), report(tt.packet)
+			s := NewPlaneServer(planeInner(permuteproxy.Stream|permuteproxy.Packet,
+				func(ctx context.Context) (net.Listener, error) {
+					ln, err := listenLoopback(ctx)
+					if err == nil {
+						bound <- ln.Addr()
+					}
+					return ln, err
+				},
+				func(ctx context.Context) (net.PacketConn, error) {
+					raw, err := listenPacketLoopback(ctx)
+					if err != nil {
+						return nil, err
+					}
+					pc = &countingPacketConn{PacketConn: raw}
+					return pc, nil
+				}),
+				func(ctx context.Context, _ net.Listener) error { return stream(ctx) },
+				func(ctx context.Context, _ net.PacketConn) error { return packet(ctx) })
+			if err := wait(t, run(s, context.Background())); !errors.Is(err, tt.want) {
+				t.Fatalf("Run = %v, want %v", err, tt.want)
+			}
+			first, second := recv(t, exits, "serve exit"), recv(t, exits, "serve exit")
+			if !errors.Is(second, context.Canceled) {
+				first, second = second, first
+			}
+			if !errors.Is(first, tt.want) || !errors.Is(second, context.Canceled) {
+				t.Fatalf("serves returned %v and %v, want %v and context.Canceled", first, second, tt.want)
+			}
+			assertClosed(t, recv(t, bound, "bind"))
+			if got := pc.closes.Load(); got != 1 {
+				t.Fatalf("packet conn closed %d times, want 1", got)
+			}
+		})
+	}
+}
+
+func TestPlaneServerStopReachesWaitingServes(t *testing.T) {
+	for _, cancelCtx := range []bool{true, false} {
+		name := "close"
+		if cancelCtx {
+			name = "cancel"
+		}
+		t.Run(name, func(t *testing.T) {
+			started := make(chan struct{}, 2)
+			s := NewPlaneServer(planeInner(permuteproxy.Stream|permuteproxy.Packet, listenLoopback, listenPacketLoopback),
+				func(ctx context.Context, _ net.Listener) error { started <- struct{}{}; return waitCtx(ctx) },
+				func(ctx context.Context, _ net.PacketConn) error { started <- struct{}{}; return waitCtx(ctx) })
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := run(s, ctx)
+			recv(t, started, "first serve")
+			recv(t, started, "second serve")
+			if cancelCtx {
+				cancel()
+			} else if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := wait(t, done); err != nil {
+				t.Fatalf("Run = %v, want nil", err)
+			}
+		})
+	}
+}
+
 func TestPlaneServerBindsDeclaredPlanesOnly(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
