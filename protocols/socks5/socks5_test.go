@@ -3,7 +3,10 @@ package socks5
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -386,6 +389,113 @@ func TestServerStopEndsAssociation(t *testing.T) {
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func TestAssociationConcurrentIO(t *testing.T) {
+	addr := serve(t, newProbe(system), nil)
+	n := dialer(t, newProbe(system), addr, nil, true)
+	peer := echo(t).LocalAddr()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pc, err := n.ListenPacket(ctx, "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	const writers, perWriter, readers = 4, 25, 4
+	total := writers * perWriter
+	// Distinct payloads of distinct lengths, so a datagram assembled or parsed in a shared buffer
+	// while another one is in flight shows up as unknown, missing or duplicated.
+	payload := func(w, i int) string {
+		return fmt.Sprintf("w%d-%02d-%s", w, i, strings.Repeat("x", 1+(w*perWriter+i)%64))
+	}
+	var writeWG sync.WaitGroup
+	writeErrs := make(chan error, total)
+	for w := 0; w < writers; w++ {
+		writeWG.Add(1)
+		go func(w int) {
+			defer writeWG.Done()
+			for i := 0; i < perWriter; i++ {
+				if _, err := pc.WriteTo([]byte(payload(w, i)), peer); err != nil {
+					writeErrs <- err
+					return
+				}
+			}
+		}(w)
+	}
+	got := make(chan string, total)
+	readErrs := make(chan error, readers)
+	var readWG sync.WaitGroup
+	for r := 0; r < readers; r++ {
+		readWG.Add(1)
+		go func() {
+			defer readWG.Done()
+			buf := make([]byte, 4096)
+			for {
+				n, from, err := pc.ReadFrom(buf)
+				if err != nil {
+					readErrs <- err
+					return
+				}
+				if from.String() != peer.String() {
+					readErrs <- fmt.Errorf("datagram from %v, want %v", from, peer)
+					return
+				}
+				got <- string(buf[:n])
+			}
+		}()
+	}
+	pc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	writeWG.Wait()
+	select {
+	case err := <-writeErrs:
+		t.Fatalf("WriteTo = %v", err)
+	default:
+	}
+	seen := map[string]int{}
+	for len(seen) < total {
+		select {
+		case msg := <-got:
+			seen[msg]++
+		case err := <-readErrs:
+			t.Fatalf("ReadFrom = %v after %d of %d datagrams", err, len(seen), total)
+		}
+	}
+	// Close alone must release readers blocked in ReadFrom.
+	if err := pc.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() { readWG.Wait(); close(released) }()
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close left readers blocked in ReadFrom")
+	}
+	for i := 0; i < readers; i++ {
+		if err := <-readErrs; isTimeout(err) {
+			t.Fatalf("reader ended by the deadline, not by Close: %v", err)
+		}
+	}
+	close(got)
+	for msg := range got {
+		seen[msg]++
+	}
+	for w := 0; w < writers; w++ {
+		for i := 0; i < perWriter; i++ {
+			msg := payload(w, i)
+			if seen[msg] != 1 {
+				t.Errorf("%q echoed %d times, want 1", msg, seen[msg])
+			}
+			delete(seen, msg)
+		}
+	}
+	for msg := range seen {
+		t.Errorf("unknown datagram %q echoed", msg)
+	}
 }
 
 // stubResolver routes DNS through dial so tests see whether a name was resolved locally.

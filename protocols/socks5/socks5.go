@@ -126,13 +126,17 @@ func (c *client) associate(ctx context.Context, network, local, target string) (
 }
 
 // association is one UDP association: the control conn keeps it open on the proxy, the socket
-// carries the datagrams with their socks5 headers, and Close ends both exactly once.
+// carries the datagrams with their socks5 headers, and Close ends both exactly once. The library
+// conn assembles and parses datagrams in one read and one write buffer, so ReadFrom and WriteTo are
+// serialized independently; Close and the deadlines bypass the buffers and take neither lock.
 type association struct {
 	mu      sync.Mutex
 	closed  bool
 	control net.Conn
 	socket  net.PacketConn
 	udp     *socks5.UDPConn
+	readMu  sync.Mutex
+	writeMu sync.Mutex
 }
 
 // adopt keeps a conn opened during the handshake, closing it at once if Close already happened.
@@ -177,10 +181,14 @@ func (a *association) Close() error {
 }
 
 func (a *association) ReadFrom(b []byte) (int, net.Addr, error) {
+	a.readMu.Lock()
+	defer a.readMu.Unlock()
 	return a.udp.ReadFrom(b)
 }
 
 func (a *association) WriteTo(b []byte, addr net.Addr) (int, error) {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 	return a.udp.WriteTo(b, addr)
 }
 
