@@ -24,7 +24,7 @@ func DialPacket(ctx context.Context, network, address string, listen ListenPacke
 	local := ":0"
 	switch network {
 	case "udp", "udp4", "udp6":
-		remote, err := net.ResolveUDPAddr(network, address)
+		remote, err := resolveUDP(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
@@ -54,6 +54,39 @@ func DialPacket(ctx context.Context, network, address string, listen ListenPacke
 		return nil, err
 	}
 	return c, nil
+}
+
+// resolveUDP is net.ResolveUDPAddr with ctx reaching DNS, so a canceled dial stops waiting on it.
+func resolveUDP(ctx context.Context, network, address string) (*net.UDPAddr, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	portnum, err := net.DefaultResolver.LookupPort(ctx, network, port)
+	if err != nil {
+		return nil, err
+	}
+	if host == "" {
+		return &net.UDPAddr{Port: portnum}, nil
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the family udp4 or udp6 asks for; udp prefers IPv4 like net.ResolveUDPAddr.
+	var pick *net.IPAddr
+	for i, ip := range ips {
+		v4 := ip.IP.To4() != nil
+		switch {
+		case network == "udp4" && !v4, network == "udp6" && v4:
+		case pick == nil, v4 && pick.IP.To4() == nil:
+			pick = &ips[i]
+		}
+	}
+	if pick == nil {
+		return nil, &net.AddrError{Err: "no suitable address found", Addr: host}
+	}
+	return &net.UDPAddr{IP: pick.IP, Port: portnum, Zone: pick.Zone}, nil
 }
 
 type packetConn struct {

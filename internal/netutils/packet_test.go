@@ -255,6 +255,8 @@ func TestDialPacketRefuses(t *testing.T) {
 	}{
 		{"canceled", canceled, "udp", "127.0.0.1:1", context.Canceled},
 		{"invalid udp", context.Background(), "udp", "127.0.0.1", nil},
+		{"port out of range", context.Background(), "udp", "127.0.0.1:65536", nil},
+		{"empty udp", context.Background(), "udp", "", nil},
 		{"empty unixgram", context.Background(), "unixgram", "", nil},
 		{"stream", context.Background(), "tcp", "127.0.0.1:1", nil},
 		{"unknown", context.Background(), "bogus", "x", nil},
@@ -290,6 +292,72 @@ func TestDialPacketCancelDuringListen(t *testing.T) {
 	}
 	if l.listens.Load() != 1 || l.closes.Load() != 1 {
 		t.Fatalf("listens = %d, closes = %d, want the one socket closed", l.listens.Load(), l.closes.Load())
+	}
+}
+
+// stubResolver routes DNS through dial until the test ends; PreferGo keeps libc from bypassing it.
+func stubResolver(t *testing.T, dial func(ctx context.Context, network, address string) (net.Conn, error)) {
+	t.Helper()
+	prev := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: dial}
+	t.Cleanup(func() { net.DefaultResolver = prev })
+}
+
+func TestDialPacketCancelDuringResolve(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	over := make(chan struct{})
+	stubResolver(t, func(dns context.Context, _, _ string) (net.Conn, error) {
+		cancel()
+		select {
+		case <-dns.Done():
+		case <-over:
+		}
+		return nil, errors.New("blocked")
+	})
+	l := &countingListen{}
+	errc := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := DialPacket(ctx, "udp", "resolve.invalid:1", l.listen)
+		if err == nil {
+			conn.Close()
+		}
+		errc <- err
+	}()
+	t.Cleanup(func() { close(over); <-done })
+	select {
+	case err := <-errc:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("DialPacket = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DialPacket kept waiting for DNS after its context was canceled")
+	}
+	if got := l.listens.Load(); got != 0 {
+		t.Fatalf("listen called %d times", got)
+	}
+}
+
+func TestDialPacketLiterals(t *testing.T) {
+	var dialed atomic.Int32
+	stubResolver(t, func(context.Context, string, string) (net.Conn, error) {
+		dialed.Add(1)
+		return nil, errors.New("literals must not reach DNS")
+	})
+	for _, address := range []string{"127.0.0.1:1", "[::1]:2", "[fe80::1%lo0]:3", ":4"} {
+		conn, err := DialPacket(context.Background(), "udp", address, systemListen)
+		if err != nil {
+			t.Fatalf("DialPacket(%q) = %v", address, err)
+		}
+		got := conn.RemoteAddr().String()
+		conn.Close()
+		if got != address {
+			t.Fatalf("DialPacket(%q).RemoteAddr() = %q", address, got)
+		}
+	}
+	if n := dialed.Load(); n != 0 {
+		t.Fatalf("literals reached DNS %d times", n)
 	}
 }
 
