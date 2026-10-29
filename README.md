@@ -17,7 +17,6 @@ The following is the implementation of other proxy protocols
 - [Shadow Socks](https://github.com/wzshiming/shadowsocks)
 - [SSH Proxy](https://github.com/wzshiming/sshproxy)
 - [Any Proxy](https://github.com/wzshiming/anyproxy)
-- [Emux](https://github.com/wzshiming/emux)
 
 ## License
 
