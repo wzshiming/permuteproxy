@@ -2,10 +2,8 @@
 
 Permute Proxy is a permuting proxy engine that combines multiple protocols into a single proxy protocol.
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/wzshiming/permuteproxy)](https://goreportcard.com/report/github.com/wzshiming/permuteproxy)
 [![GoDoc](https://godoc.org/github.com/wzshiming/permuteproxy?status.svg)](https://godoc.org/github.com/wzshiming/permuteproxy)
 [![GitHub license](https://img.shields.io/github/license/wzshiming/permuteproxy.svg)](https://github.com/wzshiming/permuteproxy/blob/master/LICENSE)
-[![gocover.io](https://gocover.io/_badge/github.com/wzshiming/permuteproxy)](https://gocover.io/github.com/wzshiming/permuteproxy)
 
 This project is to add protocol support for the [Bridge](https://github.com/wzshiming/bridge), or it can be used alone
 
