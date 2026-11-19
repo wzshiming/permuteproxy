@@ -11,17 +11,6 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/tlsutils"
 )
 
-var options = []string{
-	"tls_skip_verify",
-	"tls_server_name",
-	"tls_ca_file",
-	"tls_acme_host",
-	"tls_acme_cache_dir",
-	"tls_cert_file",
-	"tls_key_file",
-	"tls_self_signed",
-}
-
 func Adapt(inner permuteproxy.Transport, opts permuteproxy.Options) (permuteproxy.Transport, error) {
 	values := protoutils.Values(opts)
 	// Each side's config is built where it is needed: the CA file only by dialers, key material
