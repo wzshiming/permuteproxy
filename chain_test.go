@@ -508,6 +508,26 @@ func TestRegisterCopiesNetworks(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestImplementNetwork(t *testing.T) {
+	calls = nil
+	RegisterNetwork("test-later", NetworkSpec{Plane: Stream})
+	later, again := &fakeNet{name: "later"}, &fakeNet{name: "again"}
+	mustPanic(t, "unknown network", func() { ImplementNetwork("test-unknown", later) })
+	mustPanic(t, "layer name", func() { ImplementNetwork("test-tls", later) })
+	mustPanic(t, "nil network", func() { ImplementNetwork("test-later", nil) })
+	mustPanic(t, "network registered with its implementation", func() { ImplementNetwork("fakenet", later) })
+	ImplementNetwork("test-later", later)
+	mustPanic(t, "network implemented twice", func() { ImplementNetwork("test-later", again) })
+	tr, err := Engine{}.Transport(Chain{Endpoint: Endpoint{Network: "test-later", Address: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Dial(context.Background(), Stream); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "later.dial test-later x")
+}
+
 func mk(network string, schemes ...string) Chain {
 	c := Chain{Endpoint: Endpoint{Network: network, Address: "127.0.0.1:1"}}
 	for _, s := range schemes {

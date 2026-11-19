@@ -55,6 +55,23 @@ func RegisterNetwork(name string, spec NetworkSpec) {
 	networks[name] = spec
 }
 
+// ImplementNetwork gives a declared network without an implementation its implementation.
+func ImplementNetwork(name string, n Network) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	spec, ok := networks[name]
+	switch {
+	case !ok:
+		panic(fmt.Sprintf("permuteproxy: %q is not a registered network", name))
+	case n == nil:
+		panic(fmt.Sprintf("permuteproxy: nil implementation of network %q", name))
+	case spec.Network != nil:
+		panic(fmt.Sprintf("permuteproxy: network %q already has an implementation", name))
+	}
+	spec.Network = n
+	networks[name] = spec
+}
+
 func RegisterLayer(name string, spec Spec) {
 	// lookupBase takes the registry lock, so Networks are checked before RegisterLayer holds it.
 	for _, network := range spec.Networks {
