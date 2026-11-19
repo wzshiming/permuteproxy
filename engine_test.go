@@ -377,6 +377,30 @@ func TestNativeDialPacket(t *testing.T) {
 	}
 }
 
+func TestNativeDialFamilies(t *testing.T) {
+	ctx := context.Background()
+	target := datagramPeer(t, "udp")
+	conn, err := native.DialContext(ctx, "udp4", target.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	exchange(t, conn, target)
+	closedPacket(t, conn)
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if conn, err = native.DialContext(ctx, "tcp4", ln.Addr().String()); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	var unknown net.UnknownNetworkError
+	if _, err := native.DialContext(ctx, "bogus", "x:1"); !errors.As(err, &unknown) {
+		t.Fatalf("dial bogus = %v, want net.Dialer's unknown network error", err)
+	}
+}
+
 func TestEngineRestrictsTransport(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
