@@ -23,13 +23,14 @@ type pipeSession struct {
 	got    chan string
 }
 
-// trackedConn counts Writes and signals Close; a non-nil readErr replaces any error Read returns.
+// trackedConn counts Writes and signals Close; a non-nil readErr replaces any error Read returns, a non-nil writeErr fails every Write.
 type trackedConn struct {
 	net.Conn
-	readErr error
-	writes  atomic.Int32
-	closed  chan struct{}
-	once    sync.Once
+	readErr  error
+	writeErr error
+	writes   atomic.Int32
+	closed   chan struct{}
+	once     sync.Once
 }
 
 func (c *trackedConn) Read(b []byte) (int, error) {
@@ -42,6 +43,9 @@ func (c *trackedConn) Read(b []byte) (int, error) {
 
 func (c *trackedConn) Write(b []byte) (int, error) {
 	c.writes.Add(1)
+	if c.writeErr != nil {
+		return 0, c.writeErr
+	}
 	return c.Conn.Write(b)
 }
 
@@ -55,6 +59,7 @@ func (c *trackedConn) Close() error {
 type pipeDialer struct {
 	hold     func(ctx context.Context, peer net.Addr) error
 	readErr  error
+	writeErr error
 	mute     bool
 	dials    atomic.Int32
 	sessions chan *pipeSession
@@ -74,7 +79,7 @@ func (d *pipeDialer) dial(ctx context.Context, peer net.Addr) (net.Conn, error) 
 	local, remote := net.Pipe()
 	s := &pipeSession{
 		peer:   peer,
-		conn:   &trackedConn{Conn: local, readErr: d.readErr, closed: make(chan struct{})},
+		conn:   &trackedConn{Conn: local, readErr: d.readErr, writeErr: d.writeErr, closed: make(chan struct{})},
 		remote: remote,
 		got:    make(chan string, 64),
 	}
@@ -696,6 +701,28 @@ func TestSessionsEndedSessionIsForgotten(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestSessionsWriteErrorDropsSession(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		broken := errors.New("write side closed")
+		d := newPipeDialer()
+		d.writeErr = broken
+		pc := NewSessions(d.dial, SessionOptions{})
+		defer pc.Close()
+		if _, err := pc.WriteTo([]byte("lost"), testPeer(1)); !errors.Is(err, broken) {
+			t.Fatalf("WriteTo through a conn whose writes fail = %v, want %v", err, broken)
+		}
+		if !d.next(t).isClosed() {
+			t.Fatal("a session whose Write failed stayed open while its Read was blocked")
+		}
+		d.writeErr = nil
+		writeTo(t, pc, "again", testPeer(1))
+		d.next(t).expect(t, "again")
+		if n := d.dials.Load(); n != 2 {
+			t.Fatalf("dialed %d times, want the failed session dialed anew", n)
+		}
+	})
 }
 
 func TestSessionsEvictLeastRecentlyActive(t *testing.T) {

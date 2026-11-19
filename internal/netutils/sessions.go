@@ -102,8 +102,13 @@ func (s *sessions) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return 0, err
 	}
 	n, err := sess.conn.Write(b)
-	if err != nil && s.ctx.Err() != nil {
+	var ne net.Error
+	switch {
+	case err == nil:
+	case s.ctx.Err() != nil:
 		err = net.ErrClosed
+	case !errors.As(err, &ne) || !ne.Timeout():
+		s.drop(sess)
 	}
 	return n, err
 }
