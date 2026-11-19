@@ -63,6 +63,7 @@ type Spec struct {
 	UsernameOption string
 	PasswordOption string
 	Adapt          func(inner Transport, opts Options) (Transport, error)
+	NewAdapter     func(opts Options) (*AdapterFuncs, error) // an adapter's links, declared instead of Adapt
 	Client         func(inner Transport, base Network, opts Options) (Network, error)
 	Server         func(inner Transport, upstream Network, opts Options) (Server, error)
 }

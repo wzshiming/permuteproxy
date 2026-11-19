@@ -64,14 +64,17 @@ func RegisterLayer(name string, spec Spec) {
 		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
 		spec.PasswordOption != "" && spec.UsernameOption == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
-	case spec.Kind == KindAdapter && (spec.Adapt == nil || spec.Client != nil || spec.Server != nil):
-		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only Adapt", name))
-	case spec.Kind == KindProxy && (spec.Adapt != nil || (spec.Client == nil && spec.Server == nil)):
-		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client or Server, not Adapt", name))
+	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.Server != nil):
+		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only one of Adapt and NewAdapter", name))
+	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.Server == nil)):
+		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client or Server, not Adapt or NewAdapter", name))
 	case spec.Kind > KindProxy:
 		panic(fmt.Sprintf("permuteproxy: unknown kind of layer %q", name))
 	}
 	spec.Options = append([]string(nil), spec.Options...)
+	if spec.NewAdapter != nil {
+		spec.Adapt = spec.adapt
+	}
 	layers[name] = spec
 }
 

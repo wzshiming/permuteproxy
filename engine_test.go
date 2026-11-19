@@ -40,7 +40,7 @@ func TestEngineTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-tls.adapt stream", "test-snappy.adapt stream")
+	assertCalls(t, "test-tls.new", "test-snappy.new")
 	if tr.Planes() != Stream {
 		t.Fatalf("Planes() = %v", tr.Planes())
 	}
@@ -50,7 +50,7 @@ func TestEngineTransport(t *testing.T) {
 	if _, err := tr.Listen(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "base.dial tcp 127.0.0.1:1", "base.listen tcp 127.0.0.1:1")
+	assertCalls(t, "base.dial tcp 127.0.0.1:1", "test-tls.client", "test-snappy.client", "base.listen tcp 127.0.0.1:1", "test-tls.listener", "test-snappy.listener")
 	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Dial(Packet) = %v, want ErrUnsupported", err)
 	}
@@ -64,7 +64,7 @@ func TestEngineTransport(t *testing.T) {
 	if _, err := e.Transport(c); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-tls.adapt stream", "test-snappy.adapt stream")
+	assertCalls(t, "test-tls.new", "test-snappy.new")
 
 	quic, err := e.Transport(parse(t, "test-quic://127.0.0.1:1"))
 	if err != nil {
@@ -76,7 +76,7 @@ func TestEngineTransport(t *testing.T) {
 	if _, err := quic.Listen(ctx); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-quic.adapt packet", "base.listenpacket udp 127.0.0.1:1")
+	assertCalls(t, "test-quic.new", "base.listenpacket udp 127.0.0.1:1", "test-quic.packetlistener")
 }
 
 func TestEngineClientServer(t *testing.T) {
@@ -111,11 +111,11 @@ func TestEngineClientServer(t *testing.T) {
 			}
 			var want []string
 			if len(c.Layers) > 1 {
-				want = append(want, c.Layers[1].Scheme+".adapt "+adapterCarrier(c))
+				want = append(want, c.Layers[1].Scheme+".new")
 			}
 			want = append(want, tt.client, "base.dial "+tt.dial+" x:1")
 			if len(c.Layers) > 1 {
-				want = append(want, c.Layers[1].Scheme+".adapt "+adapterCarrier(c))
+				want = append(want, c.Layers[1].Scheme+".new")
 			}
 			want = append(want, tt.server)
 			assertCalls(t, want...)
@@ -128,13 +128,6 @@ func TestEngineClientServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-ss.server stream|packet upstream=native")
-}
-
-func adapterCarrier(c Chain) string {
-	if c.Layers[1].Scheme == "test-quic" {
-		return "packet"
-	}
-	return "stream"
 }
 
 func TestEngineRejects(t *testing.T) {
