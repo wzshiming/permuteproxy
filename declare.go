@@ -46,6 +46,9 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {
 		link := funcs.link(plane)
+		if link == nil {
+			return inner.Dial(ctx, plane)
+		}
 		carrier, err := inner.Dial(ctx, link.carrier(plane))
 		if err != nil {
 			return nil, err
@@ -54,6 +57,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	}
 	switch link := funcs.Stream; {
 	case link == nil:
+		t.ListenFunc = inner.Listen
 	case link.carrier(Stream) == Stream:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
 			ln, err := inner.Listen(ctx)
@@ -71,7 +75,10 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			return link.PacketListener(pc)
 		}
 	}
-	if link := funcs.Packet; link != nil && link.carrier(Packet) == Packet {
+	switch link := funcs.Packet; {
+	case link == nil:
+		t.ListenPacketFunc = inner.ListenPacket
+	case link.carrier(Packet) == Packet:
 		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
 			pc, err := inner.ListenPacket(ctx)
 			if err != nil {

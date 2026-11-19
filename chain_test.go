@@ -150,6 +150,9 @@ func init() {
 	RegisterLayer("test-quic", fakeAdapter("test-quic", Packet, Stream))
 	RegisterLayer("test-dtls", fakeAdapter("test-dtls", Packet, Packet))
 	RegisterLayer("test-uot", fakeAdapter("test-uot", Stream, Packet))
+	keep := fakeAdapter("test-keep", Stream, Stream)
+	keep.Preserves = Packet
+	RegisterLayer("test-keep", keep)
 	RegisterLayer("test-http", fakeProxy("test-http", Stream, Stream, 0, "username", "password"))
 	RegisterLayer("test-socks4", fakeProxy("test-socks4", Stream, Stream, 0, "username", ""))
 	RegisterLayer("test-ssh", fakeProxy("test-ssh", Stream, Stream, 0, "username", "password", "identity_file", "identity_data", "authorized_data"))

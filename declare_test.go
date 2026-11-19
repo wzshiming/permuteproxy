@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"context"
 	"errors"
+	"net"
 	"testing"
 )
 
@@ -72,6 +73,45 @@ func TestAdapterPacketCarrier(t *testing.T) {
 			assertCalls(t, "test-quic.new", "test-quic.client")
 		})
 	}
+}
+
+func TestAdapterPreservesWithoutLink(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	held := &net.UDPConn{}
+	base := NetworkFuncs{
+		DialContextFunc: (&fakeNet{name: "base"}).DialContext,
+		ListenPacketFunc: func(_ context.Context, network, address string) (net.PacketConn, error) {
+			record("base.listenpacket %s %s", network, address)
+			return held, nil
+		},
+	}
+	tr, err := Engine{Base: base}.Transport(mk("", "test-keep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-keep.new")
+	if tr.Planes() != Stream|Packet {
+		t.Fatalf("Planes() = %v, want stream|packet", tr.Planes())
+	}
+	conn, err := tr.Dial(ctx, Packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := conn.(net.PacketConn); !ok || conn.RemoteAddr().String() != "127.0.0.1:1" {
+		t.Fatalf("Dial(Packet) = %v, want the carrier's own datagram conn to 127.0.0.1:1", conn)
+	}
+	pc, err := tr.ListenPacket(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pc != net.PacketConn(held) {
+		t.Fatalf("ListenPacket() = %v, want the carrier's socket unchanged", pc)
+	}
+	if _, err := tr.Dial(ctx, Stream); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
 func TestAdaptAndNewAdapterCoexist(t *testing.T) {
