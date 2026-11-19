@@ -709,6 +709,21 @@ func TestServerRejectsDeclarations(t *testing.T) {
 	}
 }
 
+func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	if _, err := e.Server(mk("tcp", "test-packet-server", "closable")); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Server() over a carrier with no plane to bind = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t, "closable.close")
+	srv, err := e.Server(mk("udp", "test-packet-server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-packet-server.newserver")
+	assertRun(t, srv, "base.listenpacket udp 127.0.0.1:1", "test-packet-server.servepacket upstream=native")
+}
+
 func TestServerClosesOnce(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}, Upstream: &closableNet{fakeNet{name: "upstream"}}}

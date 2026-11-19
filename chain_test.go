@@ -354,6 +354,14 @@ func init() {
 	RegisterLayer("test-reject-adapter", declared(Stream, Stream, &AdapterFuncs{Close: func() error { record("test-reject-adapter.close"); return nil }}, nil))
 	RegisterLayer("test-reject-client", declaredProxy(Stream, 0, &ClientFuncs{Close: func() error { record("test-reject-client.close"); return nil }}, nil))
 	RegisterLayer("test-reject-server", declaredServer(Stream, 0, &ServerFuncs{Close: func() error { record("test-reject-server.close"); return nil }}, nil))
+	// test-packet-server binds only a Packet carrier, so a Stream one leaves it nothing to serve.
+	RegisterLayer("test-packet-server", Spec{Kind: KindProxy, Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
+		record("test-packet-server.newserver")
+		return &ServerFuncs{ServePacket: func(_ context.Context, _ net.PacketConn, upstream Network) error {
+			record("test-packet-server.servepacket upstream=%s", netName(upstream))
+			return nil
+		}}, nil
+	}})
 	RegisterAlias("test-https", "test-http+test-tls")
 	RegisterAlias("later", "pending+test-tls")
 }
