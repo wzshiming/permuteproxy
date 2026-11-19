@@ -512,6 +512,23 @@ func TestRegisterRejectsServerDeclarations(t *testing.T) {
 	}
 }
 
+func TestRegisterLossy(t *testing.T) {
+	newAdapter := fakeAdapter("x", Stream, Stream).NewAdapter
+	for name, spec := range map[string]Spec{
+		"lossy-stream":    {Requires: Stream, Provides: Stream | Packet, Lossy: Stream, NewAdapter: newAdapter},
+		"lossy-both":      {Requires: Stream, Provides: Stream | Packet, Lossy: Stream | Packet, NewAdapter: newAdapter},
+		"lossy-bit":       {Requires: Stream, Provides: Packet, Lossy: 4, NewAdapter: newAdapter},
+		"lossy-unoffered": {Requires: Packet, Provides: Stream, Lossy: Packet, NewAdapter: newAdapter},
+	} {
+		mustPanic(t, name, func() { RegisterLayer(name, spec) })
+		if _, ok := lookupLayer(name); ok {
+			t.Fatalf("rejected layer %q was registered", name)
+		}
+	}
+	RegisterLayer("lossy-provided", Spec{Requires: Stream, Provides: Packet, Lossy: Packet, NewAdapter: newAdapter})
+	RegisterLayer("lossy-preserved", Spec{Requires: Stream, Provides: Stream, Preserves: Packet, Lossy: Packet, NewAdapter: newAdapter})
+}
+
 func TestRegisterCopiesNetworks(t *testing.T) {
 	calls = nil
 	networks := []string{"tcp"}

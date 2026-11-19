@@ -88,6 +88,8 @@ func RegisterLayer(name string, spec Spec) {
 		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
 		spec.PasswordOption != "" && spec.UsernameOption == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
+	case spec.Lossy&^Packet != 0, spec.Lossy&^(spec.Provides|spec.Preserves) != 0:
+		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
 	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.NewClient != nil || spec.Server != nil || spec.NewServer != nil):
 		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only one of Adapt and NewAdapter", name))
 	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.NewClient == nil && spec.Server == nil && spec.NewServer == nil)):

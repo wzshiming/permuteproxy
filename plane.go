@@ -62,6 +62,7 @@ type Spec struct {
 	Requires       Plane // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
 	Provides       Plane // planes offered above whatever the carrier has
 	Preserves      Plane // carrier planes also offered above, but only those the carrier has
+	Lossy          Plane // planes the layer provides without datagram boundaries
 	Options        []string
 	UsernameOption string
 	PasswordOption string
