@@ -141,6 +141,31 @@ func wideAdapter() Spec {
 	}
 }
 
+// declared is an adapter whose NewAdapter returns funcs and err as given.
+func declared(requires, provides Plane, funcs *AdapterFuncs, err error) Spec {
+	return Spec{Kind: KindAdapter, Requires: requires, Provides: provides, NewAdapter: func(Options) (*AdapterFuncs, error) { return funcs, err }}
+}
+
+var (
+	errDeclare     = errors.New("declare failed")
+	listener       = func(ln net.Listener) (net.Listener, error) { return ln, nil }
+	packetListener = func(net.PacketConn) (net.Listener, error) { return nil, nil }
+	packetConn     = func(pc net.PacketConn) (net.PacketConn, error) { return pc, nil }
+)
+
+// uncovered are layers whose links do not cover the planes they declare.
+var uncovered = map[string]Spec{
+	"test-bad-missing": declared(Stream, Stream, &AdapterFuncs{}, nil),
+	"test-bad-extra":   declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Packet: &Link{}}, nil),
+	"test-bad-carrier": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Packet}}, nil),
+	"test-bad-dual":    declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Stream | Packet}}, nil),
+	"test-bad-bit":     declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: 4}}, nil),
+	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{PacketListener: packetListener}}, nil),
+	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: listener}}, nil),
+	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: packetListener}}, nil),
+	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, PacketConn: packetConn}}, nil),
+}
+
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
@@ -162,7 +187,11 @@ func init() {
 	anyProxy.Client = nil
 	RegisterLayer("test-any", anyProxy)
 	RegisterLayer("wide", wideAdapter())
-	RegisterLayer("niladapter", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
+	RegisterLayer("niladapter", declared(Stream, Stream, nil, nil))
+	RegisterLayer("test-broken", declared(Stream, Stream, nil, errDeclare))
+	for name, spec := range uncovered {
+		RegisterLayer(name, spec)
+	}
 	RegisterLayer("closable", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(inner Transport, _ Options) (Transport, error) {
 		return closableTransport{inner, "closable"}, nil
 	}})

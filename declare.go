@@ -2,6 +2,7 @@ package permuteproxy
 
 import (
 	"context"
+	"fmt"
 	"net"
 )
 
@@ -37,11 +38,47 @@ func (f *AdapterFuncs) link(p Plane) *Link {
 	return f.Stream
 }
 
+// fits reports whether each server form l sets is the one for p over a carrier of plane over.
+func (l *Link) fits(p, over Plane) bool {
+	return (l.Listener == nil || p == Stream && over == Stream) &&
+		(l.PacketListener == nil || p == Stream && over == Packet) &&
+		(l.PacketConn == nil || p == Packet && over == Packet)
+}
+
+// covers reports how funcs falls short of the planes s declares.
+func (s Spec) covers(funcs *AdapterFuncs) error {
+	for _, p := range []Plane{Stream, Packet} {
+		link := funcs.link(p)
+		if link == nil {
+			if s.Provides&p != 0 {
+				return fmt.Errorf("no link provides %v", p)
+			}
+			continue
+		}
+		over := link.carrier(p)
+		switch {
+		case (s.Provides|s.Preserves)&p == 0:
+			return fmt.Errorf("%v link on a plane the layer neither provides nor preserves", p)
+		case over != Stream && over != Packet, (s.Requires|s.Preserves)&over == 0:
+			return fmt.Errorf("%v link over %v, not one plane the layer requires or preserves", p, over)
+		case !link.fits(p, over):
+			return fmt.Errorf("%v link over %v sets the server form of another pair", p, over)
+		}
+	}
+	return nil
+}
+
 // adapt is the Adapt that RegisterLayer derives from s.NewAdapter.
 func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	funcs, err := s.NewAdapter(opts)
-	if err != nil {
-		return nil, err
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+	case funcs == nil:
+		return nil, fmt.Errorf("NewAdapter returned nil: %w", ErrInvalidChain)
+	}
+	if err := s.covers(funcs); err != nil {
+		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
 	}
 	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {

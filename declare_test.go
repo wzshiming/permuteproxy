@@ -114,6 +114,38 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
+func TestAdapterRejectsDeclarations(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &fakeNet{name: "base"}}
+	schemes := []string{"niladapter", "test-broken"}
+	for name := range uncovered {
+		schemes = append(schemes, name)
+	}
+	for _, scheme := range schemes {
+		t.Run(scheme, func(t *testing.T) {
+			c := mk("", scheme)
+			if err := c.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.Transport(c); !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Transport() = %v, want ErrInvalidChain", err)
+			}
+			assertCalls(t)
+		})
+	}
+	if _, err := e.Transport(mk("", "test-broken")); !errors.Is(err, errDeclare) {
+		t.Fatalf("Transport() = %v, want the NewAdapter error kept", err)
+	}
+	c := mk("", "test-http", "test-bad-missing")
+	if _, err := e.Client(c); !errors.Is(err, ErrInvalidChain) {
+		t.Fatalf("Client() = %v, want ErrInvalidChain", err)
+	}
+	if _, err := e.Server(c); !errors.Is(err, ErrInvalidChain) {
+		t.Fatalf("Server() = %v, want ErrInvalidChain", err)
+	}
+	assertCalls(t)
+}
+
 func TestAdaptAndNewAdapterCoexist(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
