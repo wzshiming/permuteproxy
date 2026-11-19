@@ -96,8 +96,8 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		case link.Client == nil:
 			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
-		carrier, err := inner.Dial(ctx, link.carrier(plane))
-		return apply(carrier, err, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
+		dial := func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) }
+		return apply(ctx, dial, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
 	}
 	// covers admits a server form only for its own pair, so the one set picks the carrier.
 	switch link := funcs.Stream; {
@@ -105,13 +105,11 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		t.ListenFunc = inner.Listen
 	case link.Listener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			ln, err := inner.Listen(ctx)
-			return apply(ln, err, link.Listener)
+			return apply(ctx, inner.Listen, link.Listener)
 		}
 	case link.PacketListener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			pc, err := inner.ListenPacket(ctx)
-			return apply(pc, err, link.PacketListener)
+			return apply(ctx, inner.ListenPacket, link.PacketListener)
 		}
 	}
 	switch link := funcs.Packet; {
@@ -119,8 +117,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		t.ListenPacketFunc = inner.ListenPacket
 	case link.PacketConn != nil:
 		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
-			pc, err := inner.ListenPacket(ctx)
-			return apply(pc, err, link.PacketConn)
+			return apply(ctx, inner.ListenPacket, link.PacketConn)
 		}
 	}
 	return assembled{t, closeOnce(funcs.Close, inner)}, nil
@@ -156,8 +153,9 @@ func (a assembled) Close() error {
 	return a.close()
 }
 
-// apply hands a carrier just obtained to f, which owns it from then on.
-func apply[C, R any](carrier C, err error, f func(C) (R, error)) (r R, _ error) {
+// apply hands the carrier obtain gets to f, which owns it from then on.
+func apply[C, R any](ctx context.Context, obtain func(context.Context) (C, error), f func(C) (R, error)) (r R, _ error) {
+	carrier, err := obtain(ctx)
 	if err != nil {
 		return r, err
 	}
