@@ -564,6 +564,25 @@ func TestServerBindFailureReleasesCarriers(t *testing.T) {
 	assertCalls(t, "carrier.close")
 }
 
+func TestServerBindsRequiredOrPreservedPlanes(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		chain Chain
+		serve []string
+	}{
+		{mk("", "test-socks5", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "test-socks5.serve upstream=native"}},
+		{mk("", "test-ss", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "base.listenpacket udp 127.0.0.1:1", "test-ss.serve upstream=native", "test-ss.servepacket upstream=native"}},
+	}
+	for _, tt := range tests {
+		srv, err := e.Server(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRun(t, srv, tt.serve...)
+	}
+}
+
 func TestServerFirstReturnCancelsOther(t *testing.T) {
 	errServe := errors.New("serve failed")
 	for _, first := range []Plane{Stream, Packet} {

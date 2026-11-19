@@ -250,7 +250,7 @@ func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, e
 	}
 	var listen func(context.Context) (net.Listener, error)
 	var listenPacket func(context.Context) (net.PacketConn, error)
-	planes := inner.Planes()
+	planes := inner.Planes() & (s.Requires | s.Preserves)
 	if planes&Stream != 0 {
 		listen = inner.Listen
 	}
