@@ -49,6 +49,9 @@ func netName(n Network) string {
 	if f, ok := n.(*fakeNet); ok {
 		return f.name
 	}
+	if l, ok := n.(*lossyNet); ok {
+		return l.name
+	}
 	if _, ok := n.(byName); ok {
 		return "default"
 	}
@@ -308,6 +311,7 @@ func init() {
 	atRootInit.cmd, atRootInit.cmdErr = ParseURI("cmd:nc host 1")
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
 	RegisterNetwork("fakenet", NetworkSpec{Plane: Stream, Network: &fakeNet{name: "impl"}})
+	RegisterNetwork("test-lossy-net", NetworkSpec{Plane: Packet, Network: &lossyNet{fakeNet{name: "lossy"}, []string{"test-lossy-net"}}})
 	RegisterLayer("test-tls", fakeAdapter("test-tls", Stream, Stream, "tls_skip_verify", "tls_self_signed", "tls_cert_file", "tls_key_file"))
 	RegisterLayer("test-snappy", fakeAdapter("test-snappy", Stream, Stream))
 	RegisterLayer("test-quic", fakeAdapter("test-quic", Packet, Stream))

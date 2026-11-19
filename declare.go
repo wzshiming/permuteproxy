@@ -196,13 +196,13 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			switch base, plane := s.admit(network); {
 			case plane == Stream:
 				return funcs.Dial(ctx, inner, network, address)
-			case base == "udp":
+			case base == "udp" && !isLossy(local, network):
 				return funcs.dialUDP(ctx, inner, local, network, address)
 			}
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
-			if _, plane := s.admit(network); plane != Packet {
+			if _, plane := s.admit(network); plane != Packet || isLossy(local, network) {
 				return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
 			}
 			return funcs.ListenPacket(ctx, inner, local, network, address)

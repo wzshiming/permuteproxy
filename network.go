@@ -173,6 +173,11 @@ func (n byName) ListenPacket(ctx context.Context, network, address string) (net.
 	return n.resolve(network).ListenPacket(ctx, network, address)
 }
 
+// Lossy forwards what network's resolved implementation reports.
+func (n byName) Lossy(network string) bool {
+	return isLossy(n.resolve(network), network)
+}
+
 // bound binds a Network to one endpoint; stream/packet hold the network names per plane.
 type bound struct {
 	network Network

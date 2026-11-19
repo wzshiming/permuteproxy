@@ -667,6 +667,96 @@ func TestViewsForwardLossy(t *testing.T) {
 	}
 }
 
+func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	for _, scheme := range []string{"test-dtls", "test-quic"} {
+		tr, err := e.Transport(mk("udp", scheme))
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		_, dialErr := tr.Dial(ctx, tr.Planes())
+		var listenErr error
+		if tr.Planes() == Stream {
+			_, listenErr = tr.Listen(ctx)
+		} else {
+			_, listenErr = tr.ListenPacket(ctx)
+		}
+		if !errors.Is(dialErr, ErrUnsupported) || !errors.Is(listenErr, ErrUnsupported) {
+			t.Fatalf("%s over lossy udp: dial = %v, listen = %v; want ErrUnsupported for both", scheme, dialErr, listenErr)
+		}
+		assertCalls(t)
+	}
+	tr, err := e.Transport(mk("", "test-keep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Packet) through test-keep over lossy udp = %v, want ErrUnsupported", err)
+	}
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ListenPacket() through test-keep over lossy udp = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+	if _, err := tr.Dial(ctx, Stream); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Listen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "base.dial tcp 127.0.0.1:1", "test-keep.client", "base.listen tcp 127.0.0.1:1", "test-keep.listener")
+}
+
+func TestLossyLocalRefusesClientPacket(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp", "udp4"}}}
+	n, err := e.Client(mk("", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := e.Client(mk("", "test-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	for _, op := range []string{"listenpacket udp", "dial udp", "dial udp4"} {
+		if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%q with a lossy local = %v, want ErrUnsupported", op, err)
+		}
+		if err := netOp(ctx, peer, op); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%q with a lossy local and a Peer = %v, want ErrUnsupported", op, err)
+		}
+		assertCalls(t)
+	}
+	for op, want := range map[string]string{
+		"dial tcp":              "test-socks5.dial stream tcp x:1",
+		"listenpacket unixgram": "test-socks5.listenpacket stream local=base unixgram x:1",
+	} {
+		if err := netOp(ctx, n, op); err != nil {
+			t.Fatalf("%q = %v", op, err)
+		}
+		assertCalls(t, want)
+	}
+}
+
+func TestEngineNilBaseReportsRegisteredLossy(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{}.Transport(mk("test-lossy-net", "test-dtls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ListenPacket() over a registered lossy implementation = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+}
+
 func TestEngineForwardsClose(t *testing.T) {
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
 	tests := []struct {
