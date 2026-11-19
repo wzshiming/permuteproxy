@@ -148,41 +148,29 @@ func dialNative(ctx context.Context, network, address string) (net.Conn, error) 
 // byName is the Network a nil Engine.Base or Engine.Upstream stands for, resolving each call by its network name.
 type byName struct{}
 
-// resolve is network's registered implementation, else the system for tcp, udp, unix, unixgram and their families.
-func (byName) resolve(op, network string) (Network, error) {
+// resolve is network's registered implementation, else the system for tcp, udp, unix, unixgram and their families, else a Network refusing every call.
+func (byName) resolve(network string) Network {
 	base, _, _ := lookupBase(network)
 	if ns, _ := lookupNetwork(base); ns.Network != nil {
-		return ns.Network, nil
+		return ns.Network
 	}
 	switch base {
 	case "tcp", "udp", "unix", "unixgram":
-		return native, nil
+		return native
 	}
-	return nil, fmt.Errorf("%s %s: %w", op, network, ErrUnsupported)
+	return NetworkFuncs{}
 }
 
 func (n byName) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	impl, err := n.resolve("dial", network)
-	if err != nil {
-		return nil, err
-	}
-	return impl.DialContext(ctx, network, address)
+	return n.resolve(network).DialContext(ctx, network, address)
 }
 
 func (n byName) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	impl, err := n.resolve("listen", network)
-	if err != nil {
-		return nil, err
-	}
-	return impl.Listen(ctx, network, address)
+	return n.resolve(network).Listen(ctx, network, address)
 }
 
 func (n byName) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	impl, err := n.resolve("listen packet", network)
-	if err != nil {
-		return nil, err
-	}
-	return impl.ListenPacket(ctx, network, address)
+	return n.resolve(network).ListenPacket(ctx, network, address)
 }
 
 // bound binds a Network to one endpoint; stream/packet hold the network names per plane.
