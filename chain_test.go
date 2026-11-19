@@ -185,6 +185,24 @@ var failingLinks = map[string]Spec{
 	"test-fail-pp": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{Client: failClient, PacketConn: failPacketConn}}, nil),
 }
 
+var errHook = errors.New("hook failed")
+
+// hookedAdapter is fakeAdapter with BeforeDial and BeforeListen hooks that record each call and return err.
+func hookedAdapter(name string, requires, provides Plane, err error) Spec {
+	spec := fakeAdapter(name, requires, provides)
+	newAdapter := spec.NewAdapter
+	spec.NewAdapter = func(opts Options) (*AdapterFuncs, error) {
+		funcs, newErr := newAdapter(opts)
+		if newErr != nil {
+			return nil, newErr
+		}
+		funcs.BeforeDial = func() error { record("%s.beforedial", name); return err }
+		funcs.BeforeListen = func() error { record("%s.beforelisten", name); return err }
+		return funcs, nil
+	}
+	return spec
+}
+
 // recordedCloses is a base whose carriers record their Close.
 var recordedCloses = NetworkFuncs{
 	DialContextFunc:  func(context.Context, string, string) (net.Conn, error) { return closeConn{}, nil },
@@ -332,6 +350,12 @@ func init() {
 	for name, spec := range failingLinks {
 		RegisterLayer(name, spec)
 	}
+	RegisterLayer("test-hook-ss", hookedAdapter("test-hook-ss", Stream, Stream, nil))
+	RegisterLayer("test-hook-sp", hookedAdapter("test-hook-sp", Packet, Stream, nil))
+	RegisterLayer("test-hook-pp", hookedAdapter("test-hook-pp", Packet, Packet, nil))
+	RegisterLayer("test-hookfail-ss", hookedAdapter("test-hookfail-ss", Stream, Stream, errHook))
+	RegisterLayer("test-hookfail-sp", hookedAdapter("test-hookfail-sp", Packet, Stream, errHook))
+	RegisterLayer("test-hookfail-pp", hookedAdapter("test-hookfail-pp", Packet, Packet, errHook))
 	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
 	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("closableserver", declaredServer(Stream, 0, &ServerFuncs{Serve: failServe, Close: func() error { record("closableserver.close"); return nil }}, nil))

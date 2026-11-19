@@ -169,6 +169,48 @@ func TestAdapterLeavesCarrierToLink(t *testing.T) {
 		"test-dtls.new", "test-dtls.client", "test-dtls.packetconn")
 }
 
+func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
+	ctx := context.Background()
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		scheme string
+		err    error
+		dial   []string
+		listen []string
+	}{
+		{"test-hook-ss", nil, []string{"test-hook-ss.beforedial", "base.dial tcp 127.0.0.1:1", "test-hook-ss.client"}, []string{"test-hook-ss.beforelisten", "base.listen tcp 127.0.0.1:1", "test-hook-ss.listener"}},
+		{"test-hook-sp", nil, []string{"test-hook-sp.beforedial", "base.listenpacket udp :0", "test-hook-sp.client"}, []string{"test-hook-sp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-sp.packetlistener"}},
+		{"test-hook-pp", nil, []string{"test-hook-pp.beforedial", "base.listenpacket udp :0", "test-hook-pp.client"}, []string{"test-hook-pp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-pp.packetconn"}},
+		{"test-hookfail-ss", errHook, []string{"test-hookfail-ss.beforedial"}, []string{"test-hookfail-ss.beforelisten"}},
+		{"test-hookfail-sp", errHook, []string{"test-hookfail-sp.beforedial"}, []string{"test-hookfail-sp.beforelisten"}},
+		{"test-hookfail-pp", errHook, []string{"test-hookfail-pp.beforedial"}, []string{"test-hookfail-pp.beforelisten"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.scheme, func(t *testing.T) {
+			calls = nil
+			tr, err := e.Transport(mk("", tt.scheme))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCalls(t, tt.scheme+".new")
+			plane := tr.Planes()
+			if _, err := tr.Dial(ctx, plane); err != tt.err {
+				t.Fatalf("Dial() = %v, want %v unchanged", err, tt.err)
+			}
+			assertCalls(t, tt.dial...)
+			if plane == Stream {
+				_, err = tr.Listen(ctx)
+			} else {
+				_, err = tr.ListenPacket(ctx)
+			}
+			if err != tt.err {
+				t.Fatalf("listening = %v, want %v unchanged", err, tt.err)
+			}
+			assertCalls(t, tt.listen...)
+		})
+	}
+}
+
 func TestAdapterRefusesMissingFunctions(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

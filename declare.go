@@ -14,9 +14,11 @@ import (
 
 // AdapterFuncs declares an adapter per plane; a preserved plane without a Link passes through unchanged.
 type AdapterFuncs struct {
-	Stream *Link        // how the layer provides Stream
-	Packet *Link        // how the layer provides Packet
-	Close  func() error // optional; releases what NewAdapter acquired
+	Stream       *Link        // how the layer provides Stream
+	Packet       *Link        // how the layer provides Packet
+	BeforeDial   func() error // optional; runs before a Dial obtains a link's carrier, failing the Dial with its error
+	BeforeListen func() error // optional; runs before a Listen or ListenPacket obtains a link's carrier, failing it with its error
+	Close        func() error // optional; releases what NewAdapter acquired
 }
 
 // Link derives one plane from a carrier of one plane, through a client and a server form.
@@ -97,7 +99,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
 		dial := func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) }
-		return apply(ctx, dial, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
+		return apply(ctx, funcs.BeforeDial, dial, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
 	}
 	// covers admits a server form only for its own pair, so the one set picks the carrier.
 	switch link := funcs.Stream; {
@@ -105,11 +107,11 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		t.ListenFunc = inner.Listen
 	case link.Listener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			return apply(ctx, inner.Listen, link.Listener)
+			return apply(ctx, funcs.BeforeListen, inner.Listen, link.Listener)
 		}
 	case link.PacketListener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			return apply(ctx, inner.ListenPacket, link.PacketListener)
+			return apply(ctx, funcs.BeforeListen, inner.ListenPacket, link.PacketListener)
 		}
 	}
 	switch link := funcs.Packet; {
@@ -117,7 +119,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		t.ListenPacketFunc = inner.ListenPacket
 	case link.PacketConn != nil:
 		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
-			return apply(ctx, inner.ListenPacket, link.PacketConn)
+			return apply(ctx, funcs.BeforeListen, inner.ListenPacket, link.PacketConn)
 		}
 	}
 	return assembled{t, closeOnce(funcs.Close, inner)}, nil
@@ -153,8 +155,13 @@ func (a assembled) Close() error {
 	return a.close()
 }
 
-// apply hands the carrier obtain gets to f, which owns it from then on.
-func apply[C, R any](ctx context.Context, obtain func(context.Context) (C, error), f func(C) (R, error)) (r R, _ error) {
+// apply runs before, when set, then hands the carrier obtain gets to f, which owns it from then on.
+func apply[C, R any](ctx context.Context, before func() error, obtain func(context.Context) (C, error), f func(C) (R, error)) (r R, _ error) {
+	if before != nil {
+		if err := before(); err != nil {
+			return r, err
+		}
+	}
 	carrier, err := obtain(ctx)
 	if err != nil {
 		return r, err
