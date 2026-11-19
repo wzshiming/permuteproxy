@@ -85,7 +85,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		return nil, fmt.Errorf("NewAdapter returned nil: %w", ErrInvalidChain)
 	}
 	if err := s.covers(funcs); err != nil {
-		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+		return nil, reject(funcs.Close, err)
 	}
 	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {
@@ -137,6 +137,14 @@ func closeOnce(release func() error, inner Transport) func() error {
 	})
 }
 
+// reject calls release, when set, for a declaration the root package refuses, and marks err as an invalid chain.
+func reject(release func() error, err error) error {
+	if release != nil {
+		release()
+	}
+	return fmt.Errorf("%w: %w", err, ErrInvalidChain)
+}
+
 // assembled is a declared layer's Transport; adapter code never sees inner, so Close releases it too.
 type assembled struct {
 	TransportFuncs
@@ -176,9 +184,9 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	case funcs == nil:
 		return nil, fmt.Errorf("NewClient returned nil: %w", ErrInvalidChain)
 	case funcs.Dial == nil && (s.Provides|s.Preserves)&Stream != 0:
-		return nil, fmt.Errorf("no Dial for %v: %w", Stream, ErrInvalidChain)
+		return nil, reject(funcs.Close, fmt.Errorf("no Dial for %v", Stream))
 	case funcs.ListenPacket == nil && (s.Provides|s.Preserves)&Packet != 0:
-		return nil, fmt.Errorf("no ListenPacket for %v: %w", Packet, ErrInvalidChain)
+		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket for %v", Packet))
 	}
 	n := NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -252,9 +260,9 @@ func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, e
 	case funcs == nil:
 		return nil, fmt.Errorf("NewServer returned nil: %w", ErrInvalidChain)
 	case funcs.Serve == nil && (s.Requires|s.Preserves)&Stream != 0:
-		return nil, fmt.Errorf("no Serve for %v: %w", Stream, ErrInvalidChain)
+		return nil, reject(funcs.Close, fmt.Errorf("no Serve for %v", Stream))
 	case funcs.ServePacket == nil && (s.Requires|s.Preserves)&Packet != 0:
-		return nil, fmt.Errorf("no ServePacket for %v: %w", Packet, ErrInvalidChain)
+		return nil, reject(funcs.Close, fmt.Errorf("no ServePacket for %v", Packet))
 	}
 	var listen func(context.Context) (net.Listener, error)
 	var listenPacket func(context.Context) (net.PacketConn, error)

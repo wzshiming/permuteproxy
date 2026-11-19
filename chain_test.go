@@ -350,6 +350,10 @@ func init() {
 	for name, spec := range uncoveredServers {
 		RegisterLayer(name, spec)
 	}
+	// test-reject-* declare a Close but miss the function the plane they declare needs.
+	RegisterLayer("test-reject-adapter", declared(Stream, Stream, &AdapterFuncs{Close: func() error { record("test-reject-adapter.close"); return nil }}, nil))
+	RegisterLayer("test-reject-client", declaredProxy(Stream, 0, &ClientFuncs{Close: func() error { record("test-reject-client.close"); return nil }}, nil))
+	RegisterLayer("test-reject-server", declaredServer(Stream, 0, &ServerFuncs{Close: func() error { record("test-reject-server.close"); return nil }}, nil))
 	RegisterAlias("test-https", "test-http+test-tls")
 	RegisterAlias("later", "pending+test-tls")
 }

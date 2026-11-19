@@ -538,14 +538,18 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 	}{
 		{"failing NewAdapter", transport, mk("tcp", "test-broken", "closable"), []string{"closable.close"}},
 		{"nil Adapt", transport, mk("tcp", "test-nil-adapt", "closable"), []string{"closable.close"}},
+		{"rejected AdapterFuncs", transport, mk("tcp", "test-reject-adapter", "closable"), []string{"test-reject-adapter.close", "closable.close"}},
 		{"failing layer over two", transport, mk("tcp", "test-tls", "test-broken", "closable", "closable"), []string{"closable.close", "closable.close"}},
 		{"failing NewClient", client, mk("tcp", "test-client-broken", "closable"), []string{"closable.close"}},
 		{"nil Client", client, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
+		{"rejected ClientFuncs", client, mk("tcp", "test-reject-client", "closable"), []string{"test-reject-client.close", "closable.close"}},
 		{"failing NewServer", server, mk("tcp", "test-server-broken", "closable"), []string{"closable.close"}},
 		{"nil Server", server, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
+		{"rejected ServerFuncs", server, mk("tcp", "test-reject-server", "closable"), []string{"test-reject-server.close", "closable.close"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			calls = nil
 			if err := tt.build(tt.chain); err == nil {
 				t.Fatal("build succeeded, want its constructor's failure")
 			}
