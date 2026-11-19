@@ -79,7 +79,7 @@ func (x expression) expand(kind AddressKind, address string) (string, error) {
 			return "", errors.New("address is not host:port")
 		}
 		if host == "" || host[0] == '-' || strings.Trim(host, hostBytes) != "" {
-			return "", errors.New("host is not ASCII letters, digits, '.', '-', '_', ':' and '%' after a first byte other than '-'")
+			return "", errors.New("host is empty, starts with '-' or has a byte other than ASCII letters, digits, '.', '-', '_', ':' and '%'")
 		}
 		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
 			return "", errors.New("port is not a decimal number from 1 to 65535")
@@ -87,7 +87,7 @@ func (x expression) expand(kind AddressKind, address string) (string, error) {
 		pairs = []string{"%h", x.insert(host), "%p", x.insert(port)}
 	case AddressPath:
 		if address == "" || address[0] == '-' || !utf8.ValidString(address) || strings.ContainsFunc(address, unicode.IsControl) {
-			return "", errors.New("path is not valid UTF-8 without control characters, not starting with '-'")
+			return "", errors.New("path is empty, starts with '-', is not UTF-8 or has a control character")
 		}
 		pairs = []string{"%h", x.insert(address)}
 	case AddressOpaque:
