@@ -345,6 +345,48 @@ func TestRegisterRejects(t *testing.T) {
 	}
 }
 
+func TestRegisterRejectsClientDeclarations(t *testing.T) {
+	proxy := fakeProxy("pc", Stream, Stream, 0, "", "")
+	twice, unlisted, listed, unknown, variant, adapter := proxy, proxy, proxy, proxy, proxy, fakeAdapter("ac", Stream, Stream)
+	twice.Client = func(Transport, Network, Options) (Network, error) { return nil, nil }
+	unlisted.Networks = nil
+	listed.NewClient = nil
+	unknown.Networks = []string{"tcp", "bogus"}
+	variant.Networks = []string{"udp", "tcp4"}
+	adapter.NewClient, adapter.Networks = proxy.NewClient, proxy.Networks
+	for name, spec := range map[string]Spec{
+		"client-twice":    twice,
+		"client-unlisted": unlisted,
+		"client-listed":   listed,
+		"client-unknown":  unknown,
+		"client-variant":  variant,
+		"client-adapter":  adapter,
+	} {
+		mustPanic(t, name, func() { RegisterLayer(name, spec) })
+		if _, ok := lookupLayer(name); ok {
+			t.Fatalf("rejected layer %q was registered", name)
+		}
+	}
+}
+
+func TestRegisterCopiesNetworks(t *testing.T) {
+	calls = nil
+	networks := []string{"tcp"}
+	spec := fakeProxy("test-copied", Stream, Stream, 0, "", "")
+	spec.Networks = networks
+	RegisterLayer("test-copied", spec)
+	networks[0] = "unix"
+	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-copied"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := n.DialContext(context.Background(), "unix", "x:1"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unix dial after the caller changed its slice = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+}
+
 func mk(network string, schemes ...string) Chain {
 	c := Chain{Endpoint: Endpoint{Network: network, Address: "127.0.0.1:1"}}
 	for _, s := range schemes {

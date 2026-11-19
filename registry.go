@@ -56,6 +56,12 @@ func RegisterNetwork(name string, spec NetworkSpec) {
 }
 
 func RegisterLayer(name string, spec Spec) {
+	// lookupBase takes the registry lock, so Networks are checked before RegisterLayer holds it.
+	for _, network := range spec.Networks {
+		if base, _, ok := lookupBase(network); !ok || base != network {
+			panic(fmt.Sprintf("permuteproxy: layer %q lists %q, not a registered base network", name, network))
+		}
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	checkName(name)
@@ -64,14 +70,19 @@ func RegisterLayer(name string, spec Spec) {
 		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
 		spec.PasswordOption != "" && spec.UsernameOption == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
-	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.Server != nil):
+	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.NewClient != nil || spec.Server != nil):
 		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only one of Adapt and NewAdapter", name))
 	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.NewClient == nil && spec.Server == nil)):
 		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client, NewClient or Server, not Adapt or NewAdapter", name))
 	case spec.Kind > KindProxy:
 		panic(fmt.Sprintf("permuteproxy: unknown kind of layer %q", name))
+	case spec.Client != nil && spec.NewClient != nil:
+		panic(fmt.Sprintf("permuteproxy: proxy %q must declare only one of Client and NewClient", name))
+	case (spec.NewClient == nil) != (len(spec.Networks) == 0):
+		panic(fmt.Sprintf("permuteproxy: layer %q must list Networks exactly when it declares NewClient", name))
 	}
 	spec.Options = append([]string(nil), spec.Options...)
+	spec.Networks = append([]string(nil), spec.Networks...)
 	if spec.NewAdapter != nil {
 		spec.Adapt = spec.adapt
 	}
