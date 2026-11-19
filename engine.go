@@ -19,12 +19,17 @@ func (e Engine) network() Network {
 }
 
 func (e Engine) build(r *resolved, from int) (Transport, error) {
-	b := &bound{network: e.network(), stream: r.stream, packet: r.packet, address: r.dial}
+	return r.stack(bind(e.network(), r.stream, r.packet, r.dial, len(r.layers) > 0), from, len(r.layers))
+}
+
+// bind binds n to address on the networks named per plane, layered when layers sit above it.
+func bind(n Network, stream, packet, address string, layered bool) *bound {
+	b := &bound{network: n, stream: stream, packet: packet, address: address}
 	// A layer is never offered a datagram plane that its network reports lossy.
-	if len(r.layers) > 0 && b.packet != "" && isLossy(b.network, b.packet) {
+	if layered && b.packet != "" && isLossy(b.network, b.packet) {
 		b.packet = ""
 	}
-	return r.stack(b, from, len(r.layers))
+	return b
 }
 
 // stack builds layers hi-1 out to lo over t, closing what it holds when a layer fails.
