@@ -114,6 +114,32 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
+func TestAdapterRefusesMissingFunctions(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &fakeNet{name: "base"}}
+	for _, scheme := range []string{"test-bare-ss", "test-bare-sp", "test-bare-pp", "test-bare-ps"} {
+		t.Run(scheme, func(t *testing.T) {
+			tr, err := e.Transport(mk("", scheme))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plane := tr.Planes()
+			_, dialErr := tr.Dial(ctx, plane)
+			var listenErr error
+			if plane == Stream {
+				_, listenErr = tr.Listen(ctx)
+			} else {
+				_, listenErr = tr.ListenPacket(ctx)
+			}
+			if !errors.Is(dialErr, ErrUnsupported) || !errors.Is(listenErr, ErrUnsupported) {
+				t.Fatalf("dial = %v, listen = %v; want ErrUnsupported for both", dialErr, listenErr)
+			}
+			assertCalls(t)
+		})
+	}
+}
+
 func TestAdapterRejectsDeclarations(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &fakeNet{name: "base"}}

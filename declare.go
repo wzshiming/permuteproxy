@@ -83,8 +83,11 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {
 		link := funcs.link(plane)
-		if link == nil {
+		switch {
+		case link == nil:
 			return inner.Dial(ctx, plane)
+		case link.Client == nil:
+			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
 		carrier, err := inner.Dial(ctx, link.carrier(plane))
 		if err != nil {
@@ -92,10 +95,11 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 		}
 		return link.Client(ctx, carrier)
 	}
+	// covers admits a server form only for its own pair, so the one set picks the carrier.
 	switch link := funcs.Stream; {
 	case link == nil:
 		t.ListenFunc = inner.Listen
-	case link.carrier(Stream) == Stream:
+	case link.Listener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
 			ln, err := inner.Listen(ctx)
 			if err != nil {
@@ -103,7 +107,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			}
 			return link.Listener(ln)
 		}
-	default:
+	case link.PacketListener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
 			pc, err := inner.ListenPacket(ctx)
 			if err != nil {
@@ -115,7 +119,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	switch link := funcs.Packet; {
 	case link == nil:
 		t.ListenPacketFunc = inner.ListenPacket
-	case link.carrier(Packet) == Packet:
+	case link.PacketConn != nil:
 		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
 			pc, err := inner.ListenPacket(ctx)
 			if err != nil {
