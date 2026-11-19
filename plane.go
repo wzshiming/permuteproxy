@@ -6,11 +6,12 @@ import (
 	"strings"
 )
 
+// Plane is a set of the kinds of carrier a transport offers: byte streams, datagrams or both.
 type Plane uint8
 
 const (
-	Stream Plane = 1 << iota
-	Packet
+	Stream Plane = 1 << iota // reliable ordered byte streams, as tcp carries
+	Packet                   // datagrams each with its peer, as udp carries
 )
 
 func (p Plane) String() string {
@@ -27,11 +28,12 @@ func (p Plane) String() string {
 	return strings.Join(names, "|")
 }
 
+// Kind says whether a layer transforms its carrier or speaks a proxy protocol.
 type Kind uint8
 
 const (
-	KindAdapter Kind = iota
-	KindProxy
+	KindAdapter Kind = iota // turns its carrier into the planes of the layer above, as tls does
+	KindProxy               // serves or dials a proxy protocol as the outermost layer, as socks5 does
 )
 
 type AddressKind uint8
@@ -54,16 +56,17 @@ func (o Options) clone() Options {
 	return c
 }
 
+// Spec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
 type Spec struct {
 	Kind           Kind
-	Requires       Plane
-	Provides       Plane
-	Preserves      Plane
+	Requires       Plane // planes the carrier must have, or the chain is invalid; not themselves offered above
+	Provides       Plane // planes offered above whatever the carrier has
+	Preserves      Plane // carrier planes also offered above, but only those the carrier has
 	Options        []string
 	UsernameOption string
 	PasswordOption string
 	Adapt          func(inner Transport, opts Options) (Transport, error)
-	NewAdapter     func(opts Options) (*AdapterFuncs, error) // an adapter's links, declared instead of Adapt
+	NewAdapter     func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build, as the alternative to Adapt
 	Client         func(inner Transport, base Network, opts Options) (Network, error)
 	Server         func(inner Transport, upstream Network, opts Options) (Server, error)
 }

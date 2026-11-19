@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// AdapterFuncs declares what an adapter does to its carrier, one Link per plane it offers.
+// AdapterFuncs declares an adapter per plane; a preserved plane without a Link passes through unchanged.
 type AdapterFuncs struct {
 	Stream *Link        // how the layer provides Stream
 	Packet *Link        // how the layer provides Packet
