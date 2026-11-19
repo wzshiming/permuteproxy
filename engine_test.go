@@ -511,9 +511,12 @@ func TestEngineRestrictsClient(t *testing.T) {
 func TestEngineRejectsNilResults(t *testing.T) {
 	e := Engine{Base: &fakeNet{name: "base"}}
 	for name, err := range map[string]error{
-		"adapter": func() error { _, err := e.Transport(parse(t, "niladapter://x:1")); return err }(),
-		"client":  func() error { _, err := e.Client(parse(t, "nilproxy://x:1")); return err }(),
-		"server":  func() error { _, err := e.Server(parse(t, "nilproxy://x:1")); return err }(),
+		"adapter":             func() error { _, err := e.Transport(parse(t, "niladapter://x:1")); return err }(),
+		"client":              func() error { _, err := e.Client(parse(t, "nilproxy://x:1")); return err }(),
+		"server":              func() error { _, err := e.Server(parse(t, "nilproxy://x:1")); return err }(),
+		"Adapt-style adapter": func() error { _, err := e.Transport(parse(t, "test-nil-adapt://x:1")); return err }(),
+		"Client-style client": func() error { _, err := e.Client(parse(t, "test-nil-legacy://x:1")); return err }(),
+		"Server-style server": func() error { _, err := e.Server(parse(t, "test-nil-legacy://x:1")); return err }(),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("%s: got %v, want an error naming the nil result", name, err)
@@ -561,6 +564,7 @@ func TestEngineForwardsClose(t *testing.T) {
 		{"test-tls://127.0.0.1:1", false, nil},
 		{"closableproxy://127.0.0.1:1", true, []string{"closableproxy.close"}},
 		{"test-http://127.0.0.1:1", true, nil},
+		{"test-legacy://127.0.0.1:1", true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {

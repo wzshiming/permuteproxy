@@ -310,6 +310,15 @@ func init() {
 		}, nil
 	}})
 	RegisterLayer("wide", wideAdapter())
+	// test-nil-adapt and test-nil-legacy keep the Adapt, Client and Server forms, each returning nil, nil.
+	RegisterLayer("test-nil-adapt", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
+	RegisterLayer("test-nil-legacy", Spec{
+		Kind:     KindProxy,
+		Requires: Stream,
+		Provides: Stream,
+		Client:   func(Transport, Network, Options) (Network, error) { return nil, nil },
+		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
+	})
 	RegisterLayer("niladapter", declared(Stream, Stream, nil, nil))
 	RegisterLayer("test-broken", declared(Stream, Stream, nil, errDeclare))
 	for name, spec := range uncovered {
