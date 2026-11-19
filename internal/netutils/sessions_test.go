@@ -725,6 +725,44 @@ func TestSessionsWriteErrorDropsSession(t *testing.T) {
 	})
 }
 
+func TestSessionsDialContextLivesWithItsSession(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		end  func(t *testing.T, pc net.PacketConn)
+	}{
+		{"idle timeout", func(*testing.T, net.PacketConn) { quiet(10 * time.Second) }},
+		{"eviction", func(t *testing.T, pc net.PacketConn) { writeTo(t, pc, "newer", testPeer(2)) }},
+		{"Close", func(_ *testing.T, pc net.PacketConn) { pc.Close() }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dialed := make(chan context.Context, 2)
+				d := newPipeDialer()
+				d.hold = func(ctx context.Context, _ net.Addr) error {
+					dialed <- ctx
+					return nil
+				}
+				pc := NewSessions(d.dial, SessionOptions{IdleTimeout: 10 * time.Second, MaxSessions: 1})
+				defer pc.Close()
+				pc.SetWriteDeadline(time.Now().Add(time.Second))
+				writeTo(t, pc, "open", testPeer(1))
+				ctx := wait(t, dialed, "dial")
+				d.next(t).expect(t, "open")
+				quiet(2 * time.Second)
+				if ctx.Err() != nil {
+					t.Fatal("the dial context ended while its session was open, past the write deadline")
+				}
+				pc.SetWriteDeadline(time.Time{})
+				tt.end(t, pc)
+				synctest.Wait()
+				if ctx.Err() == nil {
+					t.Fatal("the dial context outlived its session")
+				}
+			})
+		})
+	}
+}
+
 func TestSessionsEvictLeastRecentlyActive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var opened []*pipeSession
