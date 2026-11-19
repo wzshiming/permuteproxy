@@ -59,7 +59,7 @@ func (o Options) clone() Options {
 // Spec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
 type Spec struct {
 	Kind           Kind
-	Requires       Plane // planes the carrier must have, or the chain is invalid; not themselves offered above
+	Requires       Plane // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
 	Provides       Plane // planes offered above whatever the carrier has
 	Preserves      Plane // carrier planes also offered above, but only those the carrier has
 	Options        []string
