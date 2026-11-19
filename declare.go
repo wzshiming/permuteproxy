@@ -170,6 +170,7 @@ func apply[C, R any](ctx context.Context, before func() error, obtain func(conte
 }
 
 // ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists and derives udp dials.
+// Its functions receive the same inner Transport on every call for the life of the client.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
@@ -250,7 +251,7 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 type ServerFuncs struct {
 	Serve       func(ctx context.Context, ln net.Listener, upstream Network) error   // serves the Stream carrier until it fails or ctx ends
 	ServePacket func(ctx context.Context, pc net.PacketConn, upstream Network) error // serves the Packet carrier until it fails or ctx ends
-	Close       func() error                                                         // optional; releases what NewServer acquired
+	Close       func() error                                                         // optional; releases what NewServer acquired, and may run while Serve or ServePacket are still returning
 }
 
 // server is the Server that RegisterLayer derives from s.NewServer.
