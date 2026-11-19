@@ -169,12 +169,13 @@ func declared(requires, provides Plane, funcs *AdapterFuncs, err error) Spec {
 }
 
 var (
-	errDeclare         = errors.New("declare failed")
-	errLink            = errors.New("link failed")
-	failClient         = func(context.Context, net.Conn) (net.Conn, error) { return nil, errLink }
-	failListener       = func(net.Listener) (net.Listener, error) { return nil, errLink }
-	failPacketListener = func(net.PacketConn) (net.Listener, error) { return nil, errLink }
-	failPacketConn     = func(net.PacketConn) (net.PacketConn, error) { return nil, errLink }
+	errDeclare = errors.New("declare failed")
+	errLink    = errors.New("link failed")
+	// The fail* links close the carrier they own, then fail.
+	failClient         = func(_ context.Context, carrier net.Conn) (net.Conn, error) { carrier.Close(); return nil, errLink }
+	failListener       = func(ln net.Listener) (net.Listener, error) { ln.Close(); return nil, errLink }
+	failPacketListener = func(pc net.PacketConn) (net.Listener, error) { pc.Close(); return nil, errLink }
+	failPacketConn     = func(pc net.PacketConn) (net.PacketConn, error) { pc.Close(); return nil, errLink }
 )
 
 // failingLinks are layers whose link functions all fail, one per pair with a server form.

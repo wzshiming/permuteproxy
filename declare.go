@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"slices"
 	"sync"
@@ -21,6 +20,7 @@ type AdapterFuncs struct {
 }
 
 // Link derives one plane from a carrier of one plane, through a client and a server form.
+// Each function owns the carrier it is handed, also when it fails.
 type Link struct {
 	Over           Plane                                                         // carrier plane consumed; zero means the provided plane itself
 	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
@@ -156,15 +156,12 @@ func (a assembled) Close() error {
 	return a.close()
 }
 
-// apply hands a carrier just obtained to f, closing it when f fails.
-func apply[C io.Closer, R any](carrier C, err error, f func(C) (R, error)) (r R, _ error) {
+// apply hands a carrier just obtained to f, which owns it from then on.
+func apply[C, R any](carrier C, err error, f func(C) (R, error)) (r R, _ error) {
 	if err != nil {
 		return r, err
 	}
-	if r, err = f(carrier); err != nil {
-		carrier.Close()
-	}
-	return r, err
+	return f(carrier)
 }
 
 // ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists and derives udp dials.

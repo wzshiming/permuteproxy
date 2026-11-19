@@ -117,12 +117,13 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
-func TestAdapterClosesCarrierOnFailure(t *testing.T) {
+func TestAdapterLeavesCarrierToLink(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
 	e := Engine{Base: recordedCloses}
 	for scheme := range failingLinks {
 		t.Run(scheme, func(t *testing.T) {
+			calls = nil
 			tr, err := e.Transport(mk("", scheme))
 			if err != nil {
 				t.Fatal(err)
@@ -131,6 +132,7 @@ func TestAdapterClosesCarrierOnFailure(t *testing.T) {
 			if _, err := tr.Dial(ctx, plane); !errors.Is(err, errLink) {
 				t.Fatalf("Dial() = %v, want the link error", err)
 			}
+			// The failing link closed its carrier, so a second close is the root package's.
 			assertCalls(t, "carrier.close")
 			if plane == Stream {
 				_, err = tr.Listen(ctx)
