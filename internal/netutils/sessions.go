@@ -32,6 +32,7 @@ const (
 var sessionBuffers = sync.Pool{New: func() any { return new([sessionReadSize]byte) }}
 
 // NewSessions is a net.PacketConn carrying each peer's datagrams over its own conn, dialed on first write.
+// Its Close waits for the session readers, so a session conn's Close must unblock its own pending Read.
 func NewSessions(dial func(ctx context.Context, peer net.Addr) (net.Conn, error), opts SessionOptions) net.PacketConn {
 	if opts.IdleTimeout <= 0 {
 		opts.IdleTimeout = defaultIdleTimeout
