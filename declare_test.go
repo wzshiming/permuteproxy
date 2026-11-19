@@ -436,6 +436,26 @@ func TestClientRefusesListen(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestClientRejectsDeclarations(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &fakeNet{name: "base"}}
+	schemes := []string{"nilproxy", "test-client-broken"}
+	for name := range uncoveredClients {
+		schemes = append(schemes, name)
+	}
+	for _, scheme := range schemes {
+		t.Run(scheme, func(t *testing.T) {
+			if _, err := e.Client(mk("", scheme)); !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Client() = %v, want ErrInvalidChain", err)
+			}
+			assertCalls(t)
+		})
+	}
+	if _, err := e.Client(mk("", "test-client-broken")); !errors.Is(err, errDeclare) {
+		t.Fatalf("Client() = %v, want the NewClient error kept", err)
+	}
+}
+
 func TestClientAndNewClientCoexist(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

@@ -164,8 +164,15 @@ type ClientFuncs struct {
 // client is the Client that RegisterLayer derives from s.NewClient.
 func (s Spec) client(inner Transport, local Network, opts Options) (Network, error) {
 	funcs, err := s.NewClient(opts)
-	if err != nil {
-		return nil, err
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+	case funcs == nil:
+		return nil, fmt.Errorf("NewClient returned nil: %w", ErrInvalidChain)
+	case funcs.Dial == nil && (s.Provides|s.Preserves)&Stream != 0:
+		return nil, fmt.Errorf("no Dial for %v: %w", Stream, ErrInvalidChain)
+	case funcs.ListenPacket == nil && (s.Provides|s.Preserves)&Packet != 0:
+		return nil, fmt.Errorf("no ListenPacket for %v: %w", Packet, ErrInvalidChain)
 	}
 	return NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {

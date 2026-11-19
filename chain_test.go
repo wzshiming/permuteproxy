@@ -198,6 +198,24 @@ var uncovered = map[string]Spec{
 	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, PacketConn: failPacketConn}}, nil),
 }
 
+// declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
+func declaredProxy(provides, preserves Plane, funcs *ClientFuncs, err error) Spec {
+	return Spec{Kind: KindProxy, Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
+}
+
+var (
+	failDial         = func(context.Context, Transport, string, string) (net.Conn, error) { return nil, errLink }
+	failListenPacket = func(context.Context, Transport, Network, string, string) (net.PacketConn, error) { return nil, errLink }
+)
+
+// uncoveredClients are proxies whose ClientFuncs miss the function a plane they declare needs.
+var uncoveredClients = map[string]Spec{
+	"test-client-no-dial":        declaredProxy(Stream, 0, &ClientFuncs{ListenPacket: failListenPacket}, nil),
+	"test-client-kept-no-dial":   declaredProxy(0, Stream, &ClientFuncs{ListenPacket: failListenPacket}, nil),
+	"test-client-no-packet":      declaredProxy(Packet, 0, &ClientFuncs{Dial: failDial}, nil),
+	"test-client-kept-no-packet": declaredProxy(0, Packet, &ClientFuncs{Dial: failDial}, nil),
+}
+
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
@@ -254,12 +272,17 @@ func init() {
 		return &closableNet{fakeNet{name: "closableproxy"}}, nil
 	}})
 	RegisterLayer("nilproxy", Spec{
-		Kind:     KindProxy,
-		Requires: Stream,
-		Provides: Stream,
-		Client:   func(Transport, Network, Options) (Network, error) { return nil, nil },
-		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
+		Kind:      KindProxy,
+		Requires:  Stream,
+		Provides:  Stream,
+		Networks:  []string{"tcp"},
+		NewClient: func(Options) (*ClientFuncs, error) { return nil, nil },
+		Server:    func(Transport, Network, Options) (Server, error) { return nil, nil },
 	})
+	RegisterLayer("test-client-broken", declaredProxy(Stream, 0, nil, errDeclare))
+	for name, spec := range uncoveredClients {
+		RegisterLayer(name, spec)
+	}
 	RegisterAlias("test-https", "test-http+test-tls")
 	RegisterAlias("later", "pending+test-tls")
 }
