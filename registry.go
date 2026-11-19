@@ -29,6 +29,7 @@ func init() {
 	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath})
 	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath})
 	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
+	RegisterLayer("dgram", dgram)
 }
 
 func checkName(name string) {

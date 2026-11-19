@@ -303,3 +303,16 @@ type assembledServer struct {
 func (a assembledServer) Close() error {
 	return errors.Join(a.Server.Close(), a.close())
 }
+
+// dgram is the built-in client-only adapter that dials its Stream carrier as best-effort datagrams to the carrier's peer.
+var dgram = Spec{
+	Kind:     KindAdapter,
+	Requires: Stream,
+	Provides: Packet,
+	Lossy:    Packet,
+	NewAdapter: func(Options) (*AdapterFuncs, error) {
+		return &AdapterFuncs{Packet: &Link{Over: Stream, Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
+			return netutils.StreamPacket(carrier, carrier.RemoteAddr()), nil
+		}}}, nil
+	},
+}
