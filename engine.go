@@ -24,8 +24,12 @@ func (e Engine) build(r *resolved, from int) (Transport, error) {
 	if len(r.layers) > 0 && b.packet != "" && isLossy(b.network, b.packet) {
 		b.packet = ""
 	}
-	var t Transport = b
-	for i := len(r.layers) - 1; i >= from; i-- {
+	return r.stack(b, from, len(r.layers))
+}
+
+// stack builds layers hi-1 out to lo over t, closing what it holds when a layer fails.
+func (r *resolved) stack(t Transport, lo, hi int) (Transport, error) {
+	for i := hi - 1; i >= lo; i-- {
 		next, err := r.specs[i].Adapt(t, r.layers[i].Options.clone())
 		if err != nil {
 			closeIf(t)
