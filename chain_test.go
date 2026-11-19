@@ -427,6 +427,23 @@ func TestRegisterRejectsClientDeclarations(t *testing.T) {
 	}
 }
 
+func TestRegisterRejectsServerDeclarations(t *testing.T) {
+	proxy := fakeProxy("ps", Stream, Stream, 0, "", "")
+	twice, adapter := proxy, fakeAdapter("as", Stream, Stream)
+	twice.Server = func(Transport, Network, Options) (Server, error) { return fakeServer{}, nil }
+	adapter.NewServer = proxy.NewServer
+	for name, spec := range map[string]Spec{
+		"server-twice":   twice,
+		"server-adapter": adapter,
+		"server-none":    {Kind: KindProxy, Requires: Stream, Provides: Stream},
+	} {
+		mustPanic(t, name, func() { RegisterLayer(name, spec) })
+		if _, ok := lookupLayer(name); ok {
+			t.Fatalf("rejected layer %q was registered", name)
+		}
+	}
+}
+
 func TestRegisterCopiesNetworks(t *testing.T) {
 	calls = nil
 	networks := []string{"tcp"}
