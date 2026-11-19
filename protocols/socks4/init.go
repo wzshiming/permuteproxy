@@ -15,5 +15,5 @@ func init() {
 		Server:         NewServer,
 	}
 	permuteproxy.RegisterLayer("socks4", spec)
-	permuteproxy.RegisterLayer("socks4s", spec)
+	permuteproxy.RegisterLayer("socks4a", spec)
 }
