@@ -47,8 +47,8 @@ func netName(n Network) string {
 	if f, ok := n.(*fakeNet); ok {
 		return f.name
 	}
-	if n == native {
-		return "native"
+	if _, ok := n.(byName); ok {
+		return "default"
 	}
 	return "?"
 }
@@ -397,6 +397,16 @@ func init() {
 		return &ServerFuncs{ServePacket: func(_ context.Context, _ net.PacketConn, upstream Network) error {
 			record("test-packet-server.servepacket upstream=%s", netName(upstream))
 			return nil
+		}}, nil
+	}})
+	// test-relay's server listens through its upstream on the network its relay option names, returning the outcome.
+	RegisterLayer("test-relay", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Options: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
+		return &ServerFuncs{Serve: func(ctx context.Context, _ net.Listener, upstream Network) error {
+			ln, err := upstream.Listen(ctx, opts["relay"], "127.0.0.1:0")
+			if err != nil {
+				return err
+			}
+			return ln.Close()
 		}}, nil
 	}})
 	RegisterAlias("test-https", "test-http+test-tls")

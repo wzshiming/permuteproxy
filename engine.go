@@ -5,23 +5,21 @@ import (
 )
 
 // Engine builds chains into transports, clients and servers, borrowing Base and Upstream without ever closing them.
+// A nil Base or Upstream resolves each call by its network name: the registered implementation, else the system for tcp, udp, unix and unixgram, else ErrUnsupported.
 type Engine struct {
-	Base     Network // reaches the endpoint; nil uses the endpoint network's registered implementation, else the system net package
-	Upstream Network // what servers reach their targets through; nil gives them direct system networking
+	Base     Network // reaches the endpoint
+	Upstream Network // what servers reach their targets through
 }
 
-func (e Engine) network(r *resolved) Network {
+func (e Engine) network() Network {
 	if e.Base != nil {
 		return e.Base
 	}
-	if r.impl != nil {
-		return r.impl
-	}
-	return native
+	return byName{}
 }
 
 func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
-	var t Transport = &bound{network: e.network(r), stream: r.stream, packet: r.packet, address: c.Endpoint.Address}
+	var t Transport = &bound{network: e.network(), stream: r.stream, packet: r.packet, address: c.Endpoint.Address}
 	for i := len(c.Layers) - 1; i >= from; i-- {
 		next, err := r.specs[i].Adapt(t, c.Layers[i].Options.clone())
 		if err != nil {
@@ -74,7 +72,7 @@ func (e Engine) Client(c Chain) (Network, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := spec.Client(inner, borrowed{e.network(r)}, c.Layers[0].Options.clone())
+	n, err := spec.Client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
@@ -102,7 +100,7 @@ func (e Engine) Server(c Chain) (Server, error) {
 	}
 	upstream := e.Upstream
 	if upstream == nil {
-		upstream = native
+		upstream = byName{}
 	}
 	s, err := spec.Server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
 	if err != nil {

@@ -27,7 +27,6 @@ type Chain struct {
 type resolved struct {
 	specs  []Spec
 	planes []Plane
-	impl   Network
 	stream string
 	packet string
 }
@@ -92,7 +91,6 @@ func (c Chain) resolve() (*resolved, error) {
 		if avail&Packet != 0 {
 			r.packet = c.Endpoint.Network
 		}
-		r.impl = ns.Network
 	}
 	for i := len(r.specs) - 1; i >= 0; i-- {
 		spec := r.specs[i]

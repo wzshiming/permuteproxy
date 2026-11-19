@@ -403,8 +403,8 @@ func TestClientListensPacketThroughLocal(t *testing.T) {
 		local  string
 	}{
 		{Engine{Base: base}, mk("fakenet", "test-socks5"), "base"},
-		{Engine{}, mk("fakenet", "test-socks5"), "impl"},
-		{Engine{}, mk("tcp", "test-socks5"), "native"},
+		{Engine{}, mk("fakenet", "test-socks5"), "default"},
+		{Engine{}, mk("tcp", "test-socks5"), "default"},
 	}
 	for _, tt := range tests {
 		n, err := tt.engine.Client(tt.chain)
@@ -590,8 +590,8 @@ func TestServerBindsRequiredOrPreservedPlanes(t *testing.T) {
 		chain Chain
 		serve []string
 	}{
-		{mk("", "test-socks5", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "test-socks5.serve upstream=native"}},
-		{mk("", "test-ss", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "base.listenpacket udp 127.0.0.1:1", "test-ss.serve upstream=native", "test-ss.servepacket upstream=native"}},
+		{mk("", "test-socks5", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "test-socks5.serve upstream=default"}},
+		{mk("", "test-ss", "test-keep"), []string{"base.listen tcp 127.0.0.1:1", "test-keep.listener", "base.listenpacket udp 127.0.0.1:1", "test-ss.serve upstream=default", "test-ss.servepacket upstream=default"}},
 	}
 	for _, tt := range tests {
 		srv, err := e.Server(tt.chain)
@@ -740,7 +740,7 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-packet-server.newserver")
-	assertRun(t, srv, "base.listenpacket udp 127.0.0.1:1", "test-packet-server.servepacket upstream=native")
+	assertRun(t, srv, "base.listenpacket udp 127.0.0.1:1", "test-packet-server.servepacket upstream=default")
 }
 
 func TestServerClosesOnce(t *testing.T) {

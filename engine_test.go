@@ -145,7 +145,7 @@ func TestEngineClientServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-ss.newserver")
-	assertRun(t, srv, "test-ss.serve upstream=native", "test-ss.servepacket upstream=native")
+	assertRun(t, srv, "test-ss.serve upstream=default", "test-ss.servepacket upstream=default")
 }
 
 func TestEngineRejects(t *testing.T) {
@@ -275,6 +275,62 @@ func TestEngineBaseSelection(t *testing.T) {
 		t.Fatalf("zero Engine listened on %v, want the system tcp network", ln.Addr())
 	}
 	assertCalls(t)
+}
+
+func TestEngineNilBaseResolvesEachCallByName(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{}.Transport(Chain{Endpoint: Endpoint{Network: "test-cmd", Address: "nc host 1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Dial(ctx, Stream); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial on a network without implementation = %v, want ErrUnsupported", err)
+	}
+	if _, err := tr.Listen(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Listen on a network without implementation = %v, want ErrUnsupported", err)
+	}
+	// The client binds its own udp end by that name, not through the endpoint network's implementation.
+	n, err := Engine{}.Client(mk("fakenet", "test-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := n.ListenPacket(ctx, "udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-peer.listenpacket udp4 127.0.0.1:0")
+	defer pc.Close()
+	if pc.LocalAddr().Network() != "udp" {
+		t.Fatalf("udp4 socket bound at %v, want the system udp network", pc.LocalAddr())
+	}
+}
+
+func TestEngineNilUpstreamResolvesEachCallByName(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		network string
+		calls   []string
+		err     error
+	}{
+		{"fakenet", []string{"impl.listen fakenet 127.0.0.1:0"}, nil},
+		{"tcp4", nil, nil},
+		{"test-cmd", nil, ErrUnsupported},
+		{"bogus", nil, ErrUnsupported},
+	}
+	for _, tt := range tests {
+		t.Run(tt.network, func(t *testing.T) {
+			srv, err := e.Server(Chain{Layers: []Layer{{Scheme: "test-relay", Options: Options{"relay": tt.network}}}, Endpoint: Endpoint{Network: "tcp", Address: "127.0.0.1:1"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			if err := srv.Run(context.Background()); !errors.Is(err, tt.err) {
+				t.Fatalf("listen %s through the nil Upstream = %v, want %v", tt.network, err, tt.err)
+			}
+			assertCalls(t, append([]string{"base.listen tcp 127.0.0.1:1"}, tt.calls...)...)
+		})
+	}
 }
 
 func TestBoundDialPacket(t *testing.T) {
