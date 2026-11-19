@@ -2,9 +2,11 @@ package permuteproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync"
 )
 
 // AdapterFuncs declares what an adapter does to its carrier, one Link per plane it offers.
@@ -117,7 +119,24 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			return apply(pc, err, link.PacketConn)
 		}
 	}
-	return t, nil
+	return assembled{t, sync.OnceValue(func() error {
+		var err error
+		if funcs.Close != nil {
+			err = funcs.Close()
+		}
+		return errors.Join(err, closeIf(inner))
+	})}, nil
+}
+
+// assembled is a declared layer's Transport; adapter code never sees inner, so Close releases it too.
+type assembled struct {
+	TransportFuncs
+	close func() error
+}
+
+// Close releases the layer and then its inner Transport, once.
+func (a assembled) Close() error {
+	return a.close()
 }
 
 // apply hands a carrier just obtained to f, closing it when f fails.

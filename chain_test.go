@@ -54,13 +54,6 @@ type closableNet struct{ fakeNet }
 
 func (n *closableNet) Close() error { record("%s.close", n.name); return nil }
 
-type closableTransport struct {
-	Transport
-	name string
-}
-
-func (t closableTransport) Close() error { record("%s.close", t.name); return nil }
-
 func taint(name string, opts Options) {
 	if opts["seen"] != "" {
 		record("%s.dirty", name)
@@ -230,9 +223,7 @@ func init() {
 	for name, spec := range failingLinks {
 		RegisterLayer(name, spec)
 	}
-	RegisterLayer("closable", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(inner Transport, _ Options) (Transport, error) {
-		return closableTransport{inner, "closable"}, nil
-	}})
+	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
 	RegisterLayer("closableproxy", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Client: func(Transport, Network, Options) (Network, error) {
 		return &closableNet{fakeNet{name: "closableproxy"}}, nil
 	}})

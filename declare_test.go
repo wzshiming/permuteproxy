@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 )
@@ -220,6 +221,32 @@ func TestAdapterRejectsDeclarations(t *testing.T) {
 		t.Fatalf("Server() = %v, want ErrInvalidChain", err)
 	}
 	assertCalls(t)
+}
+
+func TestAdapterClosesOnce(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	tests := []struct {
+		chain Chain
+		want  []string
+	}{
+		{mk("tcp", "closable"), []string{"closable.close"}},
+		{mk("tcp", "test-tls", "closable"), []string{"closable.close"}},
+		{mk("tcp", "closable", "closable"), []string{"closable.close", "closable.close"}},
+	}
+	for _, tt := range tests {
+		tr, err := e.Transport(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		for i := 0; i < 2; i++ {
+			if err := tr.(io.Closer).Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertCalls(t, tt.want...)
+	}
 }
 
 func TestAdaptAndNewAdapterCoexist(t *testing.T) {
