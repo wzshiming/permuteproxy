@@ -5,12 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 )
 
-var calls []string
+var (
+	callsMu sync.Mutex
+	calls   []string
+)
 
+// record takes callsMu since a declared server's serves record from their own goroutines.
 func record(format string, args ...interface{}) {
+	callsMu.Lock()
+	defer callsMu.Unlock()
 	calls = append(calls, fmt.Sprintf(format, args...))
 }
 
@@ -23,12 +30,12 @@ func (n *fakeNet) DialContext(_ context.Context, network, address string) (net.C
 
 func (n *fakeNet) Listen(_ context.Context, network, address string) (net.Listener, error) {
 	record("%s.listen %s %s", n.name, network, address)
-	return nil, nil
+	return idleListener{}, nil
 }
 
 func (n *fakeNet) ListenPacket(_ context.Context, network, address string) (net.PacketConn, error) {
 	record("%s.listenpacket %s %s", n.name, network, address)
-	return nil, nil
+	return idlePacketConn{}, nil
 }
 
 func netName(n Network) string {
@@ -82,7 +89,10 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Spec 
 			case provides == Stream && requires == Stream:
 				link.Listener = func(ln net.Listener) (net.Listener, error) { record("%s.listener", name); return ln, nil }
 			case provides == Stream:
-				link.PacketListener = func(net.PacketConn) (net.Listener, error) { record("%s.packetlistener", name); return nil, nil }
+				link.PacketListener = func(net.PacketConn) (net.Listener, error) {
+					record("%s.packetlistener", name)
+					return idleListener{}, nil
+				}
 			case requires == Packet:
 				link.PacketConn = func(pc net.PacketConn) (net.PacketConn, error) { record("%s.packetconn", name); return pc, nil }
 			}
@@ -94,7 +104,7 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Spec 
 	}
 }
 
-// fakeProxy declares a proxy whose client functions record each call with the planes of their inner Transport.
+// fakeProxy declares a proxy whose client and server functions record each call with what they are handed.
 func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) Spec {
 	return Spec{
 		Kind:           KindProxy,
@@ -119,10 +129,19 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 				},
 			}, nil
 		},
-		Server: func(inner Transport, upstream Network, opts Options) (Server, error) {
-			record("%s.server %v upstream=%s", name, inner.Planes(), netName(upstream))
+		NewServer: func(opts Options) (*ServerFuncs, error) {
+			record("%s.newserver", name)
 			taint(name, opts)
-			return fakeServer{}, nil
+			return &ServerFuncs{
+				Serve: func(_ context.Context, _ net.Listener, upstream Network) error {
+					record("%s.serve upstream=%s", name, netName(upstream))
+					return nil
+				},
+				ServePacket: func(_ context.Context, _ net.PacketConn, upstream Network) error {
+					record("%s.servepacket upstream=%s", name, netName(upstream))
+					return nil
+				},
+			}, nil
 		},
 	}
 }
@@ -185,6 +204,15 @@ type closePacketConn struct{ net.PacketConn }
 
 func (closePacketConn) Close() error { record("carrier.close"); return nil }
 
+// idleListener and idlePacketConn are carriers a server can hold and close without any I/O.
+type idleListener struct{ net.Listener }
+
+func (idleListener) Close() error { return nil }
+
+type idlePacketConn struct{ net.PacketConn }
+
+func (idlePacketConn) Close() error { return nil }
+
 // uncovered are layers whose links do not cover the planes they declare.
 var uncovered = map[string]Spec{
 	"test-bad-missing": declared(Stream, Stream, &AdapterFuncs{}, nil),
@@ -217,6 +245,11 @@ var uncoveredClients = map[string]Spec{
 	"test-client-kept-no-packet": declaredProxy(0, Packet, &ClientFuncs{Dial: failDial}, nil),
 }
 
+// declaredServer is a proxy providing Stream over the planes it requires or preserves, whose NewServer returns funcs and err as given.
+func declaredServer(requires, preserves Plane, funcs *ServerFuncs, err error) Spec {
+	return Spec{Kind: KindProxy, Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
+}
+
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
@@ -237,11 +270,19 @@ func init() {
 	anyProxy := fakeProxy("test-any", Stream, Stream, 0, "username", "password")
 	anyProxy.NewClient, anyProxy.Networks = nil, nil
 	RegisterLayer("test-any", anyProxy)
-	// test-legacy keeps the Client form, handing back its base.
-	RegisterLayer("test-legacy", Spec{Kind: KindProxy, Preserves: Stream | Packet, Client: func(inner Transport, base Network, _ Options) (Network, error) {
-		record("test-legacy.client %v", inner.Planes())
-		return base, nil
-	}})
+	// test-legacy keeps the Client and Server forms, handing back its base and a fakeServer.
+	RegisterLayer("test-legacy", Spec{
+		Kind:      KindProxy,
+		Preserves: Stream | Packet,
+		Client: func(inner Transport, base Network, _ Options) (Network, error) {
+			record("test-legacy.client %v", inner.Planes())
+			return base, nil
+		},
+		Server: func(inner Transport, upstream Network, _ Options) (Server, error) {
+			record("test-legacy.server %v upstream=%s", inner.Planes(), netName(upstream))
+			return fakeServer{}, nil
+		},
+	})
 	// test-peer resolves the default peer of its udp dials and binds their sockets through local.
 	RegisterLayer("test-peer", Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{

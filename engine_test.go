@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func parse(t *testing.T, uri string) Chain {
@@ -27,6 +28,19 @@ func assertCalls(t *testing.T, want ...string) {
 	t.Helper()
 	if diff := cmp.Diff(want, calls); diff != "" {
 		t.Fatalf("calls mismatch (-want +got):\n%s", diff)
+	}
+	calls = nil
+}
+
+// assertRun runs srv to its end and checks the calls made meanwhile, in any order since its planes are served in parallel.
+func assertRun(t *testing.T, srv Server, want ...string) {
+	t.Helper()
+	calls = nil
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, calls, cmpopts.SortSlices(func(a, b string) bool { return a < b })); diff != "" {
+		t.Fatalf("Run calls mismatch (-want +got):\n%s", diff)
 	}
 	calls = nil
 }
@@ -88,13 +102,13 @@ func TestEngineClientServer(t *testing.T) {
 		uri    string
 		dial   string
 		client string
-		server string
+		serve  []string
 	}{
-		{"test-ss://127.0.0.1:1", "tcp", "test-ss.dial stream|packet tcp x:1", "test-ss.server stream|packet upstream=upstream"},
-		{"test-ss+test-tls://127.0.0.1:1", "tcp", "test-ss.dial stream tcp x:1", "test-ss.server stream upstream=upstream"},
-		{"test-ss+udp://127.0.0.1:1", "udp", "test-ss.listenpacket packet local=base udp :0", "test-ss.server packet upstream=upstream"},
-		{"test-socks5+test-quic://127.0.0.1:1", "tcp", "test-socks5.dial stream tcp x:1", "test-socks5.server stream upstream=upstream"},
-		{"test-http://u:p@127.0.0.1:1", "tcp", "test-http.dial stream tcp x:1", "test-http.server stream upstream=upstream"},
+		{"test-ss://127.0.0.1:1", "tcp", "test-ss.dial stream|packet tcp x:1", []string{"base.listen tcp 127.0.0.1:1", "base.listenpacket udp 127.0.0.1:1", "test-ss.serve upstream=upstream", "test-ss.servepacket upstream=upstream"}},
+		{"test-ss+test-tls://127.0.0.1:1", "tcp", "test-ss.dial stream tcp x:1", []string{"base.listen tcp 127.0.0.1:1", "test-tls.listener", "test-ss.serve upstream=upstream"}},
+		{"test-ss+udp://127.0.0.1:1", "udp", "test-ss.listenpacket packet local=base udp :0", []string{"base.listenpacket udp 127.0.0.1:1", "test-ss.servepacket upstream=upstream"}},
+		{"test-socks5+test-quic://127.0.0.1:1", "tcp", "test-socks5.dial stream tcp x:1", []string{"base.listenpacket udp 127.0.0.1:1", "test-quic.packetlistener", "test-socks5.serve upstream=upstream"}},
+		{"test-http://u:p@127.0.0.1:1", "tcp", "test-http.dial stream tcp x:1", []string{"base.listen tcp 127.0.0.1:1", "test-http.serve upstream=upstream"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
@@ -106,7 +120,8 @@ func TestEngineClientServer(t *testing.T) {
 			if _, err := n.DialContext(ctx, tt.dial, "x:1"); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := e.Server(c); err != nil {
+			srv, err := e.Server(c)
+			if err != nil {
 				t.Fatal(err)
 			}
 			var want []string
@@ -117,17 +132,20 @@ func TestEngineClientServer(t *testing.T) {
 			if len(c.Layers) > 1 {
 				want = append(want, c.Layers[1].Scheme+".new")
 			}
-			want = append(want, tt.server)
+			want = append(want, c.Layers[0].Scheme+".newserver")
 			assertCalls(t, want...)
+			assertRun(t, srv, tt.serve...)
 			if diff := cmp.Diff(parse(t, tt.uri), c); diff != "" {
 				t.Fatalf("chain mutated by build (-want +got):\n%s", diff)
 			}
 		})
 	}
-	if _, err := (Engine{}).Server(parse(t, "test-ss://127.0.0.1:1")); err != nil {
+	srv, err := (Engine{}).Server(parse(t, "test-ss://127.0.0.1:0"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-ss.server stream|packet upstream=native")
+	assertCalls(t, "test-ss.newserver")
+	assertRun(t, srv, "test-ss.serve upstream=native", "test-ss.servepacket upstream=native")
 }
 
 func TestEngineRejects(t *testing.T) {
@@ -509,13 +527,19 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 		Kind:     KindProxy,
 		Requires: Stream,
 		Provides: Stream,
-		Server: func(_ Transport, upstream Network, _ Options) (Server, error) {
-			got = upstream
-			return fakeServer{}, nil
+		NewServer: func(Options) (*ServerFuncs, error) {
+			return &ServerFuncs{Serve: func(_ context.Context, _ net.Listener, upstream Network) error {
+				got = upstream
+				return nil
+			}}, nil
 		},
 	})
 	upstream := &closableNet{fakeNet{name: "upstream"}}
-	if _, err := (Engine{Upstream: upstream}).Server(parse(t, "borrowing://127.0.0.1:1")); err != nil {
+	srv, err := (Engine{Base: &fakeNet{name: "base"}, Upstream: upstream}).Server(parse(t, "borrowing://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := got.(io.Closer); ok {

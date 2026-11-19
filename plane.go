@@ -71,6 +71,7 @@ type Spec struct {
 	Networks       []string                                 // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
 	NewClient      func(opts Options) (*ClientFuncs, error) // declares a proxy's client per build, as the alternative to Client
 	Server         func(inner Transport, upstream Network, opts Options) (Server, error)
+	NewServer      func(opts Options) (*ServerFuncs, error) // declares a proxy's server per build, as the alternative to Server
 }
 
 type Server interface {

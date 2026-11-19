@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/serverutils"
 )
 
 // AdapterFuncs declares an adapter per plane; a preserved plane without a Link passes through unchanged.
@@ -233,4 +234,31 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 		return nil, err
 	}
 	return netutils.WrapPacket(pc, peer), nil
+}
+
+// ServerFuncs declares a proxy's server; the root package binds the carriers it serves and runs them.
+type ServerFuncs struct {
+	Serve       func(ctx context.Context, ln net.Listener, upstream Network) error   // serves the Stream carrier until it fails or ctx ends
+	ServePacket func(ctx context.Context, pc net.PacketConn, upstream Network) error // serves the Packet carrier until it fails or ctx ends
+}
+
+// server is the Server that RegisterLayer derives from s.NewServer.
+func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, error) {
+	funcs, err := s.NewServer(opts)
+	if err != nil {
+		return nil, err
+	}
+	var listen func(context.Context) (net.Listener, error)
+	var listenPacket func(context.Context) (net.PacketConn, error)
+	planes := inner.Planes()
+	if planes&Stream != 0 {
+		listen = inner.Listen
+	}
+	if planes&Packet != 0 {
+		listenPacket = inner.ListenPacket
+	}
+	return serverutils.NewPlaneServer(listen, listenPacket,
+		func(ctx context.Context, ln net.Listener) error { return funcs.Serve(ctx, ln, upstream) },
+		func(ctx context.Context, pc net.PacketConn) error { return funcs.ServePacket(ctx, pc, upstream) },
+	), nil
 }
