@@ -456,6 +456,31 @@ func TestClientRejectsDeclarations(t *testing.T) {
 	}
 }
 
+func TestClientRefusesMissingFunctions(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	local := &fakeNet{name: "local"}
+	// Engine.Client refuses these planes before the client, so its functions are reached directly.
+	stream, err := declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial}, nil).client(TransportFuncs{}, local, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := declaredProxy(Packet, 0, &ClientFuncs{ListenPacket: failListenPacket}, nil).client(TransportFuncs{}, local, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{
+		"listenpacket without ListenPacket": func() error { _, err := stream.ListenPacket(ctx, "udp", "x:1"); return err }(),
+		"udp dial without ListenPacket":     func() error { _, err := stream.DialContext(ctx, "udp", "x:1"); return err }(),
+		"tcp dial without Dial":             func() error { _, err := packet.DialContext(ctx, "tcp", "x:1"); return err }(),
+	} {
+		if !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%s = %v, want ErrUnsupported", name, err)
+		}
+	}
+	assertCalls(t)
+}
+
 func TestClientAndNewClientCoexist(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

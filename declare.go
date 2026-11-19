@@ -177,15 +177,15 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	return NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
 			switch base, plane := s.admit(network); {
-			case plane == Stream:
+			case plane == Stream && funcs.Dial != nil:
 				return funcs.Dial(ctx, inner, network, address)
-			case base == "udp":
+			case base == "udp" && funcs.ListenPacket != nil:
 				return funcs.dialUDP(ctx, inner, local, network, address)
 			}
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
-			if _, plane := s.admit(network); plane != Packet {
+			if _, plane := s.admit(network); plane != Packet || funcs.ListenPacket == nil {
 				return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
 			}
 			return funcs.ListenPacket(ctx, inner, local, network, address)
