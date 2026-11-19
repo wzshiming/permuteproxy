@@ -142,9 +142,6 @@ func declared(requires, provides Plane, funcs *AdapterFuncs, err error) Spec {
 var (
 	errDeclare         = errors.New("declare failed")
 	errLink            = errors.New("link failed")
-	listener           = func(ln net.Listener) (net.Listener, error) { return ln, nil }
-	packetListener     = func(net.PacketConn) (net.Listener, error) { return nil, nil }
-	packetConn         = func(pc net.PacketConn) (net.PacketConn, error) { return pc, nil }
 	failClient         = func(context.Context, net.Conn) (net.Conn, error) { return nil, errLink }
 	failListener       = func(net.Listener) (net.Listener, error) { return nil, errLink }
 	failPacketListener = func(net.PacketConn) (net.Listener, error) { return nil, errLink }
@@ -184,10 +181,10 @@ var uncovered = map[string]Spec{
 	"test-bad-carrier": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Packet}}, nil),
 	"test-bad-dual":    declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Stream | Packet}}, nil),
 	"test-bad-bit":     declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: 4}}, nil),
-	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{PacketListener: packetListener}}, nil),
-	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: listener}}, nil),
-	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: packetListener}}, nil),
-	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, PacketConn: packetConn}}, nil),
+	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{PacketListener: failPacketListener}}, nil),
+	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: failListener}}, nil),
+	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: failPacketListener}}, nil),
+	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, PacketConn: failPacketConn}}, nil),
 }
 
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
