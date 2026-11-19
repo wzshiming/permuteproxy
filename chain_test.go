@@ -147,11 +147,42 @@ func declared(requires, provides Plane, funcs *AdapterFuncs, err error) Spec {
 }
 
 var (
-	errDeclare     = errors.New("declare failed")
-	listener       = func(ln net.Listener) (net.Listener, error) { return ln, nil }
-	packetListener = func(net.PacketConn) (net.Listener, error) { return nil, nil }
-	packetConn     = func(pc net.PacketConn) (net.PacketConn, error) { return pc, nil }
+	errDeclare         = errors.New("declare failed")
+	errLink            = errors.New("link failed")
+	listener           = func(ln net.Listener) (net.Listener, error) { return ln, nil }
+	packetListener     = func(net.PacketConn) (net.Listener, error) { return nil, nil }
+	packetConn         = func(pc net.PacketConn) (net.PacketConn, error) { return pc, nil }
+	failClient         = func(context.Context, net.Conn) (net.Conn, error) { return nil, errLink }
+	failListener       = func(net.Listener) (net.Listener, error) { return nil, errLink }
+	failPacketListener = func(net.PacketConn) (net.Listener, error) { return nil, errLink }
+	failPacketConn     = func(net.PacketConn) (net.PacketConn, error) { return nil, errLink }
 )
+
+// failingLinks are layers whose link functions all fail, one per pair with a server form.
+var failingLinks = map[string]Spec{
+	"test-fail-ss": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Listener: failListener}}, nil),
+	"test-fail-sp": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Client: failClient, PacketListener: failPacketListener}}, nil),
+	"test-fail-pp": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{Client: failClient, PacketConn: failPacketConn}}, nil),
+}
+
+// recordedCloses is a base whose carriers record their Close.
+var recordedCloses = NetworkFuncs{
+	DialContextFunc:  func(context.Context, string, string) (net.Conn, error) { return closeConn{}, nil },
+	ListenFunc:       func(context.Context, string, string) (net.Listener, error) { return closeListener{}, nil },
+	ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return closePacketConn{}, nil },
+}
+
+type closeConn struct{ net.Conn }
+
+func (closeConn) Close() error { record("carrier.close"); return nil }
+
+type closeListener struct{ net.Listener }
+
+func (closeListener) Close() error { record("carrier.close"); return nil }
+
+type closePacketConn struct{ net.PacketConn }
+
+func (closePacketConn) Close() error { record("carrier.close"); return nil }
 
 // uncovered are layers whose links do not cover the planes they declare.
 var uncovered = map[string]Spec{
@@ -196,6 +227,9 @@ func init() {
 	RegisterLayer("test-bare-sp", declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet}}, nil))
 	RegisterLayer("test-bare-pp", declared(Packet, Packet, &AdapterFuncs{Packet: &Link{}}, nil))
 	RegisterLayer("test-bare-ps", declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream}}, nil))
+	for name, spec := range failingLinks {
+		RegisterLayer(name, spec)
+	}
 	RegisterLayer("closable", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(inner Transport, _ Options) (Transport, error) {
 		return closableTransport{inner, "closable"}, nil
 	}})

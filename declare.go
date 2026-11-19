@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 )
 
@@ -90,10 +91,7 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
 		carrier, err := inner.Dial(ctx, link.carrier(plane))
-		if err != nil {
-			return nil, err
-		}
-		return link.Client(ctx, carrier)
+		return apply(carrier, err, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
 	}
 	// covers admits a server form only for its own pair, so the one set picks the carrier.
 	switch link := funcs.Stream; {
@@ -102,18 +100,12 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	case link.Listener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
 			ln, err := inner.Listen(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return link.Listener(ln)
+			return apply(ln, err, link.Listener)
 		}
 	case link.PacketListener != nil:
 		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
 			pc, err := inner.ListenPacket(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return link.PacketListener(pc)
+			return apply(pc, err, link.PacketListener)
 		}
 	}
 	switch link := funcs.Packet; {
@@ -122,11 +114,19 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	case link.PacketConn != nil:
 		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
 			pc, err := inner.ListenPacket(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return link.PacketConn(pc)
+			return apply(pc, err, link.PacketConn)
 		}
 	}
 	return t, nil
+}
+
+// apply hands a carrier just obtained to f, closing it when f fails.
+func apply[C io.Closer, R any](carrier C, err error, f func(C) (R, error)) (r R, _ error) {
+	if err != nil {
+		return r, err
+	}
+	if r, err = f(carrier); err != nil {
+		carrier.Close()
+	}
+	return r, err
 }

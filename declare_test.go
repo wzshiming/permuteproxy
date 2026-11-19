@@ -114,6 +114,56 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
+func TestAdapterClosesCarrierOnFailure(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: recordedCloses}
+	for scheme := range failingLinks {
+		t.Run(scheme, func(t *testing.T) {
+			tr, err := e.Transport(mk("", scheme))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plane := tr.Planes()
+			if _, err := tr.Dial(ctx, plane); !errors.Is(err, errLink) {
+				t.Fatalf("Dial() = %v, want the link error", err)
+			}
+			assertCalls(t, "carrier.close")
+			if plane == Stream {
+				_, err = tr.Listen(ctx)
+			} else {
+				_, err = tr.ListenPacket(ctx)
+			}
+			if !errors.Is(err, errLink) {
+				t.Fatalf("listening = %v, want the link error", err)
+			}
+			assertCalls(t, "carrier.close")
+		})
+	}
+	for _, scheme := range []string{"test-tls", "test-quic", "test-dtls"} {
+		tr, err := e.Transport(mk("", scheme))
+		if err != nil {
+			t.Fatal(err)
+		}
+		plane := tr.Planes()
+		if _, err := tr.Dial(ctx, plane); err != nil {
+			t.Fatal(err)
+		}
+		if plane == Stream {
+			_, err = tr.Listen(ctx)
+		} else {
+			_, err = tr.ListenPacket(ctx)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCalls(t,
+		"test-tls.new", "test-tls.client", "test-tls.listener",
+		"test-quic.new", "test-quic.client", "test-quic.packetlistener",
+		"test-dtls.new", "test-dtls.client", "test-dtls.packetconn")
+}
+
 func TestAdapterRefusesMissingFunctions(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
