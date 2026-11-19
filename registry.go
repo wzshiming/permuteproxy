@@ -112,6 +112,18 @@ func lookupNetwork(name string) (NetworkSpec, bool) {
 	return spec, ok
 }
 
+// lookupBase maps a network name to its registered base name and plane; tcp4 / tcp6 and udp4 / udp6 are tcp and udp.
+func lookupBase(network string) (string, Plane, bool) {
+	switch network {
+	case "tcp4", "tcp6":
+		network = "tcp"
+	case "udp4", "udp6":
+		network = "udp"
+	}
+	ns, ok := lookupNetwork(network)
+	return network, ns.Plane, ok
+}
+
 func expandAliases(tokens []string) []string {
 	registryMu.RLock()
 	defer registryMu.RUnlock()

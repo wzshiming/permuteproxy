@@ -163,20 +163,6 @@ func (b *bound) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	return b.network.ListenPacket(ctx, b.packet, b.address)
 }
 
-// familyPlane maps a Go network name to its plane; unknown names are refused rather than assumed tcp.
-func familyPlane(network string) (Plane, bool) {
-	switch network {
-	case "tcp4", "tcp6":
-		return Stream, true
-	case "udp4", "udp6":
-		return Packet, true
-	}
-	if ns, ok := lookupNetwork(network); ok {
-		return ns.Plane, true
-	}
-	return 0, false
-}
-
 // restricted refuses Network operations outside the chain's declared planes before they reach the layer.
 type restricted struct {
 	network Network
@@ -184,7 +170,7 @@ type restricted struct {
 }
 
 func (n restricted) check(op, network string, want Plane) error {
-	if p, ok := familyPlane(network); !ok || p&want&n.plane == 0 {
+	if _, p, ok := lookupBase(network); !ok || p&want&n.plane == 0 {
 		return fmt.Errorf("%s %s: %w", op, network, ErrUnsupported)
 	}
 	return nil
