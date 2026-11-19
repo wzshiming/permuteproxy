@@ -5,7 +5,7 @@ import (
 )
 
 func init() {
-	permuteproxy.RegisterNetwork("cmd", permuteproxy.NetworkSpec{Plane: permuteproxy.Stream, AddressKind: permuteproxy.AddressOpaque, Network: Network})
+	permuteproxy.ImplementNetwork("cmd", Network)
 	permuteproxy.RegisterNetwork("cmd-nc", permuteproxy.NetworkSpec{Plane: permuteproxy.Stream, AddressKind: permuteproxy.AddressHost, Network: Network})
 	permuteproxy.RegisterNetwork("cmd-nc-unix", permuteproxy.NetworkSpec{Plane: permuteproxy.Stream, AddressKind: permuteproxy.AddressPath, Network: Network})
 }

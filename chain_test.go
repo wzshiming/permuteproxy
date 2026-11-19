@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"sync"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 var (
@@ -282,8 +285,17 @@ var uncoveredServers = map[string]Spec{
 	"test-server-kept-no-packet": declaredServer(0, Packet, &ServerFuncs{Serve: failServe}, nil),
 }
 
+// atRootInit is what the registry holds before any protocols package initializes, which imported packages do after this one.
+var atRootInit struct {
+	networks map[string]NetworkSpec
+	cmd      Chain
+	cmdErr   error
+}
+
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
+	atRootInit.networks = maps.Clone(networks)
+	atRootInit.cmd, atRootInit.cmdErr = ParseURI("cmd:nc host 1")
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
 	RegisterNetwork("fakenet", NetworkSpec{Plane: Stream, Network: &fakeNet{name: "impl"}})
 	RegisterLayer("test-tls", fakeAdapter("test-tls", Stream, Stream, "tls_skip_verify", "tls_self_signed", "tls_cert_file", "tls_key_file"))
@@ -506,6 +518,23 @@ func TestRegisterCopiesNetworks(t *testing.T) {
 		t.Fatalf("unix dial after the caller changed its slice = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
+}
+
+func TestRootDeclaresBaseNetworks(t *testing.T) {
+	want := map[string]NetworkSpec{
+		"tcp":      {Plane: Stream, AddressKind: AddressHost},
+		"udp":      {Plane: Packet, AddressKind: AddressHost},
+		"unix":     {Plane: Stream, AddressKind: AddressPath},
+		"unixgram": {Plane: Packet, AddressKind: AddressPath},
+		"cmd":      {Plane: Stream, AddressKind: AddressOpaque},
+	}
+	if diff := cmp.Diff(want, atRootInit.networks); diff != "" {
+		t.Fatalf("networks without any protocols package (-want +got):\n%s", diff)
+	}
+	wantCmd := Chain{Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}}
+	if diff := cmp.Diff(wantCmd, atRootInit.cmd); atRootInit.cmdErr != nil || diff != "" {
+		t.Fatalf("ParseURI(\"cmd:nc host 1\") without any protocols package = %v (-want +got):\n%s", atRootInit.cmdErr, diff)
+	}
 }
 
 func TestImplementNetwork(t *testing.T) {
