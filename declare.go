@@ -122,13 +122,18 @@ func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 			return apply(pc, err, link.PacketConn)
 		}
 	}
-	return assembled{t, sync.OnceValue(func() error {
+	return assembled{t, closeOnce(funcs.Close, inner)}, nil
+}
+
+// closeOnce calls release, when set, and then closes inner, both at most once.
+func closeOnce(release func() error, inner Transport) func() error {
+	return sync.OnceValue(func() error {
 		var err error
-		if funcs.Close != nil {
-			err = funcs.Close()
+		if release != nil {
+			err = release()
 		}
 		return errors.Join(err, closeIf(inner))
-	})}, nil
+	})
 }
 
 // assembled is a declared layer's Transport; adapter code never sees inner, so Close releases it too.
