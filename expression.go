@@ -3,8 +3,14 @@ package permuteproxy
 import (
 	"errors"
 	"fmt"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 )
 
 // expression declares a network as adapters over another network, at an address its template makes from the declared one.
@@ -58,6 +64,47 @@ func (x expression) over(address string) Chain {
 		c.Layers = append(c.Layers, Layer{Scheme: scheme})
 	}
 	return c
+}
+
+// hostBytes are the bytes a host may carry into a template.
+const hostBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_:%"
+
+// expand fills x's template from address, an address of kind, refusing values the template cannot carry.
+func (x expression) expand(kind AddressKind, address string) (string, error) {
+	var pairs []string
+	switch kind {
+	case AddressHost:
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return "", errors.New("address is not host:port")
+		}
+		if host == "" || host[0] == '-' || strings.Trim(host, hostBytes) != "" {
+			return "", errors.New("host is not ASCII letters, digits, '.', '-', '_', ':' and '%' after a first byte other than '-'")
+		}
+		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
+			return "", errors.New("port is not a decimal number from 1 to 65535")
+		}
+		pairs = []string{"%h", x.insert(host), "%p", x.insert(port)}
+	case AddressPath:
+		if address == "" || address[0] == '-' || !utf8.ValidString(address) || strings.ContainsFunc(address, unicode.IsControl) {
+			return "", errors.New("path is not valid UTF-8 without control characters, not starting with '-'")
+		}
+		pairs = []string{"%h", x.insert(address)}
+	case AddressOpaque:
+		if address == "" {
+			return "", errors.New("empty address")
+		}
+		pairs = []string{"%a", address}
+	}
+	return strings.NewReplacer(append(pairs, "%%", "%")...).Replace(x.template), nil
+}
+
+// insert is how a value enters x's template: quoted as one word into a command line, verbatim into another address.
+func (x expression) insert(value string) string {
+	if x.opaque {
+		return cmdutils.Quote([]string{value})
+	}
+	return value
 }
 
 // checkExpression parses text and checks it declares registered adapters over a network not itself declared by expression, with placeholders an address of kind fills.

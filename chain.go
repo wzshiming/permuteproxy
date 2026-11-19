@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -23,12 +24,15 @@ type Chain struct {
 	Endpoint Endpoint `json:"endpoint"`
 }
 
-// resolved holds the looked-up specs; planes[i] is what the chain exposes above layer i.
+// resolved holds the looked-up specs of the chain, its endpoint's network expression expanded below its layers; planes[i] is what it exposes above layer i.
 type resolved struct {
+	layers []Layer // the chain's own layers, then its endpoint expression's
+	own    int     // how many of layers are the chain's own
 	specs  []Spec
 	planes []Plane
 	stream string
 	packet string
+	dial   string // the address the innermost layer dials: the endpoint's, or its expression's expansion
 }
 
 func (s Spec) accepts(key string) bool {
@@ -50,8 +54,21 @@ func (c Chain) resolve() (*resolved, error) {
 	if c.Endpoint.Address == "" {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
 	}
-	r := &resolved{specs: make([]Spec, len(c.Layers)), planes: make([]Plane, len(c.Layers))}
-	for i, l := range c.Layers {
+	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address}
+	network := c.Endpoint.Network
+	if ns, _ := lookupNetwork(network); ns.Dial != "" {
+		// RegisterNetwork has checked the expression.
+		x, _ := parseExpression(ns.Dial)
+		dial, err := x.expand(ns.AddressKind, c.Endpoint.Address)
+		if err != nil {
+			return nil, fmt.Errorf("network %q: %w: %w", network, err, ErrInvalidChain)
+		}
+		inner := x.over(dial)
+		r.layers = append(slices.Clip(c.Layers), inner.Layers...)
+		network, r.dial = inner.Endpoint.Network, inner.Endpoint.Address
+	}
+	r.specs, r.planes = make([]Spec, len(r.layers)), make([]Plane, len(r.layers))
+	for i, l := range r.layers {
 		spec, ok := lookupLayer(l.Scheme)
 		if !ok {
 			return nil, fmt.Errorf("layer %q: unknown scheme: %w", l.Scheme, ErrInvalidChain)
@@ -68,8 +85,8 @@ func (c Chain) resolve() (*resolved, error) {
 	}
 	// lossy holds the planes of avail that lack datagram boundaries, which no layer is offered.
 	var avail, lossy Plane
-	if c.Endpoint.Network == "" {
-		if len(c.Layers) == 0 {
+	if network == "" {
+		if len(r.layers) == 0 {
 			return nil, fmt.Errorf("endpoint: network required without layers: %w", ErrInvalidChain)
 		}
 		inner := r.specs[len(r.specs)-1]
@@ -81,29 +98,29 @@ func (c Chain) resolve() (*resolved, error) {
 			r.packet = "udp"
 		}
 	} else {
-		ns, ok := lookupNetwork(c.Endpoint.Network)
+		ns, ok := lookupNetwork(network)
 		if !ok {
-			return nil, fmt.Errorf("network %q: unknown: %w", c.Endpoint.Network, ErrInvalidChain)
+			return nil, fmt.Errorf("network %q: unknown: %w", network, ErrInvalidChain)
 		}
 		avail = ns.Plane
 		if avail&Stream != 0 {
-			r.stream = c.Endpoint.Network
+			r.stream = network
 		}
 		if avail&Packet != 0 {
-			r.packet = c.Endpoint.Network
+			r.packet = network
 		}
 	}
 	for i := len(r.specs) - 1; i >= 0; i-- {
 		spec := r.specs[i]
 		if spec.Requires&lossy != 0 {
-			return nil, fmt.Errorf("layer %q requires %v but its carrier keeps no datagram boundaries: %w", c.Layers[i].Scheme, spec.Requires&lossy, ErrInvalidChain)
+			return nil, fmt.Errorf("layer %q requires %v but its carrier keeps no datagram boundaries: %w", r.layers[i].Scheme, spec.Requires&lossy, ErrInvalidChain)
 		}
 		if avail&spec.Requires != spec.Requires {
-			return nil, fmt.Errorf("layer %q requires %v but carrier provides %v: %w", c.Layers[i].Scheme, spec.Requires, avail, ErrInvalidChain)
+			return nil, fmt.Errorf("layer %q requires %v but carrier provides %v: %w", r.layers[i].Scheme, spec.Requires, avail, ErrInvalidChain)
 		}
 		avail = spec.Provides | ((avail &^ lossy) & spec.Preserves)
 		if avail == 0 {
-			return nil, fmt.Errorf("layer %q provides no plane: %w", c.Layers[i].Scheme, ErrInvalidChain)
+			return nil, fmt.Errorf("layer %q provides no plane: %w", r.layers[i].Scheme, ErrInvalidChain)
 		}
 		lossy = avail & spec.Lossy
 		r.planes[i] = avail
@@ -168,7 +185,7 @@ func ParseURI(raw string) (Chain, error) {
 		c.Layers[i].set(k, vs[len(vs)-1])
 	}
 	if u.User != nil {
-		if len(r.specs) == 0 || r.specs[0].UsernameOption == "" {
+		if r.own == 0 || r.specs[0].UsernameOption == "" {
 			return Chain{}, fmt.Errorf("uri: %q does not accept credentials: %w", u.Scheme, ErrInvalidChain)
 		}
 		c.Layers[0].set(r.specs[0].UsernameOption, u.User.Username())
@@ -182,9 +199,9 @@ func ParseURI(raw string) (Chain, error) {
 	return c, nil
 }
 
-// owner returns the outermost layer accepting key, which is where ParseURI assigns it.
+// owner returns the outermost of the chain's own layers accepting key, which is where ParseURI assigns it.
 func (r *resolved) owner(key string) int {
-	for i, spec := range r.specs {
+	for i, spec := range r.specs[:r.own] {
 		if spec.accepts(key) {
 			return i
 		}

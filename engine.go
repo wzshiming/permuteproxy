@@ -18,22 +18,22 @@ func (e Engine) network() Network {
 	return byName{}
 }
 
-func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
-	b := &bound{network: e.network(), stream: r.stream, packet: r.packet, address: c.Endpoint.Address}
+func (e Engine) build(r *resolved, from int) (Transport, error) {
+	b := &bound{network: e.network(), stream: r.stream, packet: r.packet, address: r.dial}
 	// A layer is never offered a datagram plane that its network reports lossy.
-	if len(c.Layers) > 0 && b.packet != "" && isLossy(b.network, b.packet) {
+	if len(r.layers) > 0 && b.packet != "" && isLossy(b.network, b.packet) {
 		b.packet = ""
 	}
 	var t Transport = b
-	for i := len(c.Layers) - 1; i >= from; i-- {
-		next, err := r.specs[i].Adapt(t, c.Layers[i].Options.clone())
+	for i := len(r.layers) - 1; i >= from; i-- {
+		next, err := r.specs[i].Adapt(t, r.layers[i].Options.clone())
 		if err != nil {
 			closeIf(t)
-			return nil, fmt.Errorf("layer %q: %w", c.Layers[i].Scheme, err)
+			return nil, fmt.Errorf("layer %q: %w", r.layers[i].Scheme, err)
 		}
 		if next == nil {
 			closeIf(t)
-			return nil, fmt.Errorf("layer %q: Adapt returned nil", c.Layers[i].Scheme)
+			return nil, fmt.Errorf("layer %q: Adapt returned nil", r.layers[i].Scheme)
 		}
 		plane := r.planes[i]
 		if i > 0 {
@@ -54,7 +54,7 @@ func (e Engine) Transport(c Chain) (Transport, error) {
 	if len(r.specs) > 0 && r.specs[0].Kind == KindProxy {
 		return nil, fmt.Errorf("layer %q: proxy needs Client or Server: %w", c.Layers[0].Scheme, ErrInvalidChain)
 	}
-	return e.build(c, r, 0)
+	return e.build(r, 0)
 }
 
 func (c Chain) proxy() (*resolved, error) {
@@ -78,7 +78,7 @@ func (e Engine) Client(c Chain) (Network, error) {
 	if spec.Client == nil {
 		return nil, fmt.Errorf("layer %q: client: %w", scheme, ErrUnsupported)
 	}
-	inner, err := e.build(c, r, 1)
+	inner, err := e.build(r, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func (e Engine) Server(c Chain) (Server, error) {
 	if spec.Server == nil {
 		return nil, fmt.Errorf("layer %q: server: %w", scheme, ErrUnsupported)
 	}
-	inner, err := e.build(c, r, 1)
+	inner, err := e.build(r, 1)
 	if err != nil {
 		return nil, err
 	}

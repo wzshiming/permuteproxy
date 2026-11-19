@@ -1,12 +1,18 @@
 package permuteproxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // The expression fixtures are registered after chain_test.go's, so they may name its layers and networks.
@@ -15,6 +21,23 @@ func init() {
 	RegisterNetwork("test-nc-unix", NetworkSpec{AddressKind: AddressPath, Dial: "cmd:nc -U %h", Network: &fakeNet{name: "impl"}})
 	RegisterNetwork("test-nc-udp", NetworkSpec{AddressKind: AddressHost, Dial: "dgram+cmd:nc -u -w 30 %h %p"})
 	RegisterNetwork("test-cmd-packet", NetworkSpec{AddressKind: AddressOpaque, Dial: "dgram+cmd:%a"})
+	// test-auth takes an option and a username, which a URI must never hand to an expression's layer.
+	auth := fakeAdapter("test-auth", Stream, Stream, "opt")
+	auth.UsernameOption = "username"
+	RegisterLayer("test-auth", auth)
+	RegisterNetwork("test-auth-tcp", NetworkSpec{AddressKind: AddressHost, Dial: "test-auth+tcp://%h:%p", Listen: "test-auth+tcp://0.0.0.0:%p"})
+	RegisterNetwork("test-snappy-unix", NetworkSpec{AddressKind: AddressPath, Dial: "test-snappy+unix://%h"})
+	RegisterNetwork("test-percent", NetworkSpec{AddressKind: AddressHost, Dial: "cmd:printf %%h:%%p %h:%p"})
+	RegisterNetwork("test-closable-tcp", NetworkSpec{AddressKind: AddressHost, Dial: "closable+tcp://%h:%p"})
+	RegisterNetwork("test-via-fakenet", NetworkSpec{AddressKind: AddressHost, Dial: "fakenet://%h:%p"})
+}
+
+// carrierNet is fakeNet dialing conns that name their peer, which dgram reads.
+type carrierNet struct{ fakeNet }
+
+func (n *carrierNet) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	n.fakeNet.DialContext(ctx, network, address)
+	return netutils.ConnWithAddr(nil, nil, netutils.NewNetAddr(network, address)), nil
 }
 
 func TestRegisterNetworkDerivesPlaneFromDial(t *testing.T) {
@@ -132,4 +155,205 @@ func TestExpressionNetworkRoundTrips(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseURIKeepsOptionsOffExpressionLayers(t *testing.T) {
+	for _, uri := range []string{"test-auth-tcp://127.0.0.1:1?opt=1", "test-auth-tcp://u@127.0.0.1:1"} {
+		if _, err := ParseURI(uri); !errors.Is(err, ErrInvalidChain) {
+			t.Fatalf("ParseURI(%q) = %v, want ErrInvalidChain since the chain lists no layer taking it", uri, err)
+		}
+	}
+	want := Chain{Layers: []Layer{{Scheme: "test-auth", Options: Options{"username": "u", "opt": "1"}}}, Endpoint: Endpoint{Network: "test-auth-tcp", Address: "127.0.0.1:1"}}
+	if diff := cmp.Diff(want, parse(t, "test-auth+test-auth-tcp://u@127.0.0.1:1?opt=1")); diff != "" {
+		t.Fatalf("ParseURI mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestChainValidateExpandsExpression(t *testing.T) {
+	over := func(network, address string, schemes ...string) Chain {
+		c := Chain{Endpoint: Endpoint{Network: network, Address: address}}
+		for _, s := range schemes {
+			c.Layers = append(c.Layers, Layer{Scheme: s})
+		}
+		return c
+	}
+	tests := []struct {
+		name  string
+		chain Chain
+		names []string // what the error names; nil for a valid chain
+	}{
+		{"lossy datagrams outermost", over("test-nc-udp", "127.0.0.1:1"), nil},
+		{"stream layer over a stream expression", over("test-nc", "127.0.0.1:1", "test-tls"), nil},
+		{"packet required over an expression through dgram", over("test-nc-udp", "127.0.0.1:1", "test-dtls"), []string{`"test-dtls"`, "datagram boundaries"}},
+		{"packet required over an opaque expression through dgram", over("test-cmd-packet", "nc -u host 53", "test-dtls"), []string{`"test-dtls"`, "datagram boundaries"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.chain.Validate()
+			if tt.names == nil {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want a valid chain", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Validate() = %v, want ErrInvalidChain", err)
+			}
+			for _, name := range tt.names {
+				if !strings.Contains(err.Error(), name) {
+					t.Fatalf("Validate() = %v, want it to name %s", err, name)
+				}
+			}
+		})
+	}
+	if _, err := ParseURI("test-dtls+test-nc-udp://127.0.0.1:1"); !errors.Is(err, ErrInvalidChain) {
+		t.Fatalf("ParseURI with Packet required over an expression through dgram = %v, want ErrInvalidChain", err)
+	}
+}
+
+func TestResolveValidatesExpressionValues(t *testing.T) {
+	tests := []struct {
+		network string
+		address string
+		ok      bool
+	}{
+		{"test-nc", "127.0.0.1:1", true},
+		{"test-nc", "[fe80::1%en0]:65535", true},
+		{"test-nc", "my_host.example-1:80", true},
+		{"test-nc", "127.0.0.1", false},
+		{"test-nc", ":1", false},
+		{"test-nc", "-oProxyCommand=x:1", false},
+		{"test-nc", "a b:1", false},
+		{"test-nc", "a;b:1", false},
+		{"test-nc", "a/b:1", false},
+		{"test-nc", "é:1", false},
+		{"test-nc", "h:0", false},
+		{"test-nc", "h:65536", false},
+		{"test-nc", "h:+1", false},
+		{"test-nc", "h:x", false},
+		{"test-nc", "h:", false},
+		{"test-nc-unix", "/tmp/a b.sock", true},
+		{"test-nc-unix", "./é.sock", true},
+		{"test-nc-unix", "-x.sock", false},
+		{"test-nc-unix", "/tmp/a\nb.sock", false},
+		{"test-nc-unix", "/tmp/a\x7fb.sock", false},
+		{"test-nc-unix", "/tmp/a\u0085b.sock", false},
+		{"test-nc-unix", "/tmp/\xff.sock", false},
+		{"test-cmd-packet", "nc -u host 53", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.network+" "+tt.address, func(t *testing.T) {
+			err := Chain{Endpoint: Endpoint{Network: tt.network, Address: tt.address}}.Validate()
+			if tt.ok && err != nil {
+				t.Fatalf("Validate() = %v, want the value accepted", err)
+			}
+			if !tt.ok && !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Validate() = %v, want ErrInvalidChain", err)
+			}
+		})
+	}
+}
+
+// A chain refuses an empty address before expanding it, so the expander's own refusal shows only when called directly.
+func TestExpandRefusesEmptyValues(t *testing.T) {
+	for _, tt := range []struct {
+		expression string
+		kind       AddressKind
+	}{
+		{"cmd:nc -U %h", AddressPath},
+		{"dgram+cmd:%a", AddressOpaque},
+	} {
+		x, err := parseExpression(tt.expression)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := x.expand(tt.kind, ""); err == nil {
+			t.Fatalf("expanding %q for an empty address = %q, want an error", tt.expression, got)
+		}
+	}
+}
+
+func TestEngineDialsExpressionNetwork(t *testing.T) {
+	ctx := context.Background()
+	base := Engine{Base: &carrierNet{fakeNet{name: "base"}}}
+	tests := []struct {
+		engine  Engine
+		network string
+		address string
+		plane   Plane
+		calls   []string
+	}{
+		{base, "test-nc", "127.0.0.1:1", Stream, []string{"base.dial cmd nc 127.0.0.1 1"}},
+		{base, "test-nc", "[fe80::1%p]:80", Stream, []string{"base.dial cmd nc fe80::1%p 80"}},
+		{base, "test-nc-unix", "/tmp/a b.sock", Stream, []string{"base.dial cmd nc -U '/tmp/a b.sock'"}},
+		{base, "test-nc-udp", "127.0.0.1:1", Packet, []string{"base.dial cmd nc -u -w 30 127.0.0.1 1"}},
+		{base, "test-cmd-packet", "nc -u 'a b' 53", Packet, []string{"base.dial cmd nc -u 'a b' 53"}},
+		{base, "test-auth-tcp", "[fe80::1%en0]:1", Stream, []string{"test-auth.new", "base.dial tcp fe80::1%en0:1", "test-auth.client"}},
+		{base, "test-snappy-unix", "/tmp/a b.sock", Stream, []string{"test-snappy.new", "base.dial unix /tmp/a b.sock", "test-snappy.client"}},
+		{base, "test-percent", "127.0.0.1:1", Stream, []string{"base.dial cmd printf %h:%p 127.0.0.1:1"}},
+		{Engine{}, "test-via-fakenet", "127.0.0.1:1", Stream, []string{"impl.dial fakenet 127.0.0.1:1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.network+" "+tt.address, func(t *testing.T) {
+			calls = nil
+			tr, err := tt.engine.Transport(Chain{Endpoint: Endpoint{Network: tt.network, Address: tt.address}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tr.Planes() != tt.plane {
+				t.Fatalf("Planes() = %v, want %v", tr.Planes(), tt.plane)
+			}
+			conn, err := tr.Dial(ctx, tt.plane)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := conn.(net.PacketConn); tt.plane == Packet && !ok {
+				t.Fatal("Dial(Packet) through dgram returned no net.PacketConn")
+			}
+			assertCalls(t, tt.calls...)
+		})
+	}
+}
+
+func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {
+	ctx := context.Background()
+	client, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		network string
+		plane   Plane
+	}{{"test-nc", Stream}, {"test-nc-udp", Packet}} {
+		tr, err := Engine{Base: client}.Transport(Chain{Endpoint: Endpoint{Network: tt.network, Address: "127.0.0.1:1"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		if _, err := tr.Dial(ctx, tt.plane); !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "dial cmd") {
+			t.Fatalf("dialing %s through a client without cmd = %v, want its ErrUnsupported for cmd", tt.network, err)
+		}
+		assertCalls(t)
+	}
+}
+
+func TestEngineClosesExpressionLayers(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tr, err := e.Transport(Chain{Endpoint: Endpoint{Network: "test-closable-tcp", Address: "127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	closer, ok := tr.(io.Closer)
+	if !ok {
+		t.Fatal("transport over an expression with a closable layer has no Close")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "closable.close")
+	if _, err := e.Transport(Chain{Layers: []Layer{{Scheme: "test-broken"}}, Endpoint: Endpoint{Network: "test-closable-tcp", Address: "127.0.0.1:1"}}); err == nil {
+		t.Fatal("build succeeded, want test-broken's failure")
+	}
+	assertCalls(t, "closable.close")
 }
