@@ -510,23 +510,23 @@ func TestClientClosesOnce(t *testing.T) {
 func TestClientAndNewClientCoexist(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	declared, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-http"))
+	declaredNet, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-http"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy, err := Engine{Base: declared}.Client(mk("", "test-legacy"))
+	legacyNet, err := Engine{Base: declaredNet}.Client(mk("", "test-legacy"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-http.new", "test-legacy.client stream|packet")
-	if _, err := legacy.DialContext(ctx, "tcp4", "x:1"); err != nil {
+	if _, err := legacyNet.DialContext(ctx, "tcp4", "x:1"); err != nil {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-http.dial stream tcp4 x:1")
-	if _, err := legacy.Listen(ctx, "tcp", "x:1"); !errors.Is(err, ErrUnsupported) {
+	if _, err := legacyNet.Listen(ctx, "tcp", "x:1"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Listen through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
 	}
-	if _, err := legacy.DialContext(ctx, "udp", "x:1"); !errors.Is(err, ErrUnsupported) {
+	if _, err := legacyNet.DialContext(ctx, "udp", "x:1"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("udp dial through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
 	}
 	assertCalls(t)
