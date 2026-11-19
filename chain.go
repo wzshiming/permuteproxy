@@ -66,7 +66,8 @@ func (c Chain) resolve() (*resolved, error) {
 		}
 		r.specs[i] = spec
 	}
-	var avail Plane
+	// lossy holds the planes of avail that lack datagram boundaries, which no layer is offered.
+	var avail, lossy Plane
 	if c.Endpoint.Network == "" {
 		if len(c.Layers) == 0 {
 			return nil, fmt.Errorf("endpoint: network required without layers: %w", ErrInvalidChain)
@@ -94,13 +95,17 @@ func (c Chain) resolve() (*resolved, error) {
 	}
 	for i := len(r.specs) - 1; i >= 0; i-- {
 		spec := r.specs[i]
+		if spec.Requires&lossy != 0 {
+			return nil, fmt.Errorf("layer %q requires %v but its carrier keeps no datagram boundaries: %w", c.Layers[i].Scheme, spec.Requires&lossy, ErrInvalidChain)
+		}
 		if avail&spec.Requires != spec.Requires {
 			return nil, fmt.Errorf("layer %q requires %v but carrier provides %v: %w", c.Layers[i].Scheme, spec.Requires, avail, ErrInvalidChain)
 		}
-		avail = spec.Provides | (avail & spec.Preserves)
+		avail = spec.Provides | ((avail &^ lossy) & spec.Preserves)
 		if avail == 0 {
 			return nil, fmt.Errorf("layer %q provides no plane: %w", c.Layers[i].Scheme, ErrInvalidChain)
 		}
+		lossy = avail & spec.Lossy
 		r.planes[i] = avail
 	}
 	return r, nil

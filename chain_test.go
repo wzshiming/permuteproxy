@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 
@@ -306,6 +307,13 @@ func init() {
 	keep := fakeAdapter("test-keep", Stream, Stream)
 	keep.Preserves = Packet
 	RegisterLayer("test-keep", keep)
+	// test-lossy is test-uot without datagram boundaries; test-lossy-keep is test-keep whose preserved datagrams lose them.
+	lossy := fakeAdapter("test-lossy", Stream, Packet)
+	lossy.Lossy = Packet
+	RegisterLayer("test-lossy", lossy)
+	lossyKeep := fakeAdapter("test-lossy-keep", Stream, Stream)
+	lossyKeep.Preserves, lossyKeep.Lossy = Packet, Packet
+	RegisterLayer("test-lossy-keep", lossyKeep)
 	RegisterLayer("test-http", fakeProxy("test-http", Stream, Stream, 0, "username", "password"))
 	RegisterLayer("test-socks4", fakeProxy("test-socks4", Stream, Stream, 0, "username", ""))
 	RegisterLayer("test-ssh", fakeProxy("test-ssh", Stream, Stream, 0, "username", "password", "identity_file", "identity_data", "authorized_data"))
@@ -625,5 +633,65 @@ func TestChainValidate(t *testing.T) {
 				t.Fatalf("Validate() = %v, want ErrInvalidChain", err)
 			}
 		})
+	}
+}
+
+func TestChainValidateLossy(t *testing.T) {
+	tests := []struct {
+		name  string
+		chain Chain
+		names []string // what the error names; nil for a valid chain
+	}{
+		{"lossy datagrams outermost", mk("tcp", "test-lossy"), nil},
+		{"lossy datagrams over cmd", Chain{Layers: []Layer{{Scheme: "test-lossy"}}, Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}}, nil},
+		{"packet required over datagrams with boundaries", mk("tcp", "test-dtls", "test-uot"), nil},
+		{"packet preserved over lossy datagrams beside stream", mk("", "test-keep", "test-lossy-keep"), nil},
+		{"packet required over lossy datagrams", mk("tcp", "test-dtls", "test-lossy"), []string{`"test-dtls"`, "datagram boundaries"}},
+		{"packet required over lossy preserved datagrams", mk("", "test-quic", "test-lossy-keep"), []string{`"test-quic"`, "datagram boundaries"}},
+		{"only lossy datagrams preserved", mk("tcp", "test-ss", "test-lossy"), []string{`"test-ss"`}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.chain.Validate()
+			if tt.names == nil {
+				if err != nil {
+					t.Fatalf("Validate() = %v, want a valid chain", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Validate() = %v, want ErrInvalidChain", err)
+			}
+			for _, name := range tt.names {
+				if !strings.Contains(err.Error(), name) {
+					t.Fatalf("Validate() = %v, want it to name %s", err, name)
+				}
+			}
+		})
+	}
+}
+
+func TestLossyPlaneNotOfferedAbove(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		chain  Chain
+		planes Plane
+		calls  []string
+	}{
+		{mk("tcp", "test-lossy"), Packet, []string{"test-lossy.new"}},
+		{mk("", "test-lossy-keep"), Stream | Packet, []string{"test-lossy-keep.new"}},
+		{mk("", "test-keep", "test-lossy-keep"), Stream, []string{"test-lossy-keep.new", "test-keep.new"}},
+		{mk("", "wide", "test-lossy-keep"), Stream, []string{"test-lossy-keep.new", "wide.adapt stream"}},
+	}
+	for _, tt := range tests {
+		tr, err := e.Transport(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tr.Planes() != tt.planes {
+			t.Fatalf("Planes() of %+v = %v, want %v", tt.chain.Layers, tr.Planes(), tt.planes)
+		}
+		assertCalls(t, tt.calls...)
 	}
 }

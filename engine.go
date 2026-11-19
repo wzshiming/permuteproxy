@@ -30,7 +30,12 @@ func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 			closeIf(t)
 			return nil, fmt.Errorf("layer %q: Adapt returned nil", c.Layers[i].Scheme)
 		}
-		t = pinned{TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
+		plane := r.planes[i]
+		if i > 0 {
+			// The layer above is never offered a plane without datagram boundaries.
+			plane &^= r.specs[i].Lossy
+		}
+		t = pinned{TransportFuncs{Plane: plane, DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
 	}
 	return t, nil
 }
