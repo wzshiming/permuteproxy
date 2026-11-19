@@ -8,11 +8,13 @@ import (
 	"sync"
 )
 
-// NetworkSpec declares a network: the plane it carries, how a URI writes its address and what implements it.
+// NetworkSpec declares a network: the plane it carries, how a URI writes its address and what implements or expresses it.
 type NetworkSpec struct {
-	Plane       Plane       // Stream or Packet, the one plane the network carries
+	Plane       Plane       // Stream or Packet, the one plane the network carries; left zero with Dial, which derives it
 	AddressKind AddressKind // how a URI writes the network's address
 	Network     Network     // its implementation; nil leaves tcp, udp, unix and unixgram to the system and others unimplemented
+	Dial        string      // expression that dials this network through layers and another network
+	Listen      string      // optional expression for listening
 }
 
 var (
@@ -48,8 +50,16 @@ func checkName(name string) {
 	}
 }
 
-// RegisterNetwork declares a network by name, panicking on a malformed spec or a name already taken.
+// RegisterNetwork declares a network by name, its plane derived from Dial when set, panicking on a malformed spec or a name already taken.
 func RegisterNetwork(name string, spec NetworkSpec) {
+	if spec.Dial != "" || spec.Listen != "" {
+		// The expressions are looked up under the registry lock, so they are checked before RegisterNetwork holds it.
+		plane, err := expressionPlane(spec)
+		if err != nil {
+			panic(fmt.Sprintf("permuteproxy: network %q: %v", name, err))
+		}
+		spec.Plane = plane
+	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	checkName(name)
