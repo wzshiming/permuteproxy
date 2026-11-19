@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -495,6 +496,86 @@ func TestAssociationConcurrentIO(t *testing.T) {
 	}
 	for msg := range seen {
 		t.Errorf("unknown datagram %q echoed", msg)
+	}
+}
+
+// consume reads datagrams into got until ReadFrom fails, as a quic endpoint does, then reports why.
+func consume(pc net.PacketConn) (got <-chan string, failed <-chan error) {
+	gotc, errc := make(chan string, 64), make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, _, err := pc.ReadFrom(buf)
+			if err != nil {
+				errc <- err
+				return
+			}
+			gotc <- string(buf[:n])
+		}
+	}()
+	return gotc, errc
+}
+
+// stray sends payload to pc's socket from a source that is not the relay.
+func stray(t *testing.T, pc net.PacketConn, payload string) {
+	t.Helper()
+	raw, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	if _, err := raw.WriteTo([]byte(payload), &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssociationSkipsStrayDatagrams(t *testing.T) {
+	addr := serve(t, newProbe(system), nil)
+	n := dialer(t, newProbe(system), addr, nil, true)
+	peer := echo(t).LocalAddr()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pc, err := n.ListenPacket(ctx, "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	got, failed := consume(pc)
+	stray(t, pc, "\x00\x00\x00\x01\x7f\x00\x00\x01\x00\x09stray")
+	stray(t, pc, "x")
+	if _, err := pc.WriteTo([]byte("ping"), peer); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-got:
+		if msg != "ping" {
+			t.Fatalf("ReadFrom yielded %q, want only the echoed datagram", msg)
+		}
+	case err := <-failed:
+		t.Fatalf("ReadFrom = %v after a stray datagram, want it skipped", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the echoed datagram was never read")
+	}
+	// The socket's own errors still surface: the deadline ends the loop and reads work once cleared.
+	pc.SetReadDeadline(time.Now())
+	select {
+	case err := <-failed:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("ReadFrom = %v, want the deadline error", err)
+		}
+	case msg := <-got:
+		t.Fatalf("ReadFrom yielded %q at the deadline", msg)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the deadline did not end ReadFrom")
+	}
+	pc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := pc.WriteTo([]byte("again"), peer); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 16)
+	if n, from, err := pc.ReadFrom(buf); err != nil || string(buf[:n]) != "again" || from.String() != peer.String() {
+		t.Fatalf("ReadFrom after the deadline = %q from %v, %v", buf[:n], from, err)
 	}
 }
 

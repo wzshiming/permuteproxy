@@ -2,6 +2,7 @@ package socks5
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -180,10 +181,21 @@ func (a *association) Close() error {
 	return err
 }
 
+// ReadFrom skips datagrams the library rejects, from another source or without a socks5 header,
+// and returns only the socket's own errors, which socket tags since the library returns them raw.
 func (a *association) ReadFrom(b []byte) (int, net.Addr, error) {
 	a.readMu.Lock()
 	defer a.readMu.Unlock()
-	return a.udp.ReadFrom(b)
+	for {
+		n, addr, err := a.udp.ReadFrom(b)
+		if err == nil {
+			return n, addr, nil
+		}
+		var re readError
+		if errors.As(err, &re) {
+			return 0, nil, re.error
+		}
+	}
 }
 
 func (a *association) WriteTo(b []byte, addr net.Addr) (int, error) {
@@ -218,6 +230,19 @@ type socket struct {
 func (s socket) Close() error {
 	return s.a.Close()
 }
+
+func (s socket) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, addr, err := s.PacketConn.ReadFrom(b)
+	if err != nil {
+		return n, addr, readError{err}
+	}
+	return n, addr, nil
+}
+
+// readError marks an error of the socket itself, as opposed to one about a datagram's content.
+type readError struct{ error }
+
+func (e readError) Unwrap() error { return e.error }
 
 func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
 	srv := socks5.NewServer()
