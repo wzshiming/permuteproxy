@@ -285,6 +285,68 @@ func TestClientDialsStream(t *testing.T) {
 	}
 }
 
+func TestClientAdmitsListedNetworks(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		uri     string
+		allowed map[string]string
+		refused []string
+	}{
+		{
+			"test-http://127.0.0.1:1",
+			map[string]string{
+				"dial tcp":  "test-http.dial stream tcp x:1",
+				"dial tcp4": "test-http.dial stream tcp4 x:1",
+				"dial tcp6": "test-http.dial stream tcp6 x:1",
+			},
+			[]string{"dial unix", "dial fakenet", "dial udp", "dial udp4", "dial unixgram", "dial bogus", "dial ", "listenpacket udp", "listenpacket tcp"},
+		},
+		{
+			"test-ss+udp://127.0.0.1:1",
+			map[string]string{
+				"dial udp":              "test-ss.listenpacket packet local=base udp :0",
+				"dial udp4":             "test-ss.listenpacket packet local=base udp4 :0",
+				"listenpacket udp6":     "test-ss.listenpacket packet local=base udp6 x:1",
+				"listenpacket unixgram": "test-ss.listenpacket packet local=base unixgram x:1",
+			},
+			[]string{"dial tcp", "dial tcp6", "dial unixgram", "listenpacket tcp", "listenpacket bogus"},
+		},
+		{
+			"test-ss://127.0.0.1:1",
+			map[string]string{
+				"dial tcp4":        "test-ss.dial stream|packet tcp4 x:1",
+				"dial udp6":        "test-ss.listenpacket stream|packet local=base udp6 :0",
+				"listenpacket udp": "test-ss.listenpacket stream|packet local=base udp x:1",
+			},
+			[]string{"dial unix", "dial fakenet", "listenpacket unix", "listenpacket tcp4"},
+		},
+		{"test-peer://127.0.0.1:1", nil, []string{"listenpacket unixgram", "dial unixgram", "dial tcp"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.uri, func(t *testing.T) {
+			n, err := e.Client(parse(t, tt.uri))
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			for _, op := range tt.refused {
+				if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
+					t.Fatalf("%q = %v, want ErrUnsupported", op, err)
+				}
+				assertCalls(t)
+			}
+			for op, want := range tt.allowed {
+				if err := netOp(ctx, n, op); err != nil {
+					t.Fatalf("%q = %v", op, err)
+				}
+				assertCalls(t, want)
+			}
+		})
+	}
+}
+
 func TestClientListensPacketThroughLocal(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

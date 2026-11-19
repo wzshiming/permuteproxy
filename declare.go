@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"sync"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
@@ -152,7 +153,7 @@ func apply[C io.Closer, R any](carrier C, err error, f func(C) (R, error)) (r R,
 	return r, err
 }
 
-// ClientFuncs declares a proxy's client; the root package derives its udp dials from ListenPacket.
+// ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists and derives udp dials.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
@@ -168,7 +169,7 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	}
 	return NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
-			switch base, plane, _ := lookupBase(network); {
+			switch base, plane := s.admit(network); {
 			case plane == Stream:
 				return funcs.Dial(ctx, inner, network, address)
 			case base == "udp":
@@ -177,9 +178,21 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
+			if _, plane := s.admit(network); plane != Packet {
+				return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
+			}
 			return funcs.ListenPacket(ctx, inner, local, network, address)
 		},
 	}, nil
+}
+
+// admit maps a network s lists to its base name and plane, and any other network to no plane.
+func (s Spec) admit(network string) (string, Plane) {
+	base, plane, _ := lookupBase(network)
+	if !slices.Contains(s.Networks, base) {
+		return "", 0
+	}
+	return base, plane
 }
 
 // dialUDP binds a socket at ":0" through f.ListenPacket and writes to the default peer through it.
