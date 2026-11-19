@@ -268,9 +268,7 @@ func init() {
 		RegisterLayer(name, spec)
 	}
 	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
-	RegisterLayer("closableproxy", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Client: func(Transport, Network, Options) (Network, error) {
-		return &closableNet{fakeNet{name: "closableproxy"}}, nil
-	}})
+	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("nilproxy", Spec{
 		Kind:      KindProxy,
 		Requires:  Stream,

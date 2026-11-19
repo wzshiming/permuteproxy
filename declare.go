@@ -179,7 +179,7 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	case funcs.ListenPacket == nil && (s.Provides|s.Preserves)&Packet != 0:
 		return nil, fmt.Errorf("no ListenPacket for %v: %w", Packet, ErrInvalidChain)
 	}
-	return NetworkFuncs{
+	n := NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
 			switch base, plane := s.admit(network); {
 			case plane == Stream && funcs.Dial != nil:
@@ -195,7 +195,19 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			}
 			return funcs.ListenPacket(ctx, inner, local, network, address)
 		},
-	}, nil
+	}
+	return assembledNetwork{n, closeOnce(funcs.Close, inner)}, nil
+}
+
+// assembledNetwork is a declared client's Network; the engine built its inner Transport, so Close releases it too.
+type assembledNetwork struct {
+	NetworkFuncs
+	close func() error
+}
+
+// Close releases the client and then its inner Transport, once.
+func (a assembledNetwork) Close() error {
+	return a.close()
 }
 
 // admit maps a network s lists to its base name and plane, and any other network to no plane.

@@ -481,6 +481,32 @@ func TestClientRefusesMissingFunctions(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestClientClosesOnce(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	tests := []struct {
+		chain Chain
+		want  []string
+	}{
+		{mk("tcp", "closableproxy"), []string{"closableproxy.close"}},
+		{mk("tcp", "closableproxy", "closable"), []string{"closableproxy.close", "closable.close"}},
+		{mk("tcp", "test-http", "closable"), []string{"closable.close"}},
+	}
+	for _, tt := range tests {
+		n, err := e.Client(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		for i := 0; i < 2; i++ {
+			if err := n.(io.Closer).Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertCalls(t, tt.want...)
+	}
+}
+
 func TestClientAndNewClientCoexist(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
