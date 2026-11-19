@@ -240,6 +240,7 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 type ServerFuncs struct {
 	Serve       func(ctx context.Context, ln net.Listener, upstream Network) error   // serves the Stream carrier until it fails or ctx ends
 	ServePacket func(ctx context.Context, pc net.PacketConn, upstream Network) error // serves the Packet carrier until it fails or ctx ends
+	Close       func() error                                                         // optional; releases what NewServer acquired
 }
 
 // server is the Server that RegisterLayer derives from s.NewServer.
@@ -264,8 +265,20 @@ func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, e
 	if planes&Packet != 0 {
 		listenPacket = inner.ListenPacket
 	}
-	return serverutils.NewPlaneServer(listen, listenPacket,
+	srv := serverutils.NewPlaneServer(listen, listenPacket,
 		func(ctx context.Context, ln net.Listener) error { return funcs.Serve(ctx, ln, upstream) },
 		func(ctx context.Context, pc net.PacketConn) error { return funcs.ServePacket(ctx, pc, upstream) },
-	), nil
+	)
+	return assembledServer{srv, closeOnce(funcs.Close, inner)}, nil
+}
+
+// assembledServer is a declared server; the engine built its inner Transport, so Close releases it too.
+type assembledServer struct {
+	*serverutils.Server
+	close func() error
+}
+
+// Close stops the server as the lifecycle does, then releases it and its inner Transport once.
+func (a assembledServer) Close() error {
+	return errors.Join(a.Server.Close(), a.close())
 }

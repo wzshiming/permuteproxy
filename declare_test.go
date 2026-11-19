@@ -709,6 +709,36 @@ func TestServerRejectsDeclarations(t *testing.T) {
 	}
 }
 
+func TestServerClosesOnce(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}, Upstream: &closableNet{fakeNet{name: "upstream"}}}
+	tests := []struct {
+		chain Chain
+		want  []string
+	}{
+		{mk("tcp", "closableserver"), []string{"closableserver.close"}},
+		{mk("tcp", "closableserver", "closable"), []string{"closableserver.close", "closable.close"}},
+		{mk("tcp", "test-http", "closable"), []string{"closable.close"}},
+	}
+	for _, tt := range tests {
+		srv, err := e.Server(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		for i := 0; i < 2; i++ {
+			if err := srv.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertCalls(t, tt.want...)
+		if err := srv.Run(context.Background()); err != nil {
+			t.Fatalf("Run() after Close = %v, want nil", err)
+		}
+		assertCalls(t)
+	}
+}
+
 func TestServerAndNewServerCoexist(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &fakeNet{name: "base"}, Upstream: &fakeNet{name: "upstream"}}
