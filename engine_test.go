@@ -757,6 +757,38 @@ func TestEngineNilBaseReportsRegisteredLossy(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestLossyNetworkWithoutLayersDialsNormally(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}.Transport(mk("udp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Planes() != Packet {
+		t.Fatalf("Planes() = %v, want packet", tr.Planes())
+	}
+	if _, err := tr.Dial(ctx, Packet); err != nil {
+		t.Fatalf("Dial(Packet) on a lossy network without layers = %v", err)
+	}
+	if _, err := tr.ListenPacket(ctx); err != nil {
+		t.Fatalf("ListenPacket() on a lossy network without layers = %v", err)
+	}
+	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1")
+}
+
+func TestUpstreamNeverCheckedForLossy(t *testing.T) {
+	upstream := &lossyNet{fakeNet{name: "upstream"}, []string{"udp"}}
+	srv, err := Engine{Base: &fakeNet{name: "base"}, Upstream: upstream}.Server(Chain{Layers: []Layer{{Scheme: "test-relay", Options: Options{"relay": "udp"}}}, Endpoint: Endpoint{Network: "tcp", Address: "127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatalf("binding lossy udp through Upstream = %v, want it unchecked", err)
+	}
+	assertCalls(t, "base.listen tcp 127.0.0.1:1", "upstream.listenpacket udp 127.0.0.1:0")
+}
+
 func TestEngineForwardsClose(t *testing.T) {
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
 	tests := []struct {

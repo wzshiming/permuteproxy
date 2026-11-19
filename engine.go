@@ -20,7 +20,8 @@ func (e Engine) network() Network {
 
 func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 	b := &bound{network: e.network(), stream: r.stream, packet: r.packet, address: c.Endpoint.Address}
-	if b.packet != "" && isLossy(b.network, b.packet) {
+	// A layer is never offered a datagram plane that its network reports lossy.
+	if len(c.Layers) > 0 && b.packet != "" && isLossy(b.network, b.packet) {
 		b.packet = ""
 	}
 	var t Transport = b

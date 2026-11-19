@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"slices"
@@ -423,14 +424,21 @@ func init() {
 			return nil
 		}}, nil
 	}})
-	// test-relay's server listens through its upstream on the network its relay option names, returning the outcome.
+	// test-relay's server binds through its upstream on the network its relay option names, a socket on a datagram one, returning the outcome.
 	RegisterLayer("test-relay", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Options: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
 		return &ServerFuncs{Serve: func(ctx context.Context, _ net.Listener, upstream Network) error {
-			ln, err := upstream.Listen(ctx, opts["relay"], "127.0.0.1:0")
+			network := opts["relay"]
+			var bound io.Closer
+			var err error
+			if _, plane, _ := lookupBase(network); plane == Packet {
+				bound, err = upstream.ListenPacket(ctx, network, "127.0.0.1:0")
+			} else {
+				bound, err = upstream.Listen(ctx, network, "127.0.0.1:0")
+			}
 			if err != nil {
 				return err
 			}
-			return ln.Close()
+			return bound.Close()
 		}}, nil
 	}})
 	RegisterAlias("test-https", "test-http+test-tls")
