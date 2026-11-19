@@ -8,10 +8,11 @@ import (
 	"sync"
 )
 
+// NetworkSpec declares a network: the plane it carries, how a URI writes its address and what implements it.
 type NetworkSpec struct {
-	Plane       Plane
-	AddressKind AddressKind
-	Network     Network
+	Plane       Plane       // Stream or Packet, the one plane the network carries
+	AddressKind AddressKind // how a URI writes the network's address
+	Network     Network     // its implementation; nil leaves tcp, udp, unix and unixgram to the system and others unimplemented
 }
 
 var (
@@ -47,6 +48,7 @@ func checkName(name string) {
 	}
 }
 
+// RegisterNetwork declares a network by name, panicking on a malformed spec or a name already taken.
 func RegisterNetwork(name string, spec NetworkSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
@@ -74,6 +76,7 @@ func ImplementNetwork(name string, n Network) {
 	networks[name] = spec
 }
 
+// RegisterLayer declares a layer by name, panicking on a malformed spec or a name already taken.
 func RegisterLayer(name string, spec Spec) {
 	// lookupBase takes the registry lock, so Networks are checked before RegisterLayer holds it.
 	for _, network := range spec.Networks {
@@ -118,6 +121,7 @@ func RegisterLayer(name string, spec Spec) {
 	layers[name] = spec
 }
 
+// RegisterAlias names a '+'-joined run of tokens that ParseURI expands and URI folds back, panicking on a malformed or nested alias or a name already taken.
 func RegisterAlias(alias, expansion string) {
 	registryMu.Lock()
 	defer registryMu.Unlock()

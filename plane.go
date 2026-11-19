@@ -36,12 +36,13 @@ const (
 	KindProxy               // serves or dials a proxy protocol as the outermost layer, as socks5 does
 )
 
+// AddressKind says how a URI writes a network's address.
 type AddressKind uint8
 
 const (
-	AddressHost AddressKind = iota
-	AddressPath
-	AddressOpaque
+	AddressHost   AddressKind = iota // host:port in the authority, as tcp://127.0.0.1:1080
+	AddressPath                      // a path across the authority and path, as unix://./proxy.sock
+	AddressOpaque                    // free text after the scheme, as cmd:nc host 1080
 )
 
 var ErrInvalidChain = errors.New("invalid chain")
