@@ -1,4 +1,4 @@
-package tlsutils_test
+package tls_test
 
 import (
 	"testing"
