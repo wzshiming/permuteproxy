@@ -53,18 +53,31 @@ func NewServer(listen func(ctx context.Context) (net.Listener, error), serve fun
 // before serving either; a failed bind releases what was bound and the first serve to return
 // stops the other and decides the result.
 func NewPlaneServer(inner permuteproxy.Transport, serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
+	var listen func(ctx context.Context) (net.Listener, error)
+	var listenPacket func(ctx context.Context) (net.PacketConn, error)
 	planes := inner.Planes()
+	if planes&permuteproxy.Stream != 0 {
+		listen = inner.Listen
+	}
+	if planes&permuteproxy.Packet != 0 {
+		listenPacket = inner.ListenPacket
+	}
+	return newPlaneServer(listen, listenPacket, serveStream, servePacket)
+}
+
+// newPlaneServer binds through listen and listenPacket, each when set, as NewPlaneServer binds the planes inner declares.
+func newPlaneServer(listen func(ctx context.Context) (net.Listener, error), listenPacket func(ctx context.Context) (net.PacketConn, error), serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
 	return newServer(func(ctx context.Context) (*resources, error) {
 		res := &resources{}
-		if planes&permuteproxy.Stream != 0 {
-			ln, err := inner.Listen(ctx)
+		if listen != nil {
+			ln, err := listen(ctx)
 			if err != nil {
 				return nil, err
 			}
 			res.ln = newListener(ln)
 		}
-		if planes&permuteproxy.Packet != 0 {
-			pc, err := inner.ListenPacket(ctx)
+		if listenPacket != nil {
+			pc, err := listenPacket(ctx)
 			if err != nil {
 				res.Close()
 				return nil, err
