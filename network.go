@@ -113,8 +113,7 @@ var native Network = &NetworkFuncs{
 
 // dialNative binds datagram networks to an unconnected socket; the rest go through net.Dialer.
 func dialNative(ctx context.Context, network, address string) (net.Conn, error) {
-	switch network {
-	case "udp", "udp4", "udp6", "unixgram":
+	if _, plane, _ := lookupBase(network); plane == Packet {
 		return netutils.DialPacket(ctx, network, address, (&net.ListenConfig{}).ListenPacket)
 	}
 	return (&net.Dialer{}).DialContext(ctx, network, address)
