@@ -122,6 +122,11 @@ func (p pinned) Close() error {
 	return closeIf(p.result)
 }
 
+// split dials through dial and listens through listen, both on dial's planes; Close reaches dial.
+func split(dial, listen Transport) Transport {
+	return pinned{TransportFuncs{Plane: dial.Planes(), DialFunc: dial.Dial, ListenFunc: listen.Listen, ListenPacketFunc: listen.ListenPacket}, dial}
+}
+
 // borrowed hides everything but Network on an injected base, so a constructor returning it hands
 // back nothing closable.
 type borrowed struct{ Network }

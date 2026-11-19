@@ -32,7 +32,9 @@ type resolved struct {
 	planes []Plane
 	stream string
 	packet string
-	dial   string // the address the innermost layer dials: the endpoint's, or its expression's expansion
+	dial   string    // the address the innermost layer dials: the endpoint's, or its expression's expansion
+	listen string    // the address the innermost layer listens at: dial, or the expansion of a Listen expression
+	around *Endpoint // where listening goes around the expression's layers, for an expression without Listen
 }
 
 func (s Spec) accepts(key string) bool {
@@ -54,14 +56,20 @@ func (c Chain) resolve() (*resolved, error) {
 	if c.Endpoint.Address == "" {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
 	}
-	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address}
+	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address, listen: c.Endpoint.Address}
 	network := c.Endpoint.Network
 	if ns, _ := lookupNetwork(network); ns.Dial != "" {
-		// RegisterNetwork has checked the expression.
+		// RegisterNetwork has checked the expressions, so an address filling Dial fills Listen.
 		x, _ := parseExpression(ns.Dial)
 		dial, err := x.expand(ns.AddressKind, c.Endpoint.Address)
 		if err != nil {
 			return nil, fmt.Errorf("network %q: %w: %w", network, err, ErrInvalidChain)
+		}
+		if ns.Listen == "" {
+			r.listen, r.around = dial, &c.Endpoint
+		} else {
+			l, _ := parseExpression(ns.Listen)
+			r.listen, _ = l.expand(ns.AddressKind, c.Endpoint.Address)
 		}
 		inner := x.over(dial)
 		r.layers = append(slices.Clip(c.Layers), inner.Layers...)

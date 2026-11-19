@@ -30,6 +30,7 @@ func init() {
 	RegisterNetwork("test-percent", NetworkSpec{AddressKind: AddressHost, Dial: "cmd:printf %%h:%%p %h:%p"})
 	RegisterNetwork("test-closable-tcp", NetworkSpec{AddressKind: AddressHost, Dial: "closable+tcp://%h:%p"})
 	RegisterNetwork("test-via-fakenet", NetworkSpec{AddressKind: AddressHost, Dial: "fakenet://%h:%p"})
+	RegisterNetwork("test-dtls-udp", NetworkSpec{AddressKind: AddressHost, Dial: "test-dtls+udp://%h:%p"})
 }
 
 // carrierNet is fakeNet dialing conns that name their peer, which dgram reads.
@@ -356,4 +357,81 @@ func TestEngineClosesExpressionLayers(t *testing.T) {
 		t.Fatal("build succeeded, want test-broken's failure")
 	}
 	assertCalls(t, "closable.close")
+}
+
+// chainOver is a chain of schemes over network at address.
+func chainOver(network, address string, schemes ...string) Chain {
+	c := Chain{Endpoint: Endpoint{Network: network, Address: address}}
+	for _, s := range schemes {
+		c.Layers = append(c.Layers, Layer{Scheme: s})
+	}
+	return c
+}
+
+func TestEngineListensOnExpressionNetwork(t *testing.T) {
+	ctx := context.Background()
+	base := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		name   string
+		engine Engine
+		chain  Chain
+		calls  []string // what listening on the network's plane calls; nil when it is refused
+	}{
+		{"at the Listen template", base, chainOver("test-nc", "127.0.0.1:1"), []string{"base.listen cmd nc -l 127.0.0.1 1"}},
+		{"under the declared name", base, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"base.listen test-nc-unix /tmp/a b.sock"}},
+		{"under the declared name through its implementation", Engine{}, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"impl.listen test-nc-unix /tmp/a b.sock"}},
+		{"under the declared name around dgram", base, chainOver("test-nc-udp", "127.0.0.1:1"), []string{"base.listenpacket test-nc-udp 127.0.0.1:1"}},
+		{"under the declared name below the chain's layer", base, chainOver("test-dtls-udp", "127.0.0.1:1", "test-dtls"), []string{"base.listenpacket test-dtls-udp 127.0.0.1:1", "test-dtls.packetconn"}},
+		{"refused under a declared name the hop reports lossy", Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"test-dtls-udp"}}}, chainOver("test-dtls-udp", "127.0.0.1:1", "test-dtls"), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, err := tt.engine.Transport(tt.chain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			listen := func() error { _, err := tr.Listen(ctx); return err }
+			other := func() error { _, err := tr.ListenPacket(ctx); return err }
+			if tr.Planes() == Packet {
+				listen, other = other, listen
+			}
+			if err := other(); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("listening off the network's plane = %v, want ErrUnsupported", err)
+			}
+			assertCalls(t)
+			err = listen()
+			if tt.calls == nil && !errors.Is(err, ErrUnsupported) || tt.calls != nil && err != nil {
+				t.Fatalf("listening = %v, want it to call %q", err, tt.calls)
+			}
+			assertCalls(t, tt.calls...)
+		})
+	}
+}
+
+func TestListenExpressionSharesTheDialLayers(t *testing.T) {
+	ctx := context.Background()
+	calls = nil
+	tr, err := Engine{Base: &carrierNet{fakeNet{name: "base"}}}.Transport(chainOver("test-auth-tcp", "127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-auth.new")
+	if _, err := tr.Dial(ctx, Stream); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Listen(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "base.dial tcp 127.0.0.1:1", "test-auth.client", "base.listen tcp 0.0.0.0:1", "test-auth.listener")
+}
+
+func TestServerListensUnderTheDeclaredName(t *testing.T) {
+	calls = nil
+	srv, err := Engine{Base: &fakeNet{name: "base"}}.Server(chainOver("test-nc-unix", "/tmp/a b.sock", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-socks5.newserver")
+	assertRun(t, srv, "base.listen test-nc-unix /tmp/a b.sock", "test-socks5.serve upstream=default")
 }

@@ -19,7 +19,20 @@ func (e Engine) network() Network {
 }
 
 func (e Engine) build(r *resolved, from int) (Transport, error) {
-	return r.stack(bind(e.network(), r.stream, r.packet, r.dial, len(r.layers) > 0), from, len(r.layers))
+	n, layered := e.network(), len(r.layers) > 0
+	var t Transport = bind(n, r.stream, r.packet, r.dial, layered)
+	if r.listen != r.dial {
+		t = split(t, bind(n, r.stream, r.packet, r.listen, layered))
+	}
+	t, err := r.stack(t, r.own, len(r.layers))
+	if err != nil {
+		return nil, err
+	}
+	if a := r.around; a != nil {
+		// The split admits only the plane the expression provides, so the declared name serves either.
+		t = split(t, bind(n, a.Network, a.Network, a.Address, r.own > 0))
+	}
+	return r.stack(t, from, r.own)
 }
 
 // bind binds n to address on the networks named per plane, layered when layers sit above it.
