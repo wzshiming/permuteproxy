@@ -159,6 +159,7 @@ func address(u *url.URL, kind AddressKind) string {
 	return u.Host
 }
 
+// ParseURI reads a chain whose scheme joins its layers and network with '+', its address read as the network's AddressKind writes it.
 func ParseURI(raw string) (Chain, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
