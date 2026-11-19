@@ -689,6 +689,26 @@ func TestServerStopReleasesCarriers(t *testing.T) {
 	}
 }
 
+func TestServerRejectsDeclarations(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &fakeNet{name: "base"}}
+	schemes := []string{"nilproxy", "test-server-broken"}
+	for name := range uncoveredServers {
+		schemes = append(schemes, name)
+	}
+	for _, scheme := range schemes {
+		t.Run(scheme, func(t *testing.T) {
+			if _, err := e.Server(mk("", scheme)); !errors.Is(err, ErrInvalidChain) {
+				t.Fatalf("Server() = %v, want ErrInvalidChain", err)
+			}
+			assertCalls(t)
+		})
+	}
+	if _, err := e.Server(mk("", "test-server-broken")); !errors.Is(err, errDeclare) {
+		t.Fatalf("Server() = %v, want the NewServer error kept", err)
+	}
+}
+
 func TestServerAndNewServerCoexist(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &fakeNet{name: "base"}, Upstream: &fakeNet{name: "upstream"}}

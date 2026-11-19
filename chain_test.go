@@ -250,6 +250,20 @@ func declaredServer(requires, preserves Plane, funcs *ServerFuncs, err error) Sp
 	return Spec{Kind: KindProxy, Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
 }
 
+// failServe and failServePacket fill server functions that fixtures must declare but do not exercise.
+var (
+	failServe       = func(context.Context, net.Listener, Network) error { return errLink }
+	failServePacket = func(context.Context, net.PacketConn, Network) error { return errLink }
+)
+
+// uncoveredServers are proxies whose ServerFuncs miss the function a plane they require or preserve needs.
+var uncoveredServers = map[string]Spec{
+	"test-server-no-serve":       declaredServer(Stream, 0, &ServerFuncs{ServePacket: failServePacket}, nil),
+	"test-server-kept-no-serve":  declaredServer(0, Stream, &ServerFuncs{ServePacket: failServePacket}, nil),
+	"test-server-no-packet":      declaredServer(Packet, 0, &ServerFuncs{Serve: failServe}, nil),
+	"test-server-kept-no-packet": declaredServer(0, Packet, &ServerFuncs{Serve: failServe}, nil),
+}
+
 // Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
@@ -317,10 +331,14 @@ func init() {
 		Provides:  Stream,
 		Networks:  []string{"tcp"},
 		NewClient: func(Options) (*ClientFuncs, error) { return nil, nil },
-		Server:    func(Transport, Network, Options) (Server, error) { return nil, nil },
+		NewServer: func(Options) (*ServerFuncs, error) { return nil, nil },
 	})
 	RegisterLayer("test-client-broken", declaredProxy(Stream, 0, nil, errDeclare))
 	for name, spec := range uncoveredClients {
+		RegisterLayer(name, spec)
+	}
+	RegisterLayer("test-server-broken", declaredServer(Stream, 0, nil, errDeclare))
+	for name, spec := range uncoveredServers {
 		RegisterLayer(name, spec)
 	}
 	RegisterAlias("test-https", "test-http+test-tls")

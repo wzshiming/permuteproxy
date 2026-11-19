@@ -245,8 +245,15 @@ type ServerFuncs struct {
 // server is the Server that RegisterLayer derives from s.NewServer.
 func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, error) {
 	funcs, err := s.NewServer(opts)
-	if err != nil {
-		return nil, err
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+	case funcs == nil:
+		return nil, fmt.Errorf("NewServer returned nil: %w", ErrInvalidChain)
+	case funcs.Serve == nil && (s.Requires|s.Preserves)&Stream != 0:
+		return nil, fmt.Errorf("no Serve for %v: %w", Stream, ErrInvalidChain)
+	case funcs.ServePacket == nil && (s.Requires|s.Preserves)&Packet != 0:
+		return nil, fmt.Errorf("no ServePacket for %v: %w", Packet, ErrInvalidChain)
 	}
 	var listen func(context.Context) (net.Listener, error)
 	var listenPacket func(context.Context) (net.PacketConn, error)
