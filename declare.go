@@ -219,7 +219,7 @@ func (s Spec) admit(network string) (string, Plane) {
 	return base, plane
 }
 
-// dialUDP binds a socket at ":0" through f.ListenPacket and writes to the default peer through it.
+// dialUDP binds a socket at ":0" through f.ListenPacket, as a conn whose Write reaches the default peer.
 func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Network, network, address string) (net.Conn, error) {
 	peer := netutils.NewNetAddr("udp", address)
 	if f.Peer != nil {
