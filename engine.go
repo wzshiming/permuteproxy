@@ -25,9 +25,11 @@ func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 	for i := len(c.Layers) - 1; i >= from; i-- {
 		next, err := r.specs[i].Adapt(t, c.Layers[i].Options.clone())
 		if err != nil {
+			closeIf(t)
 			return nil, fmt.Errorf("layer %q: %w", c.Layers[i].Scheme, err)
 		}
 		if next == nil {
+			closeIf(t)
 			return nil, fmt.Errorf("layer %q: Adapt returned nil", c.Layers[i].Scheme)
 		}
 		t = pinned{TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
@@ -74,9 +76,11 @@ func (e Engine) Client(c Chain) (Network, error) {
 	}
 	n, err := spec.Client(inner, borrowed{e.network(r)}, c.Layers[0].Options.clone())
 	if err != nil {
+		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
 	}
 	if n == nil {
+		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: Client returned nil", scheme)
 	}
 	return restricted{network: n, plane: r.planes[0]}, nil
@@ -102,9 +106,11 @@ func (e Engine) Server(c Chain) (Server, error) {
 	}
 	s, err := spec.Server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
 	if err != nil {
+		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
 	}
 	if s == nil {
+		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: Server returned nil", scheme)
 	}
 	return s, nil

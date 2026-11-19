@@ -524,6 +524,36 @@ func TestEngineRejectsNilResults(t *testing.T) {
 	}
 }
 
+func TestEngineReleasesFailedBuild(t *testing.T) {
+	calls = nil
+	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	transport := func(c Chain) error { _, err := e.Transport(c); return err }
+	client := func(c Chain) error { _, err := e.Client(c); return err }
+	server := func(c Chain) error { _, err := e.Server(c); return err }
+	tests := []struct {
+		name  string
+		build func(Chain) error
+		chain Chain
+		want  []string
+	}{
+		{"failing NewAdapter", transport, mk("tcp", "test-broken", "closable"), []string{"closable.close"}},
+		{"nil Adapt", transport, mk("tcp", "test-nil-adapt", "closable"), []string{"closable.close"}},
+		{"failing layer over two", transport, mk("tcp", "test-tls", "test-broken", "closable", "closable"), []string{"closable.close", "closable.close"}},
+		{"failing NewClient", client, mk("tcp", "test-client-broken", "closable"), []string{"closable.close"}},
+		{"nil Client", client, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
+		{"failing NewServer", server, mk("tcp", "test-server-broken", "closable"), []string{"closable.close"}},
+		{"nil Server", server, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.build(tt.chain); err == nil {
+				t.Fatal("build succeeded, want its constructor's failure")
+			}
+			assertCalls(t, tt.want...)
+		})
+	}
+}
+
 func TestEngineBorrowsUpstream(t *testing.T) {
 	var got Network
 	RegisterLayer("borrowing", Spec{
