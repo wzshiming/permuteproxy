@@ -203,6 +203,7 @@ func declaredProxy(provides, preserves Plane, funcs *ClientFuncs, err error) Spe
 	return Spec{Kind: KindProxy, Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
 }
 
+// failDial and failListenPacket fill client functions that fixtures must declare but do not exercise.
 var (
 	failDial         = func(context.Context, Transport, string, string) (net.Conn, error) { return nil, errLink }
 	failListenPacket = func(context.Context, Transport, Network, string, string) (net.PacketConn, error) { return nil, errLink }

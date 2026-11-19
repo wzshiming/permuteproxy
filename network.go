@@ -10,11 +10,16 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
+// ErrUnsupported is returned, before any I/O, for an operation a network, transport or layer does not offer.
 var ErrUnsupported = errors.New("unsupported")
 
+// Network dials and listens by network name, as the net package does.
 type Network interface {
+	// DialContext connects to address; on a datagram network the conn is also a net.PacketConn.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+	// Listen accepts stream connections at address.
 	Listen(ctx context.Context, network, address string) (net.Listener, error)
+	// ListenPacket binds a datagram socket at address that reaches any peer.
 	ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error)
 }
 
@@ -45,10 +50,15 @@ func (n NetworkFuncs) ListenPacket(ctx context.Context, network, address string)
 	return n.ListenPacketFunc(ctx, network, address)
 }
 
+// Transport is a chain built down to its endpoint, offering the endpoint on each plane it has.
 type Transport interface {
+	// Planes is the set of planes Dial, Listen and ListenPacket serve.
 	Planes() Plane
+	// Dial connects to the endpoint on one plane; a Packet conn is also a net.PacketConn whose default peer is the endpoint.
 	Dial(ctx context.Context, plane Plane) (net.Conn, error)
+	// Listen accepts Stream connections at the endpoint.
 	Listen(ctx context.Context) (net.Listener, error)
+	// ListenPacket binds a Packet socket at the endpoint.
 	ListenPacket(ctx context.Context) (net.PacketConn, error)
 }
 
