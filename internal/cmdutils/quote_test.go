@@ -1,6 +1,7 @@
 package cmdutils
 
 import (
+	"errors"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -98,6 +99,22 @@ func TestQuoteRoundTripsThroughSh(t *testing.T) {
 				t.Fatalf("sh split %q into %q, want %q", line, got, tc.argv)
 			}
 		})
+	}
+}
+
+func TestQuoteKeepsLeadingAssignmentACommandWord(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	sh, err := exec.LookPath("/bin/sh")
+	if err != nil {
+		t.Skipf("/bin/sh unavailable: %v", err)
+	}
+	// Left bare, sh would take NAME=value as an assignment and exit 0.
+	line := Quote([]string{"NAME=value"})
+	var exit *exec.ExitError
+	if err := exec.Command(sh, "-c", line).Run(); !errors.As(err, &exit) || exit.ExitCode() != 127 {
+		t.Fatalf("sh -c %q = %v, want exit 127 for a command named NAME=value that is not found", line, err)
 	}
 }
 
