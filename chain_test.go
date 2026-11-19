@@ -94,6 +94,7 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Spec 
 	}
 }
 
+// fakeProxy declares a proxy whose client functions record each call with the planes of their inner Transport.
 func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) Spec {
 	return Spec{
 		Kind:           KindProxy,
@@ -103,10 +104,20 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 		Options:        options,
 		UsernameOption: user,
 		PasswordOption: pass,
-		Client: func(inner Transport, base Network, opts Options) (Network, error) {
-			record("%s.client %v base=%s", name, inner.Planes(), netName(base))
+		Networks:       []string{"tcp", "udp", "unixgram"},
+		NewClient: func(opts Options) (*ClientFuncs, error) {
+			record("%s.new", name)
 			taint(name, opts)
-			return base, nil
+			return &ClientFuncs{
+				Dial: func(_ context.Context, inner Transport, network, address string) (net.Conn, error) {
+					record("%s.dial %v %s %s", name, inner.Planes(), network, address)
+					return nil, nil
+				},
+				ListenPacket: func(_ context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) {
+					record("%s.listenpacket %v local=%s %s %s", name, inner.Planes(), netName(local), network, address)
+					return nil, nil
+				},
+			}, nil
 		},
 		Server: func(inner Transport, upstream Network, opts Options) (Server, error) {
 			record("%s.server %v upstream=%s", name, inner.Planes(), netName(upstream))
@@ -205,8 +216,26 @@ func init() {
 	RegisterLayer("test-socks5", fakeProxy("test-socks5", Stream, Stream|Packet, 0, "username", "password"))
 	RegisterLayer("test-ss", fakeProxy("test-ss", 0, 0, Stream|Packet, "username", "password"))
 	anyProxy := fakeProxy("test-any", Stream, Stream, 0, "username", "password")
-	anyProxy.Client = nil
+	anyProxy.NewClient, anyProxy.Networks = nil, nil
 	RegisterLayer("test-any", anyProxy)
+	// test-legacy keeps the Client form, handing back its base.
+	RegisterLayer("test-legacy", Spec{Kind: KindProxy, Preserves: Stream | Packet, Client: func(inner Transport, base Network, _ Options) (Network, error) {
+		record("test-legacy.client %v", inner.Planes())
+		return base, nil
+	}})
+	// test-peer resolves the default peer of its udp dials and binds their sockets through local.
+	RegisterLayer("test-peer", Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
+		return &ClientFuncs{
+			ListenPacket: func(ctx context.Context, _ Transport, local Network, network, address string) (net.PacketConn, error) {
+				record("test-peer.listenpacket %s %s", network, address)
+				return local.ListenPacket(ctx, network, address)
+			},
+			Peer: func(_ context.Context, network, address string) (net.Addr, error) {
+				record("test-peer.peer %s %s", network, address)
+				return net.ResolveUDPAddr(network, address)
+			},
+		}, nil
+	}})
 	RegisterLayer("wide", wideAdapter())
 	RegisterLayer("niladapter", declared(Stream, Stream, nil, nil))
 	RegisterLayer("test-broken", declared(Stream, Stream, nil, errDeclare))
@@ -262,8 +291,9 @@ func TestRegisterRejects(t *testing.T) {
 		RegisterLayer("both", Spec{Requires: Stream, Provides: Stream, Adapt: adapt, NewAdapter: adapter.NewAdapter})
 	})
 	mustPanic(t, "proxy with NewAdapter", func() {
-		client := fakeProxy("pn", Stream, Stream, 0, "", "").Client
-		RegisterLayer("pn", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Client: client, NewAdapter: adapter.NewAdapter})
+		proxy := fakeProxy("pn", Stream, Stream, 0, "", "")
+		proxy.NewAdapter = adapter.NewAdapter
+		RegisterLayer("pn", proxy)
 	})
 	mustPanic(t, "layer consuming nothing", func() { RegisterLayer("ln", Spec{Provides: Stream, NewAdapter: adapter.NewAdapter}) })
 	mustPanic(t, "password without username", func() {

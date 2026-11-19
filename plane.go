@@ -68,6 +68,8 @@ type Spec struct {
 	Adapt          func(inner Transport, opts Options) (Transport, error)
 	NewAdapter     func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build, as the alternative to Adapt
 	Client         func(inner Transport, base Network, opts Options) (Network, error)
+	Networks       []string                                 // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
+	NewClient      func(opts Options) (*ClientFuncs, error) // declares a proxy's client per build, as the alternative to Client
 	Server         func(inner Transport, upstream Network, opts Options) (Server, error)
 }
 

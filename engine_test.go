@@ -90,11 +90,11 @@ func TestEngineClientServer(t *testing.T) {
 		client string
 		server string
 	}{
-		{"test-ss://127.0.0.1:1", "tcp", "test-ss.client stream|packet base=base", "test-ss.server stream|packet upstream=upstream"},
-		{"test-ss+test-tls://127.0.0.1:1", "tcp", "test-ss.client stream base=base", "test-ss.server stream upstream=upstream"},
-		{"test-ss+udp://127.0.0.1:1", "udp", "test-ss.client packet base=base", "test-ss.server packet upstream=upstream"},
-		{"test-socks5+test-quic://127.0.0.1:1", "tcp", "test-socks5.client stream base=base", "test-socks5.server stream upstream=upstream"},
-		{"test-http://u:p@127.0.0.1:1", "tcp", "test-http.client stream base=base", "test-http.server stream upstream=upstream"},
+		{"test-ss://127.0.0.1:1", "tcp", "test-ss.dial stream|packet tcp x:1", "test-ss.server stream|packet upstream=upstream"},
+		{"test-ss+test-tls://127.0.0.1:1", "tcp", "test-ss.dial stream tcp x:1", "test-ss.server stream upstream=upstream"},
+		{"test-ss+udp://127.0.0.1:1", "udp", "test-ss.listenpacket packet local=base udp :0", "test-ss.server packet upstream=upstream"},
+		{"test-socks5+test-quic://127.0.0.1:1", "tcp", "test-socks5.dial stream tcp x:1", "test-socks5.server stream upstream=upstream"},
+		{"test-http://u:p@127.0.0.1:1", "tcp", "test-http.dial stream tcp x:1", "test-http.server stream upstream=upstream"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
@@ -113,7 +113,7 @@ func TestEngineClientServer(t *testing.T) {
 			if len(c.Layers) > 1 {
 				want = append(want, c.Layers[1].Scheme+".new")
 			}
-			want = append(want, tt.client, "base.dial "+tt.dial+" x:1")
+			want = append(want, c.Layers[0].Scheme+".new", tt.client)
 			if len(c.Layers) > 1 {
 				want = append(want, c.Layers[1].Scheme+".new")
 			}
@@ -452,17 +452,17 @@ func TestEngineRestrictsClient(t *testing.T) {
 		refused []string
 	}{
 		{
-			"test-http://127.0.0.1:1",
+			"test-legacy+tcp://127.0.0.1:1",
 			[]string{"dial tcp", "dial tcp4", "dial unix", "dial fakenet", "listen tcp6"},
 			[]string{"dial udp", "dial unixgram", "dial bogus", "dial ", "listen udp", "listenpacket tcp", "listenpacket udp"},
 		},
 		{
-			"test-ss+udp://127.0.0.1:1",
+			"test-legacy+udp://127.0.0.1:1",
 			[]string{"dial udp", "dial udp6", "dial unixgram", "listenpacket udp4"},
 			[]string{"dial tcp", "dial bogus", "listen tcp", "listen udp", "listenpacket tcp"},
 		},
 		{
-			"test-ss://127.0.0.1:1",
+			"test-legacy://127.0.0.1:1",
 			[]string{"dial tcp", "dial udp", "listen unix", "listenpacket unixgram"},
 			[]string{"dial bogus", "listen udp", "listenpacket tcp"},
 		},

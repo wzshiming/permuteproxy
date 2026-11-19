@@ -268,3 +268,133 @@ func TestAdaptAndNewAdapterCoexist(t *testing.T) {
 	}
 	assertCalls(t, "wide.dial stream", "test-snappy.client", "wide.listen", "test-snappy.listener")
 }
+
+func TestClientDialsStream(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5", "test-quic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-quic.new", "test-socks5.new")
+	for _, network := range []string{"tcp", "tcp4", "tcp6"} {
+		if _, err := n.DialContext(ctx, network, "x:1"); err != nil {
+			t.Fatal(err)
+		}
+		assertCalls(t, "test-socks5.dial stream "+network+" x:1")
+	}
+}
+
+func TestClientListensPacketThroughLocal(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	base := &fakeNet{name: "base"}
+	tests := []struct {
+		engine Engine
+		chain  Chain
+		local  string
+	}{
+		{Engine{Base: base}, mk("fakenet", "test-socks5"), "base"},
+		{Engine{}, mk("fakenet", "test-socks5"), "impl"},
+		{Engine{}, mk("tcp", "test-socks5"), "native"},
+	}
+	for _, tt := range tests {
+		n, err := tt.engine.Client(tt.chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		if _, err := n.ListenPacket(ctx, "udp4", "x:1"); err != nil {
+			t.Fatal(err)
+		}
+		assertCalls(t, "test-socks5.listenpacket stream local="+tt.local+" udp4 x:1")
+	}
+}
+
+func TestClientDerivesUDPDial(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := n.DialContext(ctx, "unixgram", "x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unixgram dial = %v, want ErrUnsupported outside the udp family", err)
+	}
+	assertCalls(t)
+	conn, err := n.DialContext(ctx, "udp6", "unresolvable.invalid:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-socks5.listenpacket stream local=base udp6 :0")
+	if _, ok := conn.(net.PacketConn); !ok {
+		t.Fatal("udp conn is not a net.PacketConn")
+	}
+	if remote := conn.RemoteAddr(); remote.Network() != "udp" || remote.String() != "unresolvable.invalid:1" {
+		t.Fatalf("RemoteAddr() = %s %v, want the udp address carried verbatim", remote.Network(), remote)
+	}
+}
+
+func TestClientAsksPeerOfUDPDial(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	n, err := Engine{}.Client(mk("", "test-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := datagramPeer(t, "udp")
+	address := target.LocalAddr().String()
+	conn, err := n.DialContext(ctx, "udp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-peer.peer udp "+address, "test-peer.listenpacket udp :0")
+	exchange(t, conn, target)
+	closedPacket(t, conn)
+	if _, err := n.DialContext(ctx, "udp", "x"); err == nil {
+		t.Fatal("udp dial to an address Peer refuses succeeded")
+	}
+	assertCalls(t, "test-peer.peer udp x")
+}
+
+func TestClientRefusesListen(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-ss"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	for _, network := range []string{"tcp", "tcp6", "unix", "fakenet", "udp", "bogus"} {
+		if _, err := n.Listen(ctx, network, "x:1"); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("Listen(%q) = %v, want ErrUnsupported", network, err)
+		}
+	}
+	assertCalls(t)
+}
+
+func TestClientAndNewClientCoexist(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	declared, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Engine{Base: declared}.Client(mk("", "test-legacy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-http.new", "test-legacy.client stream|packet")
+	if _, err := legacy.DialContext(ctx, "tcp4", "x:1"); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-http.dial stream tcp4 x:1")
+	if _, err := legacy.Listen(ctx, "tcp", "x:1"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Listen through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
+	}
+	if _, err := legacy.DialContext(ctx, "udp", "x:1"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("udp dial through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
+	}
+	assertCalls(t)
+}

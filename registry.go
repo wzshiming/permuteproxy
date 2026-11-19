@@ -66,14 +66,17 @@ func RegisterLayer(name string, spec Spec) {
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
 	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.Server != nil):
 		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only one of Adapt and NewAdapter", name))
-	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.Server == nil)):
-		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client or Server, not Adapt or NewAdapter", name))
+	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.NewClient == nil && spec.Server == nil)):
+		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client, NewClient or Server, not Adapt or NewAdapter", name))
 	case spec.Kind > KindProxy:
 		panic(fmt.Sprintf("permuteproxy: unknown kind of layer %q", name))
 	}
 	spec.Options = append([]string(nil), spec.Options...)
 	if spec.NewAdapter != nil {
 		spec.Adapt = spec.adapt
+	}
+	if spec.NewClient != nil {
+		spec.Client = spec.client
 	}
 	layers[name] = spec
 }

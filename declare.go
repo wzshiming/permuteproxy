@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"sync"
+
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // AdapterFuncs declares an adapter per plane; a preserved plane without a Link passes through unchanged.
@@ -148,4 +150,50 @@ func apply[C io.Closer, R any](carrier C, err error, f func(C) (R, error)) (r R,
 		carrier.Close()
 	}
 	return r, err
+}
+
+// ClientFuncs declares a proxy's client; the root package derives its udp dials from ListenPacket.
+type ClientFuncs struct {
+	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
+	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
+	Peer         func(ctx context.Context, network, address string) (net.Addr, error)                                       // optional; a udp dial's default peer, else its address carried unresolved
+	Close        func() error                                                                                               // optional; releases what NewClient acquired
+}
+
+// client is the Client that RegisterLayer derives from s.NewClient.
+func (s Spec) client(inner Transport, local Network, opts Options) (Network, error) {
+	funcs, err := s.NewClient(opts)
+	if err != nil {
+		return nil, err
+	}
+	return NetworkFuncs{
+		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+			switch base, plane, _ := lookupBase(network); {
+			case plane == Stream:
+				return funcs.Dial(ctx, inner, network, address)
+			case base == "udp":
+				return funcs.dialUDP(ctx, inner, local, network, address)
+			}
+			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
+		},
+		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
+			return funcs.ListenPacket(ctx, inner, local, network, address)
+		},
+	}, nil
+}
+
+// dialUDP binds a socket at ":0" through f.ListenPacket and writes to the default peer through it.
+func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Network, network, address string) (net.Conn, error) {
+	peer := netutils.NewNetAddr("udp", address)
+	if f.Peer != nil {
+		var err error
+		if peer, err = f.Peer(ctx, network, address); err != nil {
+			return nil, err
+		}
+	}
+	pc, err := f.ListenPacket(ctx, inner, local, network, ":0")
+	if err != nil {
+		return nil, err
+	}
+	return netutils.WrapPacket(pc, peer), nil
 }
