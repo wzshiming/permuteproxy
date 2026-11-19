@@ -643,6 +643,30 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 	}
 }
 
+func TestViewsForwardLossy(t *testing.T) {
+	lossy := &lossyNet{fakeNet{name: "lossy"}, []string{"udp"}}
+	for name, view := range map[string]Network{
+		"borrowed":   borrowed{lossy},
+		"restricted": restricted{network: lossy, plane: Stream | Packet},
+	} {
+		l, ok := view.(LossyNetwork)
+		if !ok {
+			t.Fatalf("%s view is not a LossyNetwork", name)
+		}
+		if !l.Lossy("udp") || l.Lossy("unixgram") {
+			t.Fatalf("%s view: Lossy(udp) = %v, Lossy(unixgram) = %v; want what its network reports", name, l.Lossy("udp"), l.Lossy("unixgram"))
+		}
+	}
+	for name, view := range map[string]Network{
+		"borrowed":   borrowed{&fakeNet{name: "plain"}},
+		"restricted": restricted{network: &fakeNet{name: "plain"}, plane: Stream | Packet},
+	} {
+		if l, ok := view.(LossyNetwork); !ok || l.Lossy("udp") {
+			t.Fatalf("%s view of a network without Lossy reports udp lossy", name)
+		}
+	}
+}
+
 func TestEngineForwardsClose(t *testing.T) {
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
 	tests := []struct {

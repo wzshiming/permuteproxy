@@ -553,6 +553,32 @@ func TestClientAndNewClientCoexist(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestClientReportsLossyFromSpec(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	tests := []struct {
+		scheme string
+		lossy  map[string]bool
+	}{
+		{"test-lossy-proxy", map[string]bool{"udp": true, "udp6": true, "unixgram": true, "tcp": false, "unix": false, "bogus": false}},
+		{"test-socks5", map[string]bool{"udp": false, "unixgram": false, "tcp": false}},
+	}
+	for _, tt := range tests {
+		n, err := e.Client(mk("", tt.scheme))
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, ok := n.(LossyNetwork)
+		if !ok {
+			t.Fatalf("Client of %s is not a LossyNetwork", tt.scheme)
+		}
+		for network, want := range tt.lossy {
+			if got := l.Lossy(network); got != want {
+				t.Fatalf("Client of %s: Lossy(%q) = %v, want %v", tt.scheme, network, got, want)
+			}
+		}
+	}
+}
+
 // recv waits for a value from ch, failing the test after five seconds.
 func recv[T any](t *testing.T, ch <-chan T, what string) T {
 	t.Helper()

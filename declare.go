@@ -208,18 +208,25 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			return funcs.ListenPacket(ctx, inner, local, network, address)
 		},
 	}
-	return assembledNetwork{n, closeOnce(funcs.Close, inner)}, nil
+	return assembledNetwork{n, closeOnce(funcs.Close, inner), s}, nil
 }
 
 // assembledNetwork is a declared client's Network; the engine built its inner Transport, so Close releases it too.
 type assembledNetwork struct {
 	NetworkFuncs
 	close func() error
+	spec  Spec
 }
 
 // Close releases the client and then its inner Transport, once.
 func (a assembledNetwork) Close() error {
 	return a.close()
+}
+
+// Lossy reports the networks its layer admits on a plane the layer declares Lossy.
+func (a assembledNetwork) Lossy(network string) bool {
+	_, plane := a.spec.admit(network)
+	return plane&a.spec.Lossy != 0
 }
 
 // admit maps a network s lists to its base name and plane, and any other network to no plane.

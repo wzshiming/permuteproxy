@@ -23,6 +23,17 @@ type Network interface {
 	ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error)
 }
 
+// LossyNetwork is the optional interface of a Network whose datagram networks may lose datagram boundaries.
+type LossyNetwork interface {
+	Lossy(network string) bool // reports whether datagrams on network may arrive merged or split
+}
+
+// isLossy reports whether n says network loses datagram boundaries.
+func isLossy(n Network, network string) bool {
+	l, ok := n.(LossyNetwork)
+	return ok && l.Lossy(network)
+}
+
 type NetworkFuncs struct {
 	DialContextFunc  func(ctx context.Context, network, address string) (net.Conn, error)
 	ListenFunc       func(ctx context.Context, network, address string) (net.Listener, error)
@@ -114,6 +125,11 @@ func (p pinned) Close() error {
 // borrowed hides everything but Network on an injected base, so a constructor returning it hands
 // back nothing closable.
 type borrowed struct{ Network }
+
+// Lossy forwards what the borrowed network reports.
+func (b borrowed) Lossy(network string) bool {
+	return isLossy(b.Network, network)
+}
 
 var native Network = &NetworkFuncs{
 	DialContextFunc:  dialNative,
@@ -248,4 +264,9 @@ func (n restricted) ListenPacket(ctx context.Context, network, address string) (
 
 func (n restricted) Close() error {
 	return closeIf(n.network)
+}
+
+// Lossy forwards what the restricted network reports.
+func (n restricted) Lossy(network string) bool {
+	return isLossy(n.network, network)
 }

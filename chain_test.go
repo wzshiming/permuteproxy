@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -63,6 +64,14 @@ func (fakeServer) Close() error { return nil }
 type closableNet struct{ fakeNet }
 
 func (n *closableNet) Close() error { record("%s.close", n.name); return nil }
+
+// lossyNet is a fakeNet whose listed networks lose datagram boundaries.
+type lossyNet struct {
+	fakeNet
+	lossy []string
+}
+
+func (n *lossyNet) Lossy(network string) bool { return slices.Contains(n.lossy, network) }
 
 func taint(name string, opts Options) {
 	if opts["seen"] != "" {
@@ -318,6 +327,9 @@ func init() {
 	RegisterLayer("test-socks4", fakeProxy("test-socks4", Stream, Stream, 0, "username", ""))
 	RegisterLayer("test-ssh", fakeProxy("test-ssh", Stream, Stream, 0, "username", "password", "identity_file", "identity_data", "authorized_data"))
 	RegisterLayer("test-socks5", fakeProxy("test-socks5", Stream, Stream|Packet, 0, "username", "password"))
+	lossyProxy := fakeProxy("test-lossy-proxy", Stream, Stream|Packet, 0, "", "")
+	lossyProxy.Lossy = Packet
+	RegisterLayer("test-lossy-proxy", lossyProxy)
 	RegisterLayer("test-ss", fakeProxy("test-ss", 0, 0, Stream|Packet, "username", "password"))
 	anyProxy := fakeProxy("test-any", Stream, Stream, 0, "username", "password")
 	anyProxy.NewClient, anyProxy.Networks = nil, nil
