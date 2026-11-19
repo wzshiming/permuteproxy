@@ -10,11 +10,10 @@ import (
 )
 
 var (
-	callsMu sync.Mutex
+	callsMu sync.Mutex // a declared server's serves record from their own goroutines
 	calls   []string
 )
 
-// record takes callsMu since a declared server's serves record from their own goroutines.
 func record(format string, args ...interface{}) {
 	callsMu.Lock()
 	defer callsMu.Unlock()

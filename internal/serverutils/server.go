@@ -11,8 +11,7 @@ import (
 
 var errRunning = errors.New("server already running")
 
-// Server binds its resource on Run and serves it until Close or context cancellation, either of
-// which makes Run return nil; the bind and serve steps are supplied by the protocol.
+// Server binds its resource on Run and serves it until Close or context cancellation, either of which makes Run return nil.
 type Server struct {
 	bind  func(ctx context.Context) (io.Closer, error)
 	serve func(ctx context.Context, res io.Closer) error
@@ -114,6 +113,7 @@ func (r *resources) Close() error {
 	return r.err
 }
 
+// Run binds and serves, one Run at a time; after Close it returns nil without binding.
 func (s *Server) Run(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -143,6 +143,7 @@ func (s *Server) Run(parent context.Context) error {
 	return err
 }
 
+// Close stops the current Run, closing what it bound, and turns every later Run into a no-op.
 func (s *Server) Close() error {
 	s.mu.Lock()
 	s.closed = true

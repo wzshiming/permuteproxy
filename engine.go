@@ -4,13 +4,10 @@ import (
 	"fmt"
 )
 
-// Engine builds chains; a nil Base uses the endpoint network's registered implementation or the
-// system net package, a nil Upstream gives servers direct system networking.
-// Transport and Client results implement io.Closer, forwarding to the layer's own result; Base and
-// Upstream are borrowed and never closed through them.
+// Engine builds chains into transports, clients and servers, borrowing Base and Upstream without ever closing them.
 type Engine struct {
-	Base     Network
-	Upstream Network
+	Base     Network // reaches the endpoint; nil uses the endpoint network's registered implementation, else the system net package
+	Upstream Network // what servers reach their targets through; nil gives them direct system networking
 }
 
 func (e Engine) network(r *resolved) Network {
@@ -38,6 +35,7 @@ func (e Engine) build(c Chain, r *resolved, from int) (Transport, error) {
 	return t, nil
 }
 
+// Transport builds an adapter chain; with layers, the result's Close forwards to the outermost layer's own result.
 func (e Engine) Transport(c Chain) (Transport, error) {
 	r, err := c.resolve()
 	if err != nil {
@@ -60,6 +58,7 @@ func (c Chain) proxy() (*resolved, error) {
 	return r, nil
 }
 
+// Client builds the client of a proxy chain's outermost layer; the result's Close forwards to the layer's own result.
 func (e Engine) Client(c Chain) (Network, error) {
 	r, err := c.proxy()
 	if err != nil {
@@ -83,6 +82,7 @@ func (e Engine) Client(c Chain) (Network, error) {
 	return restricted{network: n, plane: r.planes[0]}, nil
 }
 
+// Server builds the server of a proxy chain's outermost layer, which reaches its targets through Upstream.
 func (e Engine) Server(c Chain) (Server, error) {
 	r, err := c.proxy()
 	if err != nil {
