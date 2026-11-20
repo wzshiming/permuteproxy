@@ -33,6 +33,7 @@ type command struct {
 	net.Conn
 	far    net.Conn
 	line   string
+	input  chan []byte // what the record program reads
 	done   chan struct{}
 	err    error
 	killed chan struct{}
@@ -55,40 +56,50 @@ func (c *command) Close() error {
 }
 
 // programs run on the far end of a command's conn, picked by the first word of its line.
-var programs = map[string]func(far net.Conn, line string, argv []string) error{
+var programs = map[string]func(c *command, argv []string) error{
 	"relay": relay,
 	"nc":    relay,
 	"socat": relay,
-	"exit": func(far net.Conn, _ string, argv []string) error {
-		far.Write([]byte("bye"))
+	"exit": func(c *command, argv []string) error {
+		c.far.Write([]byte("bye"))
 		if code, _ := strconv.Atoi(argv[1]); code != 0 {
 			return exitCode(code)
 		}
 		return nil
 	},
-	"fail": func(far net.Conn, _ string, _ []string) error {
-		far.Write([]byte("bye"))
+	"fail": func(c *command, _ []string) error {
+		c.far.Write([]byte("bye"))
 		return errors.New("no status")
 	},
-	"plain": func(far net.Conn, _ string, _ []string) error {
-		far.Write([]byte("bye"))
+	"plain": func(c *command, _ []string) error {
+		c.far.Write([]byte("bye"))
 		return nil
 	},
-	"sleep": func(far net.Conn, _ string, _ []string) error {
-		_, err := io.Copy(io.Discard, far)
+	"sleep": func(c *command, _ []string) error {
+		_, err := io.Copy(io.Discard, c.far)
 		return err
+	},
+	"record": func(c *command, _ []string) error {
+		for {
+			buf := make([]byte, 64<<10)
+			n, err := c.far.Read(buf)
+			if err != nil {
+				return nil
+			}
+			c.input <- buf[:n]
+		}
 	},
 }
 
 // relay answers each read with its line and what it read, the way a datagram relay names its peer.
-func relay(far net.Conn, line string, _ []string) error {
+func relay(c *command, _ []string) error {
 	buf := make([]byte, 1024)
 	for {
-		n, err := far.Read(buf)
+		n, err := c.far.Read(buf)
 		if err != nil {
 			return nil
 		}
-		if _, err := fmt.Fprintf(far, "%s|%s", line, buf[:n]); err != nil {
+		if _, err := fmt.Fprintf(c.far, "%s|%s", c.line, buf[:n]); err != nil {
 			return nil
 		}
 	}
@@ -115,9 +126,9 @@ func (u *upstream) DialContext(ctx context.Context, network, address string) (ne
 		return nil, fmt.Errorf("no program runs %q", address)
 	}
 	near, far := net.Pipe()
-	c := &command{Conn: near, far: far, line: address, done: make(chan struct{}), killed: make(chan struct{}), closed: make(chan struct{})}
+	c := &command{Conn: near, far: far, line: address, input: make(chan []byte, 1024), done: make(chan struct{}), killed: make(chan struct{}), closed: make(chan struct{})}
 	go func() {
-		c.err = programs[argv[0]](far, address, argv)
+		c.err = programs[argv[0]](c, argv)
 		far.Close()
 		close(c.done)
 	}()

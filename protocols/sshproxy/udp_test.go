@@ -1,10 +1,13 @@
 package sshproxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +85,40 @@ func TestUDPListenPacketTagsEachPeer(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("datagrams by peer mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestUDPConcurrentWritesToOnePeerArriveWhole(t *testing.T) {
+	up := newUpstream()
+	n := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials("udp_command", "record %h %p"))
+	pc, err := n.ListenPacket(timeout(t), "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	// The first write opens the session the others share.
+	peer := netutils.NewNetAddr("udp", "198.51.100.7:53")
+	if _, err := pc.WriteTo([]byte("open"), peer); err != nil {
+		t.Fatal(err)
+	}
+	cmd := recv(t, up.commands, "the command")
+	var wg sync.WaitGroup
+	for i := range 52 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pc.WriteTo(bytes.Repeat([]byte{'a' + byte(i%26)}, 1024), peer)
+		}()
+	}
+	wg.Wait()
+	var got strings.Builder
+	for got.Len() < len("open")+52*1024 {
+		got.Write(recv(t, cmd.input, "the writes to arrive"))
+	}
+	for i := range 26 {
+		if run := strings.Repeat(string(rune('a'+i)), 1024); strings.Count(got.String(), run) != 2 {
+			t.Fatalf("writes of %q did not arrive whole", run[:1])
+		}
 	}
 }
 

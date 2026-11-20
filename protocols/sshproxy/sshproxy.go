@@ -146,17 +146,23 @@ var (
 
 // execConn is a remote command's stdin and stdout; its session discards the command's stderr.
 type execConn struct {
-	sess   *ssh.Session
-	stdin  io.Writer
-	stdout *io.PipeReader
-	feed   *io.PipeWriter // what the channel's stdout is copied into
-	remote net.Addr
-	done   chan struct{}
-	err    error
+	sess    *ssh.Session
+	writing sync.Mutex // a channel's writes share one packet buffer
+	stdin   io.Writer
+	stdout  *io.PipeReader
+	feed    *io.PipeWriter // what the channel's stdout is copied into
+	remote  net.Addr
+	done    chan struct{}
+	err     error
 }
 
-func (c *execConn) Read(b []byte) (int, error)  { return c.stdout.Read(b) }
-func (c *execConn) Write(b []byte) (int, error) { return c.stdin.Write(b) }
+func (c *execConn) Read(b []byte) (int, error) { return c.stdout.Read(b) }
+
+func (c *execConn) Write(b []byte) (int, error) {
+	c.writing.Lock()
+	defer c.writing.Unlock()
+	return c.stdin.Write(b)
+}
 
 func (c *execConn) Close() error {
 	c.feed.CloseWithError(net.ErrClosed)
