@@ -103,13 +103,29 @@ func fakeLinux(t *testing.T, waitDelay time.Duration) *Local {
 		t.Fatal(err)
 	}
 	t.Setenv("PERMUTEPROXY_FAKE_NC", "1")
+	var mu sync.Mutex
+	var started []net.Conn
 	n := &Local{WaitDelay: waitDelay}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		if name != "nc" {
 			return nil, fmt.Errorf("unexpected command %q", name)
 		}
-		return n.command(ctx, exe, args...)
+		conn, err := n.command(ctx, exe, args...)
+		if err == nil {
+			mu.Lock()
+			started = append(started, conn)
+			mu.Unlock()
+		}
+		return conn, err
 	}
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range started {
+			process(t, conn).Kill()
+			reaped(t, conn)
+		}
+	})
 	return n
 }
 
