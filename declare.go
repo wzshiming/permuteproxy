@@ -180,7 +180,7 @@ type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
 	Peer         func(ctx context.Context, network, address string) (net.Addr, error)                                       // optional; a udp dial's default peer, else its address carried unresolved
-	Derive       map[string]string                                                                                          // optional; base network -> expression over the client's own networks
+	Derive       map[string]string                                                                                          // optional; base network -> expression over its own networks; Dial's conns must unblock a pending Read on Close
 	Close        func() error                                                                                               // optional; releases what NewClient acquired
 }
 
