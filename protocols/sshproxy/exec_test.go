@@ -213,13 +213,14 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase carries test clients to their server, counting dials; it can hold or drop the conns.
+// clientBase carries test clients to their server, counting dials; it can hold, stall or drop the conns.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
-	dials atomic.Int32
-	mu    sync.Mutex
-	held  chan struct{} // while set, reads wait for it to close
-	conns []net.Conn
+	dials   atomic.Int32
+	mu      sync.Mutex
+	held    chan struct{} // while set, reads wait for it to close
+	stalled chan struct{} // while set, writes wait for it to close
+	conns   []net.Conn
 }
 
 func (b *clientBase) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -245,6 +246,9 @@ func (b *clientBase) drop() {
 
 // hold keeps what servers send from the clients until the test ends.
 func (b *clientBase) hold(t *testing.T) { b.block(t, &b.held) }
+
+// stall keeps what the clients send from the servers until the test ends.
+func (b *clientBase) stall(t *testing.T) { b.block(t, &b.stalled) }
 
 // block sets gate to a chan the end of the test closes.
 func (b *clientBase) block(t *testing.T, gate *chan struct{}) {
@@ -274,6 +278,11 @@ func (c heldConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	c.base.wait(&c.base.held)
 	return n, err
+}
+
+func (c heldConn) Write(p []byte) (int, error) {
+	c.base.wait(&c.base.stalled)
+	return c.Conn.Write(p)
 }
 
 // dialServer builds this layer's client with opts of the server at addr through the Engine.
@@ -543,27 +552,35 @@ func TestClosingCmdClosesServerCommand(t *testing.T) {
 	recv(t, cmd.closed, "the server to close the command")
 }
 
-func TestCmdCloseUnblocksReadAtOnce(t *testing.T) {
-	base := &clientBase{}
-	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	conn, err := n.DialContext(timeout(t), "cmd", "sleep")
-	if err != nil {
-		t.Fatal(err)
-	}
-	read := make(chan error, 1)
-	go func() {
-		_, err := conn.Read(make([]byte, 1))
-		read <- err
-	}()
-	// Nothing the server sends arrives any more, its answer to the close included.
-	base.hold(t)
-	closed := make(chan error, 1)
-	go func() { closed <- conn.Close() }()
-	if err := recv(t, closed, "Close to return"); err != nil {
-		t.Fatalf("Close = %v", err)
-	}
-	if err := recv(t, read, "the pending Read to end"); !errors.Is(err, net.ErrClosed) {
-		t.Fatalf("pending Read = %v, want net.ErrClosed", err)
+func TestCmdCloseReturnsAndUnblocksReadAtOnce(t *testing.T) {
+	for name, block := range map[string]func(*clientBase, *testing.T){
+		// Nothing the server sends arrives any more, its answer to the close included.
+		"reads held": (*clientBase).hold,
+		// Nothing reaches the server any more, the close itself included.
+		"writes stalled": (*clientBase).stall,
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := &clientBase{}
+			n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+			conn, err := n.DialContext(timeout(t), "cmd", "sleep")
+			if err != nil {
+				t.Fatal(err)
+			}
+			read := make(chan error, 1)
+			go func() {
+				_, err := conn.Read(make([]byte, 1))
+				read <- err
+			}()
+			block(base, t)
+			closed := make(chan error, 1)
+			go func() { closed <- conn.Close() }()
+			if err := recv(t, closed, "Close to return"); err != nil {
+				t.Fatalf("Close = %v", err)
+			}
+			if err := recv(t, read, "the pending Read to end"); !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("pending Read = %v, want net.ErrClosed", err)
+			}
+		})
 	}
 }
 

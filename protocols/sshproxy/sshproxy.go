@@ -219,7 +219,9 @@ func (c *execConn) Write(b []byte) (int, error) {
 
 func (c *execConn) Close() error {
 	c.feed.CloseWithError(net.ErrClosed)
-	return c.sess.Close()
+	// Sending the channel's close waits for the transport, which a stalled peer may hold.
+	go c.sess.Close()
+	return nil
 }
 
 func (c *execConn) LocalAddr() net.Addr              { return localAddr }
