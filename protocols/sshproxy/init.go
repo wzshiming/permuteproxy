@@ -1,6 +1,8 @@
 package sshproxy
 
 import (
+	"github.com/wzshiming/sshd"
+
 	"github.com/wzshiming/permuteproxy"
 )
 
@@ -12,8 +14,9 @@ func init() {
 		Options:        options,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
-		Networks:       []string{"tcp", "unix"},
+		Networks:       []string{"tcp", "unix", "cmd"},
 		NewClient:      NewClient,
 		NewServer:      NewServer,
 	})
+	sshd.RegistryHandleChannel("session", serveSession)
 }

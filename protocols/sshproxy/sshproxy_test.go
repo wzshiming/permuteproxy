@@ -19,8 +19,8 @@ import (
 	"github.com/wzshiming/permuteproxy"
 )
 
-// hostKey is the hostkey_data of the servers under test, so that none generates an RSA key.
-var hostKey = func() string {
+// hostKeyPEM is the host key of the servers under test, so that none generates an RSA key.
+var hostKeyPEM = func() []byte {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		panic(err)
@@ -29,8 +29,11 @@ var hostKey = func() string {
 	if err != nil {
 		panic(err)
 	}
-	return base64.URLEncoding.EncodeToString(pem.EncodeToMemory(block))
+	return pem.EncodeToMemory(block)
 }()
+
+// hostKey is hostKeyPEM as the hostkey_data option carries it.
+var hostKey = base64.URLEncoding.EncodeToString(hostKeyPEM)
 
 func listen(t *testing.T) net.Listener {
 	t.Helper()
