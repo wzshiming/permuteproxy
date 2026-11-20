@@ -76,10 +76,7 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 		sock.Close()
 		return nil, err
 	}
-	release := func() {
-		closeEndpoint(endpoint)
-		sock.Close()
-	}
+	release := func() { closeEndpoint(endpoint) }
 	qc, err := endpoint.Dial(ctx, "udp", peer.String(), config)
 	if err != nil {
 		release()
@@ -95,7 +92,7 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 	return newConn(stream, carrier.LocalAddr(), carrier.RemoteAddr(), release), nil
 }
 
-// closeEndpoint aborts the connections of e without waiting on their peers, and returns once e has stopped reading.
+// closeEndpoint aborts the connections of e without waiting on their peers, and returns once e has closed its socket.
 func closeEndpoint(e *quic.Endpoint) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -215,7 +212,6 @@ func (l *listener) Close() error {
 	l.once.Do(func() {
 		l.cancel()
 		closeEndpoint(l.endpoint)
-		l.sock.Close()
 		l.wg.Wait()
 	})
 	return nil
