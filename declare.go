@@ -8,7 +8,6 @@ import (
 	"net"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/serverutils"
@@ -245,14 +244,17 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 type assembledNetwork struct {
 	NetworkFuncs
 	close   func() error
-	closed  atomic.Bool
+	mu      sync.RWMutex // derived dials hold it for reading, so Close waits for those in flight
+	closed  bool
 	spec    Spec
 	derived map[string]derivation
 }
 
 // Close releases the client and then its inner Transport, once; its derived networks refuse from then on.
 func (a *assembledNetwork) Close() error {
-	a.closed.Store(true)
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
 	return a.close()
 }
 
@@ -355,7 +357,10 @@ func (d derivation) listenPacket(a *assembledNetwork, address string) (net.Packe
 
 // sessions reaches each peer over a dial of its own.
 func (d derivation) sessions(a *assembledNetwork) (net.PacketConn, error) {
-	if a.closed.Load() {
+	a.mu.RLock()
+	closed := a.closed
+	a.mu.RUnlock()
+	if closed {
 		return nil, fmt.Errorf("%s: %w", d.network, net.ErrClosed)
 	}
 	return netutils.NewSessions(func(ctx context.Context, peer net.Addr) (net.Conn, error) {
@@ -365,7 +370,9 @@ func (d derivation) sessions(a *assembledNetwork) (net.PacketConn, error) {
 
 // dial builds d's expression for address over a and dials the derived plane; the conn's Close releases what it built.
 func (d derivation) dial(ctx context.Context, a *assembledNetwork, address string) (net.Conn, error) {
-	if a.closed.Load() {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.closed {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, net.ErrClosed)
 	}
 	text, err := d.x.expand(d.kind, address)

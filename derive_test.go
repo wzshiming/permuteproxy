@@ -332,6 +332,54 @@ func TestDerivedNetworksRefuseAfterClientClose(t *testing.T) {
 	assertCalls(t)
 }
 
+func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
+	calls = nil
+	entered, closed := make(chan struct{}), make(chan struct{})
+	gate := fresh("test-gate")
+	RegisterLayer(gate, declared(Stream, Stream, &AdapterFuncs{
+		Stream: &Link{Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) { return carrier, nil }},
+		// A Close that waits for this dial cannot close closed first, so a timer lets the dial go on.
+		BeforeDial: func() error {
+			close(entered)
+			select {
+			case <-closed:
+			case <-time.After(200 * time.Millisecond):
+			}
+			return nil
+		},
+	}, nil))
+	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+		return &ClientFuncs{
+			Dial: func(_ context.Context, _ Transport, network, address string) (net.Conn, error) {
+				record("dial %s %s", network, address)
+				return dialRelay(address), nil
+			},
+			Derive: map[string]string{"unix": gate + "+cmd:relay -U %h"},
+			Close:  func() error { record("close"); close(closed); return nil },
+		}, nil
+	}}
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialed := make(chan net.Conn, 1)
+	go func() {
+		conn, err := n.DialContext(context.Background(), "unix", "/tmp/x.sock")
+		if err != nil {
+			record("derived dial: %v", err)
+		}
+		dialed <- conn
+	}()
+	recv(t, entered, "the derived dial reaching its layer")
+	if err := n.(io.Closer).Close(); err != nil {
+		t.Fatal(err)
+	}
+	conn := recv(t, dialed, "the derived dial")
+	assertCalls(t, "dial cmd relay -U /tmp/x.sock", "close")
+	conn.Close()
+	assertCalls(t, "relay.close relay -U /tmp/x.sock")
+}
+
 func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 	ctx := context.Background()
 	n := derivingClient(t, mk("", "test-derive"))
