@@ -22,14 +22,16 @@ type memNet struct {
 	loss, reorder       float64 // shares of datagrams dropped, and of those held back behind the next one to the same peer
 	failRead, failWrite error   // when set, what every ReadFrom or WriteTo returns
 
-	mu      sync.Mutex
-	rng     *rand.Rand
-	port    int
-	sockets map[string]*memSocket // bound, by address
-	bound   []*memSocket          // every socket ever bound, in order
-	held    map[string]datagram   // by destination
-	sent    chan struct{}         // closed on the first datagram written
-	once    sync.Once
+	mu        sync.Mutex
+	rng       *rand.Rand
+	port      int
+	sockets   map[string]*memSocket // bound, by address
+	bound     []*memSocket          // every socket ever bound, in order
+	held      map[string]datagram   // by destination
+	dropped   int
+	reordered int
+	sent      chan struct{} // closed on the first datagram written
+	once      sync.Once
 }
 
 type datagram struct {
@@ -110,6 +112,7 @@ func (m *memNet) send(d datagram, to string) {
 	defer m.mu.Unlock()
 	m.once.Do(func() { close(m.sent) })
 	if m.rng.Float64() < m.loss {
+		m.dropped++
 		return
 	}
 	if held, ok := m.held[to]; ok {
@@ -119,10 +122,18 @@ func (m *memNet) send(d datagram, to string) {
 		return
 	}
 	if m.rng.Float64() < m.reorder {
+		m.reordered++
 		m.held[to] = d
 		return
 	}
 	m.deliver(d, to)
+}
+
+// impaired reports how many datagrams m has dropped and reordered.
+func (m *memNet) impaired() (dropped, reordered int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.dropped, m.reordered
 }
 
 func (m *memNet) deliver(d datagram, to string) {

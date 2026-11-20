@@ -82,6 +82,11 @@ func TestListenerAcceptsStreamsOfEveryConnection(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		if mem, ok := e.Base.(*memNet); ok && mem.loss > 0 {
+			if dropped, reordered := mem.impaired(); dropped == 0 || reordered == 0 {
+				t.Fatalf("the lossy carrier dropped %d and reordered %d datagrams, want some of each", dropped, reordered)
+			}
+		}
 	})
 }
 
