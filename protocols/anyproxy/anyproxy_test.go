@@ -59,11 +59,11 @@ var upstream permuteproxy.Network = permuteproxy.NetworkFuncs{
 func serve(t *testing.T) *pipeListener {
 	t.Helper()
 	ln := newPipeListener()
-	inner := permuteproxy.TransportFuncs{
-		Plane:      permuteproxy.Stream,
-		ListenFunc: func(context.Context) (net.Listener, error) { return ln, nil },
+	base := permuteproxy.NetworkFuncs{
+		ListenFunc: func(context.Context, string, string) (net.Listener, error) { return ln, nil },
 	}
-	srv, err := NewServer(inner, upstream, nil)
+	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "any"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:0"}}
+	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
 	if err != nil {
 		t.Fatal(err)
 	}
