@@ -38,6 +38,11 @@ var hostKeyPEM = func() []byte {
 // hostKey is hostKeyPEM as the hostkey_data option carries it.
 var hostKey = base64.URLEncoding.EncodeToString(hostKeyPEM)
 
+func init() {
+	// A probe gives up sooner here, so that a silent connection goes within a second.
+	keepAliveTimeout = time.Second
+}
+
 func listen(t *testing.T) net.Listener {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -248,6 +253,87 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 	exchange("again")
 	if got := base.dials.Load(); got != 1 {
 		t.Fatalf("client dials = %d, want the first connection kept", got)
+	}
+}
+
+func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
+	target := echoTarget(t)
+	for _, tt := range []struct{ network, address, reply string }{
+		{"cmd", "relay x", "relay x|ping"},
+		{"tcp", target, "ping"},
+	} {
+		t.Run(tt.network, func(t *testing.T) {
+			base := &clientBase{}
+			n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+			conn, err := n.DialContext(timeout(t), tt.network, tt.address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn.Close()
+			silent := base.mute()
+			short, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			if conn, err := n.DialContext(short, tt.network, tt.address); !errors.Is(err, context.DeadlineExceeded) {
+				if conn != nil {
+					conn.Close()
+				}
+				t.Fatalf("dial over the silent connection = %v, want context.DeadlineExceeded", err)
+			}
+			// The keep-alive the client sends then goes unanswered, so it drops the connection.
+			recv(t, silent[0].closed, "the client to drop the silent connection")
+			conn, err = n.DialContext(timeout(t), tt.network, tt.address)
+			if err != nil {
+				t.Fatalf("dial after the silent connection was dropped = %v", err)
+			}
+			defer conn.Close()
+			roundTrip(t, conn, "ping", tt.reply)
+			if got := base.dials.Load(); got != 2 {
+				t.Fatalf("client dials = %d, want one reconnect", got)
+			}
+		})
+	}
+}
+
+func TestDialTimingOutOverAHealthyConnectionKeepsIt(t *testing.T) {
+	up := newUpstream()
+	slow := permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "slow.invalid:1" {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return up.DialContext(ctx, network, address)
+	}}
+	for _, tt := range []struct{ network, address string }{
+		{"tcp", "slow.invalid:1"},
+		{"cmd", "stall"},
+	} {
+		t.Run(tt.network, func(t *testing.T) {
+			base := &clientBase{}
+			n := dialServer(t, base, serveExec(t, slow), withCredentials())
+			conn, err := n.DialContext(timeout(t), "cmd", "relay x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			short, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			if c, err := n.DialContext(short, tt.network, tt.address); !errors.Is(err, context.DeadlineExceeded) {
+				if c != nil {
+					c.Close()
+				}
+				t.Fatalf("dial to a slow target = %v, want context.DeadlineExceeded", err)
+			}
+			// The probe that dial started is answered, else the connection would be gone by now.
+			select {
+			case <-process(t, conn).Done():
+				t.Fatal("the open cmd conn ended after a dial over its connection timed out")
+			case <-time.After(keepAliveTimeout + 500*time.Millisecond):
+			}
+			roundTrip(t, conn, "ping", "relay x|ping")
+			if got := base.dials.Load(); got != 1 {
+				t.Fatalf("client dials = %d, want the connection kept", got)
+			}
+		})
 	}
 }
 

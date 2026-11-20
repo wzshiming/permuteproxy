@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -152,6 +154,44 @@ func TestUDPWriteEndsAtDeadlineOrCloseWhileExecWaits(t *testing.T) {
 	pc.Close()
 	if err := recv(t, written, "Close to end the second write"); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("WriteTo across Close = %v, want net.ErrClosed", err)
+	}
+}
+
+func TestUDPWritesOverASilentConnectionLeaveNoGoroutines(t *testing.T) {
+	up, base := newUpstream(), &clientBase{}
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		// Every session's command would otherwise wait for room in the upstream's queue.
+		for {
+			select {
+			case <-up.commands:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	n := dialServer(t, base, serveExec(t, up), withCredentials())
+	pc, err := n.ListenPacket(timeout(t), "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	if _, err := pc.WriteTo([]byte("hi"), netutils.NewNetAddr("udp", "198.51.100.1:53")); err != nil {
+		t.Fatal(err)
+	}
+	base.mute()
+	before := runtime.NumGoroutine()
+	for i := range 100 {
+		pc.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
+		pc.WriteTo([]byte("hi"), netutils.NewNetAddr("udp", fmt.Sprintf("198.51.100.%d:53", 2+i)))
+	}
+	pc.Close()
+	// What the writes left waiting on the silent connection ends once the client drops it.
+	for wait := time.Now().Add(10 * time.Second); runtime.NumGoroutine() > before+10; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(wait) {
+			t.Fatalf("goroutines = %d after the writes, %d before; want none left behind", runtime.NumGoroutine(), before)
+		}
 	}
 }
 

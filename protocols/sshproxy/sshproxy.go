@@ -50,6 +50,9 @@ var options = []string{
 	keyAllowExec,
 }
 
+// keepAliveTimeout bounds the wait for the shared connection to answer a probe.
+var keepAliveTimeout = 5 * time.Second
+
 // endpoint renders the options as the URL form sshproxy parses; the host is a placeholder since
 // the inner transport decides where connections go.
 func endpoint(opts permuteproxy.Options) string {
@@ -87,6 +90,8 @@ type client struct {
 	dialer *sshproxy.Dialer
 	once   sync.Once
 	closed atomic.Bool
+	mu     sync.Mutex                 // orders the dialer's connects and drops
+	cli    atomic.Pointer[ssh.Client] // the connection the dialer holds, if any
 }
 
 func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
@@ -105,15 +110,60 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 	if err := checkName(network, address); err != nil {
 		return nil, err
 	}
-	cli, err := c.dialer.SSHClient(ctx)
+	cli, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
 	conn, err := cli.DialContext(ctx, network, address)
-	if err != nil && ctx.Err() == nil && dead(err) {
-		c.dialer.Close()
+	switch {
+	case err == nil:
+	case ctx.Err() != nil:
+		c.probe()
+	case dead(err):
+		c.drop(cli)
 	}
 	return conn, err
+}
+
+// connect returns the shared connection, connecting when there is none.
+func (c *client) connect(ctx context.Context) (*ssh.Client, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cli, err := c.dialer.SSHClient(ctx)
+	c.cli.Store(cli)
+	return cli, err
+}
+
+// drop closes cli, so that the next dial connects again, unless a newer connection replaced it.
+func (c *client) drop(cli *ssh.Client) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cli.CompareAndSwap(cli, nil) {
+		c.dialer.Close()
+	}
+}
+
+// probe drops the shared connection unless it answers a keep-alive in time.
+func (c *client) probe() {
+	cli := c.cli.Load()
+	if cli == nil {
+		return
+	}
+	go func() {
+		answered := make(chan error, 1)
+		go func() {
+			_, _, err := cli.SendRequest("keepalive@openssh.com", true, nil)
+			answered <- err
+		}()
+		select {
+		case err := <-answered:
+			if err == nil {
+				return
+			}
+		case <-time.After(keepAliveTimeout):
+		}
+		c.drop(cli)
+	}()
 }
 
 // dead reports whether err may come from the connection itself, not a refusal or a bad address.
@@ -179,13 +229,14 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	case r := <-results:
 		return r.conn, r.err
 	case <-ctx.Done():
+		c.probe()
 		return nil, ctx.Err()
 	}
 }
 
 // start runs argv on a new session of the shared connection, opening none once ctx has ended.
 func (c *client) start(ctx context.Context, address string, argv []string) (net.Conn, error) {
-	cli, err := c.dialer.SSHClient(ctx)
+	cli, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +247,7 @@ func (c *client) start(ctx context.Context, address string, argv []string) (net.
 	if err != nil {
 		// Drop a dead connection, unless the caller left, so that the next dial connects again.
 		if dead(err) && ctx.Err() == nil {
-			c.dialer.Close()
+			c.drop(cli)
 		}
 		return nil, err
 	}

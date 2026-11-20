@@ -231,7 +231,7 @@ func (b *clientBase) DialContext(ctx context.Context, network, address string) (
 	if err != nil {
 		return nil, err
 	}
-	c := &baseConn{Conn: conn, base: b}
+	c := &baseConn{Conn: conn, base: b, closed: make(chan struct{})}
 	b.mu.Lock()
 	b.conns = append(b.conns, c)
 	b.mu.Unlock()
@@ -247,13 +247,14 @@ func (b *clientBase) drop() {
 	}
 }
 
-// mute swallows what the conns dialed so far send from now on, as a link gone silent.
-func (b *clientBase) mute() {
+// mute has the conns dialed so far swallow what they send, as on a silent link, and returns them.
+func (b *clientBase) mute() []*baseConn {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, c := range b.conns {
 		c.muted.Store(true)
 	}
+	return slices.Clone(b.conns)
 }
 
 // freeze fails the writes of the conns dialed so far and defers their Close to thaw.
@@ -302,6 +303,8 @@ type baseConn struct {
 	base   *clientBase
 	muted  atomic.Bool
 	frozen atomic.Bool
+	closed chan struct{} // closes with the first Close
+	close  sync.Once
 }
 
 func (c *baseConn) Read(p []byte) (int, error) {
@@ -322,6 +325,7 @@ func (c *baseConn) Write(p []byte) (int, error) {
 }
 
 func (c *baseConn) Close() error {
+	c.close.Do(func() { close(c.closed) })
 	if c.frozen.Load() {
 		return nil
 	}
