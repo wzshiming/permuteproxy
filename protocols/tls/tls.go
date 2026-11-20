@@ -5,47 +5,47 @@ import (
 	"crypto/tls"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
 	"github.com/wzshiming/permuteproxy/internal/tlsutils"
 )
 
-func Adapt(inner permuteproxy.Transport, opts permuteproxy.Options) (permuteproxy.Transport, error) {
+func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	values := protoutils.Values(opts)
 	// Each side's config is built where it is needed: the CA file only by dialers, key material
 	// only by listeners.
 	clientConfig := sync.OnceValues(func() (*tls.Config, error) { return tlsutils.NewClient(values) })
-	return permuteproxy.TransportFuncs{
-		Plane: permuteproxy.Stream,
-		DialFunc: func(ctx context.Context, _ permuteproxy.Plane) (net.Conn, error) {
-			config, err := clientConfig()
-			if err != nil {
-				return nil, err
-			}
-			raw, err := inner.Dial(ctx, permuteproxy.Stream)
-			if err != nil {
-				return nil, err
-			}
-			// A canceled handshake closes raw itself, so the error path must not close it again.
-			raw = &closeOnce{Conn: raw}
-			conn := tls.Client(raw, config)
-			if err := conn.HandshakeContext(ctx); err != nil {
-				raw.Close()
-				return nil, err
-			}
-			return conn, nil
+	var serverConfig atomic.Pointer[tls.Config] // what the latest BeforeListen built
+	return &permuteproxy.AdapterFuncs{
+		BeforeDial: func() error {
+			_, err := clientConfig()
+			return err
 		},
-		ListenFunc: func(ctx context.Context) (net.Listener, error) {
-			serverConfig, err := tlsutils.NewServer(values)
+		BeforeListen: func() error {
+			config, err := tlsutils.NewServer(values)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			ln, err := inner.Listen(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return tls.NewListener(ln, serverConfig), nil
+			serverConfig.Store(config)
+			return nil
+		},
+		Stream: &permuteproxy.Link{
+			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
+				config, _ := clientConfig() // BeforeDial has returned its error
+				// A canceled handshake closes raw itself, so the error path must not close it again.
+				raw := &closeOnce{Conn: carrier}
+				conn := tls.Client(raw, config)
+				if err := conn.HandshakeContext(ctx); err != nil {
+					raw.Close()
+					return nil, err
+				}
+				return conn, nil
+			},
+			Listener: func(ln net.Listener) (net.Listener, error) {
+				return tls.NewListener(ln, serverConfig.Load()), nil
+			},
 		},
 	}, nil
 }

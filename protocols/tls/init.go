@@ -7,11 +7,11 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("tls", permuteproxy.Spec{
-		Kind:     permuteproxy.KindAdapter,
-		Requires: permuteproxy.Stream,
-		Provides: permuteproxy.Stream,
-		Options:  tlsutils.OptionKeys(),
-		Adapt:    Adapt,
+		Kind:       permuteproxy.KindAdapter,
+		Requires:   permuteproxy.Stream,
+		Provides:   permuteproxy.Stream,
+		Options:    tlsutils.OptionKeys(),
+		NewAdapter: NewAdapter,
 	})
 	permuteproxy.RegisterAlias("https", "http+tls")
 }
