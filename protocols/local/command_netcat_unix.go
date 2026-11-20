@@ -4,25 +4,28 @@ import (
 	"context"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-func (l *Local) dialNetcatUnix(ctx context.Context, address string) (net.Conn, error) {
-	dial, err := l.dial()
-	if err != nil {
-		return nil, err
-	}
-	return cmdutils.DialContext(ctx, dial, localAddr, netutils.NewNetAddr("cmd", "nc -U "+address), []string{"nc", "-U", address})
-}
-
 // listenNetcatUnix removes the socket file an nc leaves behind only when a peer sent a byte
 // through it, the one proof that nc bound the path, and it is still the inode recorded then; any
 // other file there stays, even one an idle or killed nc made, as it may as well be a competitor's.
-func (l *Local) listenNetcatUnix(ctx context.Context, address string) (net.Listener, error) {
+func (l *Local) listenNetcatUnix(ctx context.Context, network, address string) (net.Listener, error) {
+	// The path enters an nc command line, so it must be one the network's declaration accepts.
+	if err := (permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: network, Address: address}}).Validate(); err != nil {
+		return nil, err
+	}
+	line := strings.ReplaceAll(cmdutils.NetcatListenUnix, "%h", cmdutils.Quote([]string{address}))
+	args, err := splitCommand(line)
+	if err != nil {
+		return nil, err
+	}
 	dial, err := l.dial()
 	if err != nil {
 		return nil, err
@@ -36,7 +39,7 @@ func (l *Local) listenNetcatUnix(ctx context.Context, address string) (net.Liste
 		}
 		return socket.track(conn), nil
 	}
-	return cmdutils.Listen(ctx, spawn, localAddr, netutils.NewNetAddr("cmd", "nc -Ul "+address), []string{"nc", "-Ul", address}, l.waitDelay())
+	return cmdutils.Listen(ctx, spawn, localAddr, netutils.NewNetAddr("cmd", line), args, l.waitDelay())
 }
 
 type socketFile struct {

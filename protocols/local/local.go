@@ -157,10 +157,6 @@ func (l *Local) DialContext(ctx context.Context, network, address string) (net.C
 	switch network {
 	case "cmd":
 		return l.dialCommand(ctx, network, address)
-	case "cmd-nc":
-		return l.dialNetcat(ctx, address)
-	case "cmd-nc-unix":
-		return l.dialNetcatUnix(ctx, address)
 	case "udp", "udp4", "udp6", "unixgram":
 		return netutils.DialPacket(ctx, network, address, l.ListenPacket)
 	}
@@ -171,10 +167,8 @@ func (l *Local) Listen(ctx context.Context, network, address string) (net.Listen
 	switch network {
 	case "cmd":
 		return l.listenCommand(ctx, network, address)
-	case "cmd-nc":
-		return l.listenNetcat(ctx, address)
 	case "cmd-nc-unix":
-		return l.listenNetcatUnix(ctx, address)
+		return l.listenNetcatUnix(ctx, network, address)
 	}
 	return (&net.ListenConfig{}).Listen(ctx, network, address)
 }
