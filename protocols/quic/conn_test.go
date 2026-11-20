@@ -486,6 +486,8 @@ func TestASlowReaderGetsAllAClosedDialerWrote(t *testing.T) {
 }
 
 func TestDialedCloseReturnsOnceThePeerEnds(t *testing.T) {
+	// A bound far off, so only the release can end Close early.
+	quic.SetCloseWait(t, 10*time.Second)
 	mem := newMemNet()
 	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
 	c, srv := connected(t, ln, tr)
@@ -496,7 +498,7 @@ func TestDialedCloseReturnsOnceThePeerEnds(t *testing.T) {
 	if _, err := c.Write(random(t, 64<<10)); err != nil {
 		t.Fatal(err)
 	}
-	within(t, 100*time.Millisecond, "Close", func() { c.Close() })
+	within(t, time.Second, "Close", func() { c.Close() })
 	released(t, mem.socket(t, 1), "dialed")
 }
 
