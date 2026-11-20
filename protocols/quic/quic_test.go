@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/protocols/quic"
 )
 
 // keys are the options of a listener holding a certificate for proxy.test and of a dialer verifying it.
@@ -221,6 +222,22 @@ func TestReadEndsAtEOFOnceTheDialerCloses(t *testing.T) {
 	srv.SetReadDeadline(time.Now().Add(10 * time.Second))
 	if got, err := io.ReadAll(srv); err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("listener read %d bytes, %v; want the %d written, then EOF", len(got), err, len(data))
+	}
+}
+
+func TestAnIdleStreamOutlivesTheIdleTimeout(t *testing.T) {
+	quic.SetIdleTimeout(t, 500*time.Millisecond)
+	ln, tr := pair(t, permuteproxy.Engine{})
+	c, srv := connected(t, ln, tr)
+	time.Sleep(1500 * time.Millisecond)
+	for _, ends := range [][2]net.Conn{{c, srv}, {srv, c}} {
+		if _, err := ends[0].Write([]byte("x")); err != nil {
+			t.Fatalf("Write after idling = %v", err)
+		}
+		ends[1].SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.ReadFull(ends[1], make([]byte, 1)); err != nil {
+			t.Fatalf("Read after idling = %v", err)
+		}
 	}
 }
 

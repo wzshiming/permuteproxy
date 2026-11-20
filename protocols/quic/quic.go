@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/net/quic"
 
@@ -19,6 +20,12 @@ import (
 
 // alpn is the application protocol both ends negotiate, which a peer outside permuteproxy must offer.
 const alpn = "permuteproxy"
+
+// maxIdle is x/net/quic's idle timeout when zero; tests shorten it.
+var maxIdle time.Duration
+
+// keepAlive pings an idle connection before x/net/quic's 30 s idle timeout, or at half a shorter one.
+const keepAlive = 10 * time.Second
 
 func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	values := protoutils.Values(opts)
@@ -60,7 +67,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 func quicConfig(config *tls.Config) *quic.Config {
 	config.MinVersion = tls.VersionTLS13
 	config.NextProtos = []string{alpn}
-	return &quic.Config{TLSConfig: config}
+	return &quic.Config{TLSConfig: config, MaxIdleTimeout: maxIdle, KeepAlivePeriod: keepAlive}
 }
 
 // dial opens one QUIC connection over the carrier to its default peer, and one stream on it.
