@@ -214,7 +214,7 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase carries test clients to their server, counting dials; it can hold, stall or drop the conns.
+// clientBase carries test clients to their server, counting dials; it holds, stalls or drops conns.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
 	dials   atomic.Int32
@@ -337,7 +337,7 @@ func dialAside(ctx context.Context, n permuteproxy.Network, network, address str
 	return dialed
 }
 
-// rawServer serves SSH without authentication on loopback, handing handle each channel a client opens.
+// rawServer serves SSH on loopback without authentication, handing each new channel to handle.
 func rawServer(t *testing.T, handle func(newChan ssh.NewChannel)) string {
 	t.Helper()
 	signer, err := ssh.ParsePrivateKey(hostKeyPEM)
