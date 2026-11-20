@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,77 +22,73 @@ const (
 )
 
 // NewClient resolves target names locally before asking the proxy to connect.
-func NewClient(inner permuteproxy.Transport, base permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
-	return newClient(inner, base, opts, true)
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
+	return newClient(opts, true)
 }
 
 // NewClientH leaves name resolution to the proxy, as socks5h does.
-func NewClientH(inner permuteproxy.Transport, base permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
-	return newClient(inner, base, opts, false)
+func NewClientH(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
+	return newClient(opts, false)
 }
 
-func newClient(inner permuteproxy.Transport, base permuteproxy.Network, opts permuteproxy.Options, resolve bool) (permuteproxy.Network, error) {
-	c := &client{inner: inner, base: base, dialer: socks5.Dialer{
+func newClient(opts permuteproxy.Options, resolve bool) (*permuteproxy.ClientFuncs, error) {
+	c := &client{dialer: socks5.Dialer{
 		Username:  opts[KeyUsername],
 		Password:  opts[KeyPassword],
 		IsResolve: resolve,
 		Timeout:   time.Minute,
 	}}
-	c.dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return inner.Dial(ctx, permuteproxy.Stream)
-	}
-	return c, nil
+	return &permuteproxy.ClientFuncs{Dial: c.dial, ListenPacket: c.associate, Peer: c.peer}, nil
 }
 
-// client connects through inner and opens the sockets of its UDP associations through base.
+// client takes its control conns from inner and binds the sockets of its UDP associations through local.
 type client struct {
-	inner  permuteproxy.Transport
-	base   permuteproxy.Network
 	dialer socks5.Dialer
 }
 
-func (c *client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-		return c.dialer.DialContext(ctx, network, address)
-	case "udp", "udp4", "udp6":
-		a, err := c.associate(ctx, "udp", ":0", address)
-		if err != nil {
-			return nil, err
-		}
-		remote := a.udp.RemoteAddr()
-		// The library parses the target as an IP only; socks5h keeps the name for the proxy.
-		if u, ok := remote.(*net.UDPAddr); ok && u.IP == nil {
-			remote = netutils.NewNetAddr("udp", address)
-		}
-		return netutils.WrapPacket(a, remote), nil
+func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+	d := c.dialer
+	d.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return inner.Dial(ctx, permuteproxy.Stream)
 	}
-	return nil, fmt.Errorf("dial %s: %w", network, permuteproxy.ErrUnsupported)
+	return d.DialContext(ctx, network, address)
 }
 
-func (c *client) Listen(_ context.Context, network, _ string) (net.Listener, error) {
-	return nil, fmt.Errorf("listen %s: %w", network, permuteproxy.ErrUnsupported)
-}
-
-// ListenPacket opens an association whose socket is bound at address; WriteTo reaches any target.
-func (c *client) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	switch network {
-	case "udp", "udp4", "udp6":
-		a, err := c.associate(ctx, network, address, ":0")
-		if err != nil {
-			return nil, err
-		}
-		return a, nil
+// peer is the default target the library's udp dial kept, a name resolved here first for socks5.
+func (c *client) peer(ctx context.Context, _, address string) (net.Addr, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("listen packet %s: %w", network, permuteproxy.ErrUnsupported)
+	if c.dialer.IsResolve && host != "" && net.ParseIP(host) == nil {
+		ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+		if err != nil {
+			if ips, err = net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
+				return nil, err
+			}
+		}
+		host = ips[0].String()
+	}
+	portnum, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, err
+	}
+	if portnum < 0 || portnum > 0xffff {
+		return nil, errors.New("port number out of range " + port)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return &net.UDPAddr{IP: ip, Port: portnum}, nil
+	}
+	// The library parses the target as an IP only; socks5h keeps the name for the proxy.
+	return netutils.NewNetAddr("udp", address), nil
 }
 
-// associate performs the UDP ASSOCIATE handshake with the socket bound through base at local.
-func (c *client) associate(ctx context.Context, network, local, target string) (*association, error) {
+// associate performs the UDP ASSOCIATE handshake with its socket bound through local at address; WriteTo reaches any target.
+func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, local permuteproxy.Network, network, address string) (net.PacketConn, error) {
 	a := &association{}
 	d := c.dialer
 	d.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		conn, err := c.inner.Dial(ctx, permuteproxy.Stream)
+		conn, err := inner.Dial(ctx, permuteproxy.Stream)
 		if err != nil {
 			return nil, err
 		}
@@ -101,7 +98,7 @@ func (c *client) associate(ctx context.Context, network, local, target string) (
 		return conn, nil
 	}
 	d.ProxyPacketDial = func(ctx context.Context, _, _ string) (net.PacketConn, error) {
-		pc, err := c.base.ListenPacket(ctx, network, local)
+		pc, err := local.ListenPacket(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +109,7 @@ func (c *client) associate(ctx context.Context, network, local, target string) (
 	}
 	// The library only turns a context deadline into conn deadlines; closing ends a canceled handshake.
 	stop := context.AfterFunc(ctx, func() { a.Close() })
-	conn, err := d.DialContext(ctx, "udp", target)
+	conn, err := d.DialContext(ctx, "udp", ":0")
 	if !stop() {
 		a.Close()
 		return nil, ctx.Err()
