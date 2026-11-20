@@ -14,7 +14,7 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-// Local is the process-local Network: system networking plus the cmd-* subprocess transports.
+// Local is the process-local Network: system networking plus cmd, the subprocess transport the cmd-* networks run on.
 type Local struct {
 	// Command starts a subprocess whose stdio carries the connection. nil runs it through os/exec:
 	// Close returns at once, the command sees EOF on stdin, output it still writes is discarded and
