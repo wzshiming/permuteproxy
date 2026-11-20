@@ -713,6 +713,38 @@ func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 	assertCalls(t, "base.dial tcp 127.0.0.1:1", "test-keep.client", "base.listen tcp 127.0.0.1:1", "test-keep.listener")
 }
 
+func TestBuiltPlanesFollowALossyCarrier(t *testing.T) {
+	ctx := context.Background()
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	t.Run("transport", func(t *testing.T) {
+		tr, err := e.Transport(mk("", "test-keep"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tr.Planes() != Stream {
+			t.Fatalf("Planes() above a carrier whose udp is lossy = %v, want stream", tr.Planes())
+		}
+	})
+	t.Run("client", func(t *testing.T) {
+		n, err := e.Client(mk("", "test-legacy", "test-keep"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls = nil
+		if err := netOp(ctx, n, "dial udp"); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("dial udp above a carrier whose udp is lossy = %v, want ErrUnsupported", err)
+		}
+		assertCalls(t)
+	})
+	t.Run("server", func(t *testing.T) {
+		srv, err := e.Server(mk("", "test-ss", "test-keep"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRun(t, srv, "base.listen tcp 127.0.0.1:1", "test-keep.listener", "test-ss.serve upstream=default")
+	})
+}
+
 func TestLossyLocalRefusesClientPacket(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

@@ -20,7 +20,10 @@ func (e Engine) network() Network {
 
 func (e Engine) build(r *resolved, from int) (Transport, error) {
 	n, layered := e.network(), len(r.layers) > 0
-	var t Transport = bind(n, r.stream, r.packet, r.dial, layered)
+	dial := bind(n, r.stream, r.packet, r.dial, layered)
+	// The layers get what the carrier offers once a lossy network took its datagrams, not what resolve assumed.
+	r.offer(dial.Planes())
+	var t Transport = dial
 	if r.listen != r.dial {
 		t = split(t, bind(n, r.stream, r.packet, r.listen, layered))
 	}

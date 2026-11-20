@@ -125,29 +125,36 @@ func (c Chain) resolve() (*resolved, error) {
 	return r, nil
 }
 
-// offer applies the chain rule to r's layers, innermost first, over a carrier offering avail.
+// offer applies the chain rule over a carrier of avail; a failing layer offers nothing.
 func (r *resolved) offer(avail Plane) error {
+	var first error
 	// lossy holds the planes of avail that lack datagram boundaries, which no layer is offered.
 	var lossy Plane
 	for i := len(r.specs) - 1; i >= 0; i-- {
-		spec := r.specs[i]
-		if spec.Requires&lossy != 0 {
-			return fmt.Errorf("layer %q requires %v but its carrier keeps no datagram boundaries: %w", r.layers[i].Scheme, spec.Requires&lossy, ErrInvalidChain)
+		spec, scheme := r.specs[i], r.layers[i].Scheme
+		above := spec.Provides | ((avail &^ lossy) & spec.Preserves)
+		var err error
+		switch {
+		case spec.Requires&lossy != 0:
+			err = fmt.Errorf("layer %q requires %v but its carrier keeps no datagram boundaries: %w", scheme, spec.Requires&lossy, ErrInvalidChain)
+		case avail&spec.Requires != spec.Requires:
+			err = fmt.Errorf("layer %q requires %v but carrier provides %v: %w", scheme, spec.Requires, avail, ErrInvalidChain)
+		case above == 0:
+			err = fmt.Errorf("layer %q provides no plane: %w", scheme, ErrInvalidChain)
 		}
-		if avail&spec.Requires != spec.Requires {
-			return fmt.Errorf("layer %q requires %v but carrier provides %v: %w", r.layers[i].Scheme, spec.Requires, avail, ErrInvalidChain)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			above = 0
 		}
-		avail = spec.Provides | ((avail &^ lossy) & spec.Preserves)
-		if avail == 0 {
-			return fmt.Errorf("layer %q provides no plane: %w", r.layers[i].Scheme, ErrInvalidChain)
-		}
-		lossy = avail & spec.Lossy
+		avail, lossy = above, above&spec.Lossy
 		r.planes[i] = avail
 		if i > 0 {
 			r.planes[i] &^= lossy
 		}
 	}
-	return nil
+	return first
 }
 
 // Validate checks, before any I/O, that c names registered layers and networks whose planes fit, wrapping ErrInvalidChain if not.
