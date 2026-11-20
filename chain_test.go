@@ -209,10 +209,7 @@ func hookedAdapter(name string, requires, provides Plane, err error) Spec {
 	spec := fakeAdapter(name, requires, provides)
 	newAdapter := spec.NewAdapter
 	spec.NewAdapter = func(opts Options) (*AdapterFuncs, error) {
-		funcs, newErr := newAdapter(opts)
-		if newErr != nil {
-			return nil, newErr
-		}
+		funcs, _ := newAdapter(opts)
 		funcs.BeforeDial = func() error { record("%s.beforedial", name); return err }
 		funcs.BeforeListen = func() error { record("%s.beforelisten", name); return err }
 		return funcs, nil
