@@ -34,7 +34,8 @@ func TestNetcatUDPOverSSHExec(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	commands := newProbe(local.Network)
-	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: udpEcho(t).String()}})
+	echo, received := watchedUDPEcho(t)
+	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: echo.String()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +45,7 @@ func TestNetcatUDPOverSSHExec(t *testing.T) {
 	}
 	defer conn.Close()
 	echoed(t, conn, []byte("ping"))
+	signaled(t, received, "the datagram reaching the udp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}
@@ -54,8 +56,10 @@ func TestSSHClientDialsUDPThroughNetcat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	commands := newProbe(local.Network)
-	conn := dialPacket(t, ctx, sshExec(t, commands), udpEcho(t).String())
+	echo, received := watchedUDPEcho(t)
+	conn := dialPacket(t, ctx, sshExec(t, commands), echo.String())
 	echoed(t, conn, []byte("ping"))
+	signaled(t, received, "the datagram reaching the udp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}
@@ -76,8 +80,10 @@ func TestSOCKS5AssociationOverSSHUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeIf(n)
-	conn := dialPacket(t, ctx, n, udpEcho(t).String())
+	echo, received := watchedUDPEcho(t)
+	conn := dialPacket(t, ctx, n, echo.String())
 	echoed(t, conn, []byte("ping"))
+	signaled(t, received, "the datagram reaching the udp echo")
 	// The association's outgoing socket is the ssh client's udp, which runs nc on the ssh server.
 	if upstream.packets.Load() != 1 || upstream.dials.Load() != 0 {
 		t.Fatalf("upstream packets %d dials %d, want 1 and 0", upstream.packets.Load(), upstream.dials.Load())
@@ -92,7 +98,8 @@ func TestNetcatOverSSHExecCarriesAStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	commands := newProbe(local.Network)
-	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc", Address: tcpEcho(t)}})
+	echo, accepted := tcpEcho(t)
+	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc", Address: echo}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,6 +109,7 @@ func TestNetcatOverSSHExecCarriesAStream(t *testing.T) {
 	}
 	defer conn.Close()
 	echoed(t, conn, streamPayload)
+	signaled(t, accepted, "nc's conn reaching the tcp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}

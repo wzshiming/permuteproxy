@@ -38,6 +38,32 @@ func udpEcho(t *testing.T) net.Addr {
 	return pc.LocalAddr()
 }
 
+// watchedUDPEcho is udpEcho, also signaling each datagram it receives.
+func watchedUDPEcho(t *testing.T) (net.Addr, <-chan struct{}) {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	received := make(chan struct{}, 64)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			select {
+			case received <- struct{}{}:
+			default:
+			}
+			pc.WriteTo(buf[:n], addr)
+		}
+	}()
+	return pc.LocalAddr(), received
+}
+
 // dialPacket dials target over udp through n; the conn must also be a net.PacketConn.
 func dialPacket(t *testing.T, ctx context.Context, n permuteproxy.Network, target string) net.Conn {
 	t.Helper()
@@ -596,16 +622,17 @@ func echoAll(ln net.Listener) {
 	}
 }
 
-// tcpEcho echoes each tcp conn until the test ends and returns its address.
-func tcpEcho(t *testing.T) string {
+// tcpEcho echoes each tcp conn until the test ends, returning its address and a signal per conn it accepted.
+func tcpEcho(t *testing.T) (string, <-chan struct{}) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	go echoAll(ln)
-	return ln.Addr().String()
+	accepted := make(chan struct{}, 64)
+	go echoAll(acceptProbe{ln, accepted})
+	return ln.Addr().String(), accepted
 }
 
 // quicChain is the quic layer over udp at address, with a self-signed certificate.
@@ -701,7 +728,8 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeIf(n)
-	conn, err := n.DialContext(ctx, "tcp", tcpEcho(t))
+	echo, _ := tcpEcho(t)
+	conn, err := n.DialContext(ctx, "tcp", echo)
 	if err != nil {
 		t.Fatal(err)
 	}
