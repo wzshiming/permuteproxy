@@ -242,7 +242,8 @@ func TestCloseInterruptsABlockedWrite(t *testing.T) {
 		if err := recv(t, errc, side+" Write"); !errors.Is(err, net.ErrClosed) {
 			t.Fatalf("%s Write blocked at Close = %v, want net.ErrClosed", side, err)
 		}
-		if d := time.Since(start); d > 2*time.Second {
+		// Under the 500 ms a dialed Close waits, which the Write must not sit out.
+		if d := time.Since(start); d > 200*time.Millisecond {
 			t.Fatalf("%s Write returned %v after Close", side, d)
 		}
 		signaled(t, closed, side+" Close")
