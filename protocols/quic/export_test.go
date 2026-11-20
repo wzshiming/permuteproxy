@@ -18,3 +18,10 @@ func SetLinger(t testing.TB, d time.Duration) {
 	linger = d
 	t.Cleanup(func() { linger = old })
 }
+
+// SetCloseWait bounds by d how long the Close of a dialed conn waits for its release during t.
+func SetCloseWait(t testing.TB, d time.Duration) {
+	old := closeWait
+	closeWait = d
+	t.Cleanup(func() { closeWait = old })
+}

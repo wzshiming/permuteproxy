@@ -16,6 +16,9 @@ import (
 // linger bounds how long a closed dialed conn keeps its connection for the peer to end its side.
 var linger = 30 * time.Second
 
+// closeWait bounds how long the Close of a dialed conn waits for that release.
+var closeWait = 500 * time.Millisecond
+
 // conn is a net.Conn over one QUIC stream; release, when set, frees the connection a Dial opened for it.
 type conn struct {
 	stream          *quic.Stream
@@ -85,20 +88,28 @@ func (c *conn) Close() error {
 		c.stream.CloseWrite()
 		c.writeMu.Unlock()
 		c.readMu.Lock()
-		defer c.readMu.Unlock()
 		if c.release == nil {
 			c.stream.CloseRead()
+			c.readMu.Unlock()
 			return
 		}
 		// Closing the connection drops what the peer has not taken, so the release waits for the peer to end its side.
 		ctx, cancel := context.WithTimeout(context.Background(), linger)
 		c.stream.SetReadContext(ctx)
+		c.readMu.Unlock()
+		released := make(chan struct{})
 		go func() {
+			defer close(released)
 			defer cancel()
 			// No Read after Close reaches the stream, so this one has it alone.
 			io.Copy(io.Discard, c.stream)
 			c.release()
 		}()
+		// What is not delivered yet is lost if the process exits once Close returns.
+		select {
+		case <-released:
+		case <-time.After(closeWait):
+		}
 	})
 	return nil
 }

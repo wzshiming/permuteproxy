@@ -8,7 +8,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -246,6 +248,24 @@ func TestCloseInterruptsABlockedWrite(t *testing.T) {
 	}
 }
 
+func TestReadReturnsAtOnceWhileADialedCloseWaits(t *testing.T) {
+	ln, tr := pair(t, permuteproxy.Engine{})
+	c, _ := connected(t, ln, tr)
+	closed := make(chan struct{})
+	go func() {
+		// The peer keeps its side open, so Close waits for its bound.
+		c.Close()
+		close(closed)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	within(t, 200*time.Millisecond, "Read while Close waits", func() {
+		if _, err := c.Read(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Read while Close waits = %v, want net.ErrClosed", err)
+		}
+	})
+	signaled(t, closed, "Close")
+}
+
 // released fails unless s was closed once and nothing reads or writes it any more.
 func released(t *testing.T, s *memSocket, what string) {
 	t.Helper()
@@ -332,6 +352,67 @@ func writeAndClose(tr permuteproxy.Transport, msg string) error {
 	return err
 }
 
+func TestMain(m *testing.M) {
+	if addr := os.Getenv("QUIC_TEST_CHILD_ADDR"); addr != "" {
+		// The child of TestAProcessExitingRightAfterCloseDeliversWhatItWrote.
+		size, _ := strconv.Atoi(os.Getenv("QUIC_TEST_CHILD_SIZE"))
+		tr, err := permuteproxy.Engine{}.Transport(quicChain(addr, permuteproxy.Options{"tls_server_name": "proxy.test", "tls_ca_file": os.Getenv("QUIC_TEST_CHILD_CA")}))
+		if err == nil {
+			err = writeAndClose(tr, string(pattern(size)))
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// pattern is n bytes that a test and its child build alike.
+func pattern(n int) []byte {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(i % 251)
+	}
+	return b
+}
+
+func TestAProcessExitingRightAfterCloseDeliversWhatItWrote(t *testing.T) {
+	ln, k := listenQUIC(t, permuteproxy.Engine{})
+	for _, size := range []int{5, 64 << 10, 256 << 10} {
+		for range 4 {
+			arrived := make(chan error, 1)
+			go func() {
+				c, err := ln.Accept()
+				if err != nil {
+					arrived <- err
+					return
+				}
+				defer c.Close()
+				c.SetReadDeadline(time.Now().Add(10 * time.Second))
+				got, err := io.ReadAll(c)
+				switch {
+				case err != nil:
+					err = fmt.Errorf("%d bytes arrived, then %w", len(got), err)
+				case !bytes.Equal(got, pattern(size)):
+					err = fmt.Errorf("%d bytes arrived, not the %d written", len(got), size)
+				}
+				arrived <- err
+			}()
+			child := exec.Command(os.Args[0], "-test.run=^$")
+			// The race detector would otherwise sleep a second before the child exits.
+			child.Env = append(os.Environ(), "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0", "QUIC_TEST_CHILD_ADDR="+ln.Addr().String(), "QUIC_TEST_CHILD_CA="+k.caFile, "QUIC_TEST_CHILD_SIZE="+strconv.Itoa(size))
+			if out, err := child.CombinedOutput(); err != nil {
+				t.Fatalf("child writing %d bytes: %v: %s", size, err, out)
+			}
+			if err := recv(t, arrived, fmt.Sprintf("the stream of a child that wrote %d bytes", size)); err != nil {
+				t.Fatalf("a child that wrote %d bytes, closed and exited: %v", size, err)
+			}
+		}
+	}
+}
+
 func TestEveryStreamWrittenAndClosedArrivesWhole(t *testing.T) {
 	ln, tr := pair(t, permuteproxy.Engine{})
 	const streams = 500
@@ -404,14 +485,29 @@ func TestASlowReaderGetsAllAClosedDialerWrote(t *testing.T) {
 	}
 }
 
-func TestDialedCloseReturnsAtOnceWhenThePeerNeverReads(t *testing.T) {
+func TestDialedCloseReturnsOnceThePeerEnds(t *testing.T) {
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, srv := connected(t, ln, tr)
+	go func() {
+		io.Copy(io.Discard, srv)
+		srv.Close()
+	}()
+	if _, err := c.Write(random(t, 64<<10)); err != nil {
+		t.Fatal(err)
+	}
+	within(t, 100*time.Millisecond, "Close", func() { c.Close() })
+	released(t, mem.socket(t, 1), "dialed")
+}
+
+func TestDialedCloseReturnsByTheShortBoundWhenThePeerNeverReads(t *testing.T) {
 	ln, tr := pair(t, permuteproxy.Engine{})
 	c, _ := connected(t, ln, tr)
 	// Twice the peer's window, so the end of the stream queues behind data the peer never takes.
 	if _, err := c.Write(make([]byte, 2<<20)); err != nil {
 		t.Fatal(err)
 	}
-	within(t, time.Second, "Close", func() { c.Close() })
+	notBefore(t, time.Now().Add(500*time.Millisecond), time.Second, "Close", func() { c.Close() })
 }
 
 func TestAnExpiredWriteDeadlineLosesNothingAtClose(t *testing.T) {
@@ -453,6 +549,7 @@ func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 }
 
 func TestDialedCloseReleasesByTheLingerBound(t *testing.T) {
+	quic.SetCloseWait(t, 200*time.Millisecond)
 	quic.SetLinger(t, time.Second)
 	mem := newMemNet()
 	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
@@ -462,7 +559,7 @@ func TestDialedCloseReleasesByTheLingerBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := time.Now()
-	within(t, time.Second, "Close", func() { c.Close() })
+	notBefore(t, closed.Add(200*time.Millisecond), time.Second, "Close", func() { c.Close() })
 	eventuallyReleased(t, mem.socket(t, 1), 3*time.Second, "dialed")
 	if d := time.Since(closed); d < time.Second || d >= 2*time.Second {
 		t.Fatalf("dialed carrier released %v after Close, want at the linger of 1s", d)
