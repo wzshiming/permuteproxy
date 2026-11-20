@@ -12,8 +12,7 @@ import (
 	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
-// sshExec serves the ssh layer with exec allowed to user u with password p, running commands
-// through upstream, and returns a client of it.
+// sshExec serves ssh with exec allowed for u:p, running commands through upstream, and returns its client.
 func sshExec(t *testing.T, upstream permuteproxy.Network) permuteproxy.Network {
 	t.Helper()
 	c := parse(t, "ssh://u:p@127.0.0.1:0?allow_exec=true")

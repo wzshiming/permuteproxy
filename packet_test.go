@@ -168,8 +168,7 @@ func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	}
 }
 
-// socks5TwoHops chains a client through a socks5 server and on through a second one with credentials,
-// returning the second hop's client with the probes of the client's base and of each hop's upstream.
+// socks5TwoHops is a client through a socks5 server and on through a second one with credentials.
 func socks5TwoHops(t *testing.T) (hop2 permuteproxy.Network, clientBase, firstUpstream, secondUpstream *probe) {
 	t.Helper()
 	first := parse(t, "socks5://127.0.0.1:0")
