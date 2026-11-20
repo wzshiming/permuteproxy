@@ -417,29 +417,37 @@ func TestCmdFailsWhenServerCannotRunIt(t *testing.T) {
 	roundTrip(t, conn, "ping", "relay x|ping")
 }
 
-func TestCmdConnectsAgainAfterConnectionDrops(t *testing.T) {
-	base := &clientBase{}
-	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	ctx := timeout(t)
-	conn, err := n.DialContext(ctx, "cmd", "relay x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn.Close()
-	base.drop()
-	// As for tcp, the dial that finds the connection gone fails and the next one connects again.
-	if conn, err := n.DialContext(ctx, "cmd", "relay x"); err == nil {
-		conn.Close()
-		t.Fatal("cmd dial over the dropped connection succeeded")
-	}
-	conn, err = n.DialContext(ctx, "cmd", "relay x")
-	if err != nil {
-		t.Fatalf("cmd dial after the connection dropped = %v", err)
-	}
-	defer conn.Close()
-	roundTrip(t, conn, "ping", "relay x|ping")
-	if got := base.dials.Load(); got != 2 {
-		t.Fatalf("client dials = %d, want one reconnect", got)
+func TestDialConnectsAgainAfterConnectionDrops(t *testing.T) {
+	target := echoTarget(t)
+	for _, tt := range []struct{ network, address, reply string }{
+		{"cmd", "relay x", "relay x|ping"},
+		{"tcp", target, "ping"},
+	} {
+		t.Run(tt.network, func(t *testing.T) {
+			base := &clientBase{}
+			n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+			ctx := timeout(t)
+			conn, err := n.DialContext(ctx, tt.network, tt.address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn.Close()
+			base.drop()
+			// The dial that finds the connection gone fails and the next one connects again.
+			if conn, err := n.DialContext(ctx, tt.network, tt.address); err == nil {
+				conn.Close()
+				t.Fatal("dial over the dropped connection succeeded")
+			}
+			conn, err = n.DialContext(ctx, tt.network, tt.address)
+			if err != nil {
+				t.Fatalf("dial after the connection dropped = %v", err)
+			}
+			defer conn.Close()
+			roundTrip(t, conn, "ping", tt.reply)
+			if got := base.dials.Load(); got != 2 {
+				t.Fatalf("client dials = %d, want one reconnect", got)
+			}
+		})
 	}
 }
 
