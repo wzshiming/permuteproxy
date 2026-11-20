@@ -720,3 +720,15 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 		t.Fatalf("upstream dials %d packets %d, want 1 and 0", upstream.dials.Load(), upstream.packets.Load())
 	}
 }
+
+func TestSSAndQUICRefuseNetcatUDP(t *testing.T) {
+	for _, layer := range []string{"ss", "quic"} {
+		if _, err := permuteproxy.ParseURI(layer + "+udp://127.0.0.1:53"); err != nil {
+			t.Errorf("%s over udp = %v, want it valid", layer, err)
+		}
+		// nc carries the datagrams in a stream, which keeps no boundaries between them.
+		if _, err := permuteproxy.ParseURI(layer + "+cmd-nc-udp://127.0.0.1:53"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+			t.Errorf("%s over cmd-nc-udp = %v, want ErrInvalidChain", layer, err)
+		}
+	}
+}
