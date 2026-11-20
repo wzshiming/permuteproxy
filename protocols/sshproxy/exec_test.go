@@ -399,6 +399,17 @@ func dialAside(ctx context.Context, n permuteproxy.Network, network, address str
 // rawServer serves SSH on loopback without authentication, handing on new channels and requests.
 func rawServer(t *testing.T, handle func(newChan ssh.NewChannel), answer func(reqs <-chan *ssh.Request)) string {
 	t.Helper()
+	return sshServer(t, func(_ net.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+		go answer(reqs)
+		for newChan := range chans {
+			handle(newChan)
+		}
+	})
+}
+
+// sshServer serves SSH on loopback without authentication, handing serve each connection.
+func sshServer(t *testing.T, serve func(conn net.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request)) string {
+	t.Helper()
 	signer, err := ssh.ParsePrivateKey(hostKeyPEM)
 	if err != nil {
 		t.Fatal(err)
@@ -417,10 +428,7 @@ func rawServer(t *testing.T, handle func(newChan ssh.NewChannel), answer func(re
 				if err != nil {
 					return
 				}
-				go answer(reqs)
-				for newChan := range chans {
-					handle(newChan)
-				}
+				serve(conn, chans, reqs)
 			}()
 		}
 	}()
