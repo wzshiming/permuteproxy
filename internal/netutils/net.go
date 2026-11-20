@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"reflect"
-	"runtime"
 	"strings"
 )
 
@@ -24,39 +21,6 @@ func IsServerClosedError(err error) bool {
 	}
 
 	return false
-}
-
-var ErrClosedConn = errors.New("use of closed network connection")
-
-// IsClosedConnError reports whether err is an error from use of a closed network connection.
-func IsClosedConnError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	if err == ErrClosedConn || strings.Contains(strings.ToLower(err.Error()), ErrClosedConn.Error()) {
-		return true
-	}
-
-	if runtime.GOOS == "windows" {
-		if oe, ok := err.(*net.OpError); ok && oe.Op == "read" {
-			if se, ok := oe.Err.(*os.SyscallError); ok && se.Syscall == "wsarecv" {
-				const WSAECONNABORTED = 10053
-				const WSAECONNRESET = 10054
-				if n := errno(se.Err); n == WSAECONNRESET || n == WSAECONNABORTED {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func errno(v error) uintptr {
-	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Uintptr {
-		return uintptr(rv.Uint())
-	}
-	return 0
 }
 
 var ErrAcceptTimeout = errors.New("i/o timeout")
