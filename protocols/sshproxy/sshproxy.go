@@ -99,6 +99,7 @@ type client struct {
 type link struct {
 	*ssh.Client
 	read    atomic.Int64
+	gone    chan struct{} // closes once the client no longer holds it
 	probing atomic.Bool
 }
 
@@ -125,7 +126,7 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 			if err != nil {
 				return nil, err
 			}
-			c.next = &link{}
+			c.next = &link{gone: make(chan struct{})}
 			return counted{conn, &c.next.read}, nil
 		}
 	})
@@ -159,12 +160,13 @@ func (c *client) connect(ctx context.Context) (*link, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cli, err := c.dialer.SSHClient(ctx)
-	if err != nil {
-		c.held.Store(nil)
-		return nil, err
+	held := c.held.Load()
+	if err == nil && held != nil && held.Client == cli {
+		return held, nil
 	}
-	if l := c.held.Load(); l != nil && l.Client == cli {
-		return l, nil
+	c.release(held)
+	if err != nil {
+		return nil, err
 	}
 	// The dialer made cli over the conn ProxyDial counts into next.
 	c.next.Client = cli
@@ -172,11 +174,20 @@ func (c *client) connect(ctx context.Context) (*link, error) {
 	return c.next, nil
 }
 
+// release forgets l, reporting whether a newer connection had not replaced it already; connect and drop hold mu.
+func (c *client) release(l *link) bool {
+	if l == nil || !c.held.CompareAndSwap(l, nil) {
+		return false
+	}
+	close(l.gone)
+	return true
+}
+
 // drop closes l, so that the next dial connects again, unless a newer connection replaced it.
 func (c *client) drop(l *link) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.held.CompareAndSwap(l, nil) {
+	if c.release(l) {
 		c.dialer.Close()
 	}
 }
@@ -200,7 +211,7 @@ func (c *client) probe() {
 	}()
 }
 
-// await reports whether the request failed, or a whole bound passed with neither its answer nor a byte from l.
+// await reports whether the request failed, or a whole bound passed with neither its answer nor a byte from l; giving l up ends it.
 func (l *link) await(answered <-chan error) bool {
 	read := l.read.Load()
 	bound := time.NewTimer(keepAliveTimeout)
@@ -209,6 +220,8 @@ func (l *link) await(answered <-chan error) bool {
 		select {
 		case err := <-answered:
 			return err != nil
+		case <-l.gone:
+			return false
 		case <-bound.C:
 			// The answer queues behind whatever the connection still delivers.
 			n := l.read.Load()

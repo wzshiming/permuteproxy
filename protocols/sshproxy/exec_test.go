@@ -8,8 +8,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -754,6 +756,39 @@ func TestConnectionReplacedWhileProbedGetsAProbeOfItsOwn(t *testing.T) {
 	if got := recv(t, probes, "the second connection's probe"); got != 2 {
 		t.Fatalf("probe of connection %d, want the second", got)
 	}
+}
+
+// awaitingProbes counts the probes waiting on a connection's answer or bytes.
+func awaitingProbes() int {
+	buf := make([]byte, 4<<20)
+	return strings.Count(string(buf[:runtime.Stack(buf, true)]), "sshproxy.(*link).await(")
+}
+
+// untilProbes waits up to limit for want probes to be waiting.
+func untilProbes(t *testing.T, want int, limit time.Duration, what string) {
+	t.Helper()
+	for end := time.Now().Add(limit); awaitingProbes() != want; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("%d probes wait after %v, want %d: %s", awaitingProbes(), limit, want, what)
+		}
+	}
+}
+
+func TestProbeEndsOnceItsConnectionIsGivenUp(t *testing.T) {
+	untilProbes(t, 0, 3*keepAliveTimeout, "the probes of earlier tests to end")
+	addr, probes := probedServer(t)
+	base := &clientBase{}
+	n := dialServer(t, base, addr, nil)
+	timesOut(t, n)
+	recv(t, probes, "the probe")
+	untilProbes(t, 1, keepAliveTimeout/2, "the probe started")
+	// Freezing keeps the given-up connection open, its keep-alive pending; the first write it fails goes unreported.
+	t.Cleanup(base.freeze())
+	timesOut(t, n)
+	if _, err := n.DialContext(timeout(t), "tcp", "127.0.0.1:1"); err == nil {
+		t.Fatal("tcp dial over the frozen connection succeeded")
+	}
+	untilProbes(t, 0, keepAliveTimeout/2, "the probe of the given-up connection to end before its bound")
 }
 
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
