@@ -714,7 +714,7 @@ func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 func TestLossyLocalRefusesClientPacket(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp", "udp4"}}}
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
 	n, err := e.Client(mk("", "test-socks5"))
 	if err != nil {
 		t.Fatal(err)
@@ -724,7 +724,8 @@ func TestLossyLocalRefusesClientPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls = nil
-	for _, op := range []string{"listenpacket udp", "dial udp", "dial udp4"} {
+	// A local answering for udp answers for its families too.
+	for _, op := range []string{"listenpacket udp", "dial udp", "dial udp4", "listenpacket udp4", "dial udp6", "listenpacket udp6"} {
 		if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%q with a lossy local = %v, want ErrUnsupported", op, err)
 		}

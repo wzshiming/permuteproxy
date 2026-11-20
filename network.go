@@ -25,13 +25,14 @@ type Network interface {
 
 // LossyNetwork is the optional interface of a Network whose datagram networks may lose datagram boundaries.
 type LossyNetwork interface {
-	Lossy(network string) bool // reports whether datagrams on network may arrive merged or split
+	Lossy(network string) bool // reports whether datagrams on network, a base name such as udp, may arrive merged or split
 }
 
-// isLossy reports whether n says network loses datagram boundaries.
+// isLossy reports whether n says the base network of network loses datagram boundaries.
 func isLossy(n Network, network string) bool {
 	l, ok := n.(LossyNetwork)
-	return ok && l.Lossy(network)
+	base, _, _ := lookupBase(network)
+	return ok && l.Lossy(base)
 }
 
 // NetworkFuncs is a Network of functions, each refusing with ErrUnsupported while it is nil.
