@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
@@ -438,12 +439,12 @@ func TestCommandCancelKillsAfterWaitDelay(t *testing.T) {
 
 func TestCommandRejectsNegativeWaitDelay(t *testing.T) {
 	n := &Local{WaitDelay: -time.Second}
-	if _, err := n.DialContext(context.Background(), "cmd", "cat"); err == nil {
-		t.Fatal("DialContext accepted a negative WaitDelay")
+	if _, err := n.DialContext(context.Background(), "cmd", "cat"); !errors.Is(err, errNegativeWaitDelay) {
+		t.Fatalf("DialContext = %v, want %v", err, errNegativeWaitDelay)
 	}
 	for _, network := range []string{"cmd", "cmd-nc", "cmd-nc-unix"} {
-		if _, err := n.Listen(context.Background(), network, "127.0.0.1:1"); err == nil {
-			t.Fatalf("Listen %s accepted a negative WaitDelay", network)
+		if _, err := engineListen(context.Background(), n, network, "127.0.0.1:1"); !errors.Is(err, errNegativeWaitDelay) {
+			t.Fatalf("Listen %s = %v, want %v", network, err, errNegativeWaitDelay)
 		}
 	}
 }
@@ -509,8 +510,25 @@ func serve(ln net.Listener) error {
 	}
 }
 
+func chain(network, address string) permuteproxy.Chain {
+	return permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: network, Address: address}}
+}
+
+// engineListen listens through the Engine, which asks n for what the network's declaration names.
+func engineListen(ctx context.Context, n *Local, network, address string) (net.Listener, error) {
+	tr, err := permuteproxy.Engine{Base: n}.Transport(chain(network, address))
+	if err != nil {
+		return nil, err
+	}
+	return tr.Listen(ctx)
+}
+
 func pingPong(ctx context.Context, n *Local, network, address string) error {
-	client, err := n.DialContext(ctx, network, address)
+	tr, err := permuteproxy.Engine{Base: n}.Transport(chain(network, address))
+	if err != nil {
+		return err
+	}
+	client, err := tr.Dial(ctx, permuteproxy.Stream)
 	if err != nil {
 		return err
 	}
@@ -559,7 +577,7 @@ func TestNetcatSequentialConnections(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			address := tt.address(t)
-			ln, err := Network.Listen(ctx, tt.network, address)
+			ln, err := engineListen(ctx, Network, tt.network, address)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -581,7 +599,7 @@ func TestFakeLinuxNetcatSequentialConnections(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	address := reservePort(t)
-	ln, err := n.Listen(ctx, "cmd-nc", address)
+	ln, err := engineListen(ctx, n, "cmd-nc", address)
 	if err != nil {
 		t.Fatal(err)
 	}
