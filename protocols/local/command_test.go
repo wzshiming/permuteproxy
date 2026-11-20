@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -969,6 +970,26 @@ func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
 	}
 	if _, err := os.Lstat(address); !os.IsNotExist(err) {
 		t.Fatalf("socket of a closed connection without a process left behind: %v", err)
+	}
+}
+
+func TestNetcatUnixListenQuotesThePath(t *testing.T) {
+	address := filepath.Join(t.TempDir(), "a b.sock")
+	argv := make(chan []string, 1)
+	n := &Local{}
+	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		argv <- append([]string{name}, args...)
+		local, _ := net.Pipe()
+		return local, nil
+	}
+	ln, err := n.Listen(context.Background(), "cmd-nc-unix", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go ln.Accept()
+	if got, want := <-argv, []string{"nc", "-Ul", address}; !slices.Equal(got, want) {
+		t.Fatalf("listening runs %q, want %q", got, want)
 	}
 }
 
