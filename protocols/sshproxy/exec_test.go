@@ -634,18 +634,27 @@ func TestCmdDialEndsWithCtxWhileExecWaits(t *testing.T) {
 
 func TestOneProbeRunsAtATime(t *testing.T) {
 	keepAlives := make(chan *ssh.Request, 16)
-	addr := rawServer(t, func(ssh.NewChannel) {}, func(reqs <-chan *ssh.Request) {
+	addr := rawServer(t, func(newChan ssh.NewChannel) {
+		// A tcp dial connects and is refused, while the sessions of cmd dials wait.
+		if newChan.ChannelType() == "direct-tcpip" {
+			newChan.Reject(ssh.Prohibited, "connecting only")
+		}
+	}, func(reqs <-chan *ssh.Request) {
 		for req := range reqs {
 			keepAlives <- req
 		}
 	})
 	n := dialServer(t, &clientBase{}, addr, nil)
+	var refused *ssh.OpenChannelError
+	if _, err := n.DialContext(timeout(t), "tcp", "127.0.0.1:1"); !errors.As(err, &refused) {
+		t.Fatalf("tcp dial = %v, want it refused", err)
+	}
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			n.DialContext(ctx, "cmd", "anything")
 		}()
