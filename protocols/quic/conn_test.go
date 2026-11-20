@@ -443,6 +443,8 @@ func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 	if got, err := io.ReadAll(srv); err != nil || string(got) != "x" {
 		t.Fatalf("listener read %q, %v; want x, then EOF", got, err)
 	}
+	// Long enough for the acknowledgement of x, which must not release the carrier.
+	time.Sleep(300 * time.Millisecond)
 	if n := mem.socket(t, 1).closes.Load(); n != 0 {
 		t.Fatal("dialed carrier released while its peer kept the stream open")
 	}
