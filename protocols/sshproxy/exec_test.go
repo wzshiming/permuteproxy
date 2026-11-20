@@ -383,8 +383,8 @@ func dialAside(ctx context.Context, n permuteproxy.Network, network, address str
 	return dialed
 }
 
-// rawServer serves SSH on loopback without authentication, handing each new channel to handle.
-func rawServer(t *testing.T, handle func(newChan ssh.NewChannel)) string {
+// rawServer serves SSH on loopback without authentication, handing on new channels and requests.
+func rawServer(t *testing.T, handle func(newChan ssh.NewChannel), answer func(reqs <-chan *ssh.Request)) string {
 	t.Helper()
 	signer, err := ssh.ParsePrivateKey(hostKeyPEM)
 	if err != nil {
@@ -404,7 +404,7 @@ func rawServer(t *testing.T, handle func(newChan ssh.NewChannel)) string {
 				if err != nil {
 					return
 				}
-				go ssh.DiscardRequests(reqs)
+				go answer(reqs)
 				for newChan := range chans {
 					handle(newChan)
 				}
@@ -430,7 +430,7 @@ func rawExecServer(t *testing.T, run func(ch ssh.Channel)) string {
 				}
 			}
 		}()
-	})
+	}, ssh.DiscardRequests)
 }
 
 func TestCmdRoundTripsThroughExec(t *testing.T) {
@@ -545,7 +545,7 @@ func TestCmdDialEndingWhileConnectingOpensNoSession(t *testing.T) {
 	addr := rawServer(t, func(newChan ssh.NewChannel) {
 		opened <- struct{}{}
 		newChan.Reject(ssh.Prohibited, "counted only")
-	})
+	}, ssh.DiscardRequests)
 	connecting, connect := make(chan struct{}, 1), make(chan struct{})
 	base := permuteproxy.NetworkFuncs{DialContextFunc: func(_ context.Context, network, address string) (net.Conn, error) {
 		connecting <- struct{}{}
@@ -597,7 +597,7 @@ func TestCmdDialEndsWithCtxWhileSessionOpens(t *testing.T) {
 			ch.Close()
 			ended <- execs
 		}()
-	})
+	}, ssh.DiscardRequests)
 	n := dialServer(t, &clientBase{}, addr, nil)
 	t.Cleanup(release)
 	ctx, cancel := context.WithCancel(context.Background())
