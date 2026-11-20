@@ -2,10 +2,14 @@ package socks5
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -619,6 +623,124 @@ func TestAssociationNameResolution(t *testing.T) {
 	}
 	if got := conn.RemoteAddr().String(); got != "proxy.invalid:9" {
 		t.Fatalf("socks5h RemoteAddr() = %q, want the name kept for the proxy", got)
+	}
+}
+
+// answerDNS answers one query on a DNS-over-TCP conn: an A query for name gets 127.0.0.1, any other no record.
+func answerDNS(conn net.Conn, name string) {
+	defer conn.Close()
+	var size [2]byte
+	if _, err := io.ReadFull(conn, size[:]); err != nil {
+		return
+	}
+	query := make([]byte, binary.BigEndian.Uint16(size[:]))
+	if _, err := io.ReadFull(conn, query); err != nil {
+		return
+	}
+	end, labels := 12, []string{}
+	for query[end] != 0 {
+		labels = append(labels, string(query[end+1:end+1+int(query[end])]))
+		end += 1 + int(query[end])
+	}
+	// The reply keeps the ID and question and sets recursion available, so no record is a final answer.
+	reply := append([]byte{query[0], query[1], 0x81, 0x80, 0, 1, 0, 0, 0, 0, 0, 0}, query[12:end+5]...)
+	if strings.Join(labels, ".") == name && binary.BigEndian.Uint16(query[end+1:]) == 1 {
+		reply[7] = 1
+		reply = append(reply, 0xc0, 12, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 1)
+	}
+	binary.BigEndian.PutUint16(size[:], uint16(len(reply)))
+	conn.Write(append(size[:], reply...))
+}
+
+func TestUDPDialDefaultPeer(t *testing.T) {
+	var lookups atomic.Int32
+	stubResolver(t, func(context.Context, string, string) (net.Conn, error) {
+		lookups.Add(1)
+		client, server := net.Pipe()
+		go answerDNS(server, "echo.test")
+		return client, nil
+	})
+	addr := serve(t, newProbe(system), nil)
+	port := strconv.Itoa(echo(t).LocalAddr().(*net.UDPAddr).Port)
+	ip, name := net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("echo.test", port)
+	tests := []struct {
+		name         string
+		resolve      bool
+		target, peer string
+		udpAddr      bool // the default peer is a *net.UDPAddr
+		dialLookup   bool // the client looked the name up while dialing
+		proxyLookup  bool // the proxy looked up the name its datagrams carried
+	}{
+		{"socks5 ip", true, ip, ip, true, false, false},
+		{"socks5 name", true, name, ip, true, true, false},
+		{"socks5h ip", false, ip, ip, true, false, false},
+		{"socks5h name", false, name, name, false, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lookups.Store(0)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, err := dialer(t, newProbe(system), addr, nil, tt.resolve).DialContext(ctx, "udp", tt.target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			remote := conn.RemoteAddr()
+			if _, ok := remote.(*net.UDPAddr); remote.String() != tt.peer || ok != tt.udpAddr {
+				t.Fatalf("RemoteAddr() = %T %v, want %v as a *net.UDPAddr: %v", remote, remote, tt.peer, tt.udpAddr)
+			}
+			dialed := lookups.Load()
+			if (dialed > 0) != tt.dialLookup {
+				t.Fatalf("%d lookups while dialing", dialed)
+			}
+			if _, err := conn.Write([]byte("ping")); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 16)
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if n, err := conn.Read(buf); err != nil || string(buf[:n]) != "ping" {
+				t.Fatalf("Read = %q, %v", buf[:n], err)
+			}
+			if proxied := lookups.Load() - dialed; (proxied > 0) != tt.proxyLookup {
+				t.Fatalf("%d lookups after the dial", proxied)
+			}
+		})
+	}
+}
+
+func TestSchemesTakeOnlyCredentials(t *testing.T) {
+	for _, scheme := range []string{"socks5", "socks5h"} {
+		c, err := permuteproxy.ParseURI(scheme + "://u:p@127.0.0.1:1080")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := (permuteproxy.Options{"username": "u", "password": "p"}); !maps.Equal(c.Layers[0].Options, want) {
+			t.Fatalf("%s credentials = %v, want %v", scheme, c.Layers[0].Options, want)
+		}
+		if _, err := permuteproxy.ParseURI(scheme + "://127.0.0.1:1080?x=1"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+			t.Fatalf("%s with option x = %v, want ErrInvalidChain", scheme, err)
+		}
+	}
+}
+
+func TestClientRefusesUnlistedNetworks(t *testing.T) {
+	for _, resolve := range []bool{true, false} {
+		base := newProbe(system)
+		n := dialer(t, base, "127.0.0.1:1", nil, resolve)
+		ctx := context.Background()
+		if _, err := n.DialContext(ctx, "unix", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("DialContext(unix) = %v, want ErrUnsupported", err)
+		}
+		if _, err := n.ListenPacket(ctx, "unixgram", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("ListenPacket(unixgram) = %v, want ErrUnsupported", err)
+		}
+		if _, err := n.Listen(ctx, "tcp", "127.0.0.1:0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("Listen(tcp) = %v, want ErrUnsupported", err)
+		}
+		if base.dials.Load() != 0 || base.packets.Load() != 0 {
+			t.Fatalf("base dials %d packets %d, want none", base.dials.Load(), base.packets.Load())
+		}
 	}
 }
 
