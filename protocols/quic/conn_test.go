@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	xquic "golang.org/x/net/quic"
+
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/protocols/quic"
 )
@@ -551,45 +553,55 @@ func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 }
 
 func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
-	k := issue(t)
-	ep := rawListen(t, k)
-	data := random(t, 300<<10)
-	arrived := make(chan error, 1)
-	go func() {
-		arrived <- func() error {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			qc, err := ep.Accept(ctx)
-			if err != nil {
-				return err
+	for _, tt := range []struct {
+		name  string
+		end   func(*xquic.Stream)
+		ended error // what the dialer's read ends with once the peer's end arrives
+	}{
+		{"close", (*xquic.Stream).CloseWrite, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			k := issue(t)
+			ep := rawListen(t, k)
+			data := random(t, 300<<10)
+			arrived := make(chan error, 1)
+			go func() {
+				arrived <- func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					qc, err := ep.Accept(ctx)
+					if err != nil {
+						return err
+					}
+					s, err := qc.AcceptStream(ctx)
+					if err != nil {
+						return err
+					}
+					tt.end(s)
+					s.SetReadContext(ctx)
+					got, err := io.ReadAll(s)
+					switch {
+					case err != nil:
+						return fmt.Errorf("%d bytes arrived, then %w", len(got), err)
+					case !bytes.Equal(got, data):
+						return fmt.Errorf("%d bytes arrived, not the %d written", len(got), len(data))
+					}
+					return nil
+				}()
+			}()
+			c := dial(t, build(t, permuteproxy.Engine{}, quicChain(ep.LocalAddr().String(), k.client)))
+			c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if got, err := io.ReadAll(c); !errors.Is(err, tt.ended) || len(got) != 0 {
+				t.Fatalf("dialer read %q, %v; want the peer's end of stream", got, err)
 			}
-			s, err := qc.AcceptStream(ctx)
-			if err != nil {
-				return err
+			if _, err := c.Write(data); err != nil {
+				t.Fatal(err)
 			}
-			s.CloseWrite()
-			s.SetReadContext(ctx)
-			got, err := io.ReadAll(s)
-			switch {
-			case err != nil:
-				return fmt.Errorf("%d bytes arrived, then %w", len(got), err)
-			case !bytes.Equal(got, data):
-				return fmt.Errorf("%d bytes arrived, not the %d written", len(got), len(data))
+			c.Close()
+			if err := recv(t, arrived, "the peer's read"); err != nil {
+				t.Fatalf("a peer that ended its side before reading: %v", err)
 			}
-			return nil
-		}()
-	}()
-	c := dial(t, build(t, permuteproxy.Engine{}, quicChain(ep.LocalAddr().String(), k.client)))
-	c.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if got, err := io.ReadAll(c); err != nil || len(got) != 0 {
-		t.Fatalf("dialer read %q, %v; want the peer's end of stream", got, err)
-	}
-	if _, err := c.Write(data); err != nil {
-		t.Fatal(err)
-	}
-	c.Close()
-	if err := recv(t, arrived, "the peer's read"); err != nil {
-		t.Fatalf("a peer that ended its side before reading: %v", err)
+		})
 	}
 }
 
