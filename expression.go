@@ -29,8 +29,7 @@ func parseExpression(text string) (expression, error) {
 		ok = ok && validName.MatchString(t)
 	}
 	template, authority := strings.CutPrefix(rest, "//")
-	// A URI ends its address at '?' or '#', admits no control bytes and reads an opaque part starting with '/' as a path.
-	if !ok || template == "" || strings.ContainsAny(template, "?#") || strings.ContainsFunc(template, isCTL) || !authority && template[0] == '/' {
+	if !ok || template == "" || strings.ContainsFunc(template, isCTL) {
 		return expression{}, fmt.Errorf("unparsable expression %q", text)
 	}
 	return expression{layers: tokens[:len(tokens)-1], network: tokens[len(tokens)-1], opaque: !authority, template: template}, nil

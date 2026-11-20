@@ -31,6 +31,7 @@ func init() {
 	RegisterNetwork("test-closable-tcp", NetworkSpec{AddressKind: AddressHost, Dial: "closable+tcp://%h:%p"})
 	RegisterNetwork("test-via-fakenet", NetworkSpec{AddressKind: AddressHost, Dial: "fakenet://%h:%p"})
 	RegisterNetwork("test-dtls-udp", NetworkSpec{AddressKind: AddressHost, Dial: "test-dtls+udp://%h:%p"})
+	RegisterNetwork("test-abs-nc", NetworkSpec{AddressKind: AddressHost, Dial: "cmd:/usr/bin/nc %h %p #?"})
 }
 
 // carrierNet is fakeNet dialing conns that name their peer, which dgram reads.
@@ -79,10 +80,7 @@ func TestRegisterNetworkRejectsExpressions(t *testing.T) {
 		{"empty layer", host("+cmd:nc %h %p", ""), "unparsable"},
 		{"malformed token", host("Cmd:nc %h %p", ""), "unparsable"},
 		{"empty template", host("cmd:", ""), "unparsable"},
-		{"query in template", host("cmd:nc %h %p?x", ""), "unparsable"},
-		{"fragment in template", host("cmd:nc %h#%p", ""), "unparsable"},
 		{"control character in template", host("cmd:nc\t%h %p", ""), "unparsable"},
-		{"opaque template read as a path", host("cmd:/bin/nc %h %p", ""), "unparsable"},
 		{"authority over an opaque network", host("cmd://nc %h %p", ""), "unparsable"},
 		{"opaque over a host network", host("tcp:%h:%p", ""), "unparsable"},
 		{"unknown layer", host("bogus+cmd:nc %h %p", ""), `"bogus" is not a registered adapter`},
@@ -309,6 +307,7 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 		{base, "test-auth-tcp", "[fe80::1%en0]:1", Stream, []string{"test-auth.new", "base.dial tcp fe80::1%en0:1", "test-auth.client"}},
 		{base, "test-snappy-unix", "/tmp/a b.sock", Stream, []string{"test-snappy.new", "base.dial unix /tmp/a b.sock", "test-snappy.client"}},
 		{base, "test-percent", "127.0.0.1:1", Stream, []string{"base.dial cmd printf %h:%p 127.0.0.1:1"}},
+		{base, "test-abs-nc", "127.0.0.1:1", Stream, []string{"base.dial cmd /usr/bin/nc 127.0.0.1 1 #?"}},
 		{Engine{}, "test-via-fakenet", "127.0.0.1:1", Stream, []string{"impl.dial fakenet 127.0.0.1:1"}},
 	}
 	for _, tt := range tests {
