@@ -275,6 +275,24 @@ var proxyRows = []string{
 	"https://u:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
 	"http+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
 	"http+tls://u:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks5+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"http+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks4+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"ssh+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"any+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"ss+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks5+snappy+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+}
+
+// selfSigned has a tls or quic server sign its own certificate and a client skip verifying it.
+var selfSigned = permuteproxy.Options{"tls_self_signed": "true", "tls_skip_verify": "true"}
+
+// proxyChains are matrix rows no URI writes, as a URI hands tls_* keys only to the outer of tls and quic.
+var proxyChains = []matrixRow{
+	{"socks5+tls+quic://127.0.0.1:0", permuteproxy.Chain{
+		Layers:   []permuteproxy.Layer{{Scheme: "socks5"}, {Scheme: "tls", Options: selfSigned}, {Scheme: "quic", Options: selfSigned}},
+		Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:0"},
+	}},
 }
 
 var anyClients = []string{"http", "socks4", "socks5", "ssh"}
@@ -292,10 +310,11 @@ func TestProxy(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	dir := t.TempDir()
-	rows := make([]matrixRow, 0, len(proxyRows))
+	rows := make([]matrixRow, 0, len(proxyRows)+len(proxyChains))
 	for _, uri := range proxyRows {
 		rows = append(rows, matrixRow{uri, parse(t, uri)})
 	}
+	rows = append(rows, proxyChains...)
 	for i, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			c := row.chain
@@ -309,9 +328,15 @@ func TestProxy(t *testing.T) {
 			case "cmd-nc":
 				c.Endpoint.Address = reservePort(t)
 			}
+			// A quic row's server binds a udp socket at port 0, not a listener.
+			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
 			base, upstream := newProbe(local.Network), newProbe(system)
 			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
-			addr := waitBound(t, base, done)
+			bound := waitBound
+			if overUDP {
+				bound = waitBoundPacket
+			}
+			addr := bound(t, base, done)
 			if c.Endpoint.Network == "" {
 				c.Endpoint.Address = addr.String()
 			}
@@ -347,12 +372,20 @@ func TestProxy(t *testing.T) {
 					if got := upstream.dials.Load() - before; got != 1 {
 						t.Fatalf("upstream dials = %d, want 1", got)
 					}
-					if got := clientBase.dials.Load(); got < 1 || (!command && got != 1) {
+					if overUDP {
+						if got := clientBase.packets.Load(); got != 1 || clientBase.dials.Load() != 0 {
+							t.Fatalf("client base packets = %d, dials = %d; want one socket", got, clientBase.dials.Load())
+						}
+					} else if got := clientBase.dials.Load(); got < 1 || (!command && got != 1) {
 						t.Fatalf("client base dials = %d", got)
 					}
 				})
 			}
-			if got := base.listens.Load(); got != 1 {
+			if overUDP {
+				if got := base.packets.Load(); got != 1 || base.listens.Load() != 0 {
+					t.Fatalf("base packets = %d, listens = %d; want one socket", got, base.listens.Load())
+				}
+			} else if got := base.listens.Load(); got != 1 {
 				t.Fatalf("base listens = %d, want 1", got)
 			}
 		})
