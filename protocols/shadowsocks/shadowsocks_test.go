@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -214,5 +215,21 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 				t.Fatalf("outgoing socket closed %d times after serving ended, want 1", upstream.closes.Load())
 			}
 		})
+	}
+}
+
+func TestSchemesAcceptOnlyTheCredentialOptions(t *testing.T) {
+	want := permuteproxy.Options{"encrypto": "aes-256-gcm", "password": "p"}
+	for _, scheme := range []string{"ss", "shadowsocks"} {
+		c, err := permuteproxy.ParseURI(scheme + "://aes-256-gcm:p@127.0.0.1:1")
+		if err != nil {
+			t.Fatalf("%s: %v", scheme, err)
+		}
+		if got := c.Layers[0].Options; !maps.Equal(got, want) {
+			t.Fatalf("%s userinfo filled %v, want %v", scheme, got, want)
+		}
+		if _, err := permuteproxy.ParseURI(scheme + "://127.0.0.1:1?cipher=aes-256-gcm"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+			t.Fatalf("%s took an option other than encrypto and password: %v", scheme, err)
+		}
 	}
 }
