@@ -4,6 +4,7 @@ package quic
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/netip"
 	"sync"
@@ -64,6 +65,11 @@ func quicConfig(config *tls.Config) *quic.Config {
 
 // dial opens one QUIC connection over the carrier to its default peer, and one stream on it.
 func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn, error) {
+	peer, ok := addrPort(carrier.RemoteAddr())
+	if _, local := addrPort(carrier.LocalAddr()); !ok || !local {
+		carrier.Close()
+		return nil, fmt.Errorf("quic from %v to %v: not ip:port: %w", carrier.LocalAddr(), carrier.RemoteAddr(), permuteproxy.ErrUnsupported)
+	}
 	sock := &socket{PacketConn: carrier.(net.PacketConn)}
 	endpoint, err := quic.NewEndpoint(sock, nil)
 	if err != nil {
@@ -74,7 +80,7 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 		closeEndpoint(endpoint)
 		sock.Close()
 	}
-	qc, err := endpoint.Dial(ctx, "udp", carrier.RemoteAddr().String(), config)
+	qc, err := endpoint.Dial(ctx, "udp", peer.String(), config)
 	if err != nil {
 		release()
 		return nil, err
@@ -97,6 +103,17 @@ func closeEndpoint(e *quic.Endpoint) {
 	e.Close(context.Background())
 }
 
+// addrPort is addr as the ip:port an Endpoint needs, unmapped as an Endpoint keeps its peers.
+func addrPort(addr net.Addr) (netip.AddrPort, bool) {
+	var ap netip.AddrPort
+	if a, ok := addr.(*net.UDPAddr); ok {
+		ap = a.AddrPort()
+	} else {
+		ap, _ = netip.ParseAddrPort(addr.String())
+	}
+	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), ap.IsValid()
+}
+
 // socket is a carrier as an Endpoint reads it: closed once, its peers unmapped as the Endpoint's own are.
 type socket struct {
 	net.PacketConn
@@ -108,8 +125,8 @@ func (s *socket) ReadFrom(b []byte) (int, net.Addr, error) {
 	n, addr, err := s.PacketConn.ReadFrom(b)
 	if a, ok := addr.(*net.UDPAddr); ok {
 		// A dual-stack socket reports IPv4 peers v4-mapped, which the Endpoint takes for another peer.
-		ap := a.AddrPort()
-		addr = net.UDPAddrFromAddrPort(netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()))
+		ap, _ := addrPort(a)
+		addr = net.UDPAddrFromAddrPort(ap)
 	}
 	return n, addr, err
 }
@@ -133,6 +150,10 @@ type listener struct {
 }
 
 func listen(pc net.PacketConn, config *quic.Config) (net.Listener, error) {
+	if _, ok := addrPort(pc.LocalAddr()); !ok {
+		pc.Close()
+		return nil, fmt.Errorf("quic at %v: not ip:port: %w", pc.LocalAddr(), permuteproxy.ErrUnsupported)
+	}
 	sock := &socket{PacketConn: pc}
 	endpoint, err := quic.NewEndpoint(sock, config)
 	if err != nil {
