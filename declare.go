@@ -280,8 +280,8 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 	return netutils.WrapPacket(pc, peer), nil
 }
 
-// derivable are the base networks a client may derive, those the root package declares.
-var derivable = []string{"tcp", "udp", "unix", "unixgram", "cmd"}
+// derivable are the base networks a client may derive, those the root package declares but unixgram, whose local end is a path.
+var derivable = []string{"tcp", "udp", "unix", "cmd"}
 
 // derivation is a base network a client derives by expression from the networks it lists.
 type derivation struct {

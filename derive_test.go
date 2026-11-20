@@ -105,6 +105,7 @@ var underived = map[string]struct {
 	"test-derive-stream-udp":    {relayNetworks, map[string]string{"udp": "cmd:relay %h %p"}},
 	"test-derive-packet-unix":   {relayNetworks, map[string]string{"unix": "dgram+cmd:relay -U %h"}},
 	"test-derive-quoted":        {relayNetworks, map[string]string{"unix": "cmd:sh -c 'relay -U %h'"}},
+	"test-derive-unixgram":      {relayNetworks, map[string]string{"unixgram": "dgram+cmd:relay -U %h"}},
 }
 
 func init() {
@@ -115,10 +116,9 @@ func init() {
 		}},
 		Close: func() error { record("test-held.close"); return nil },
 	}, nil))
-	unixgram, unix := map[string]string{"unixgram": "dgram+cmd:relay -U %h"}, map[string]string{"unix": "cmd:relay -U %h"}
+	udp, unix := map[string]string{"udp": relayed["udp"]}, map[string]string{"unix": "cmd:relay -U %h"}
 	RegisterLayer("test-derive", derivingProxy("test-derive", Stream|Packet, 0, relayNetworks, relayed, dialRelay))
-	RegisterLayer("test-derive-kept", derivingProxy("test-derive-kept", 0, Stream|Packet, relayNetworks, unixgram, dialRelay))
-	RegisterLayer("test-derive-listed-udp", derivingProxy("test-derive-listed-udp", Stream|Packet, 0, []string{"tcp", "cmd", "udp"}, unixgram, dialRelay))
+	RegisterLayer("test-derive-kept", derivingProxy("test-derive-kept", 0, Stream|Packet, relayNetworks, udp, dialRelay))
 	RegisterLayer("test-derive-unix", derivingProxy("test-derive-unix", Stream|Packet, 0, relayNetworks, unix, dialRelay))
 	RegisterLayer("test-derive-kept-unix", derivingProxy("test-derive-kept-unix", 0, Stream|Packet, relayNetworks, unix, dialRelay))
 	// test-uot keeps datagram boundaries over tcp, where dgram over cmd loses them.
@@ -221,28 +221,33 @@ func TestClientAdmitsDerivedNetworks(t *testing.T) {
 	assertCalls(t)
 	// Over test-tls, test-derive-kept has no datagrams to preserve, so what it derives on that plane stays refused.
 	kept := derivingClient(t, mk("", "test-derive-kept", "test-tls"))
-	if _, err := kept.DialContext(ctx, "unixgram", "/tmp/x"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("dial unixgram outside the layer's planes = %v, want ErrUnsupported", err)
+	if _, err := kept.DialContext(ctx, "udp", "peer.invalid:1"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("dial udp outside the layer's planes = %v, want ErrUnsupported", err)
 	}
-	if _, err := kept.ListenPacket(ctx, "unixgram", ":0"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("listen packet unixgram outside the layer's planes = %v, want ErrUnsupported", err)
+	if _, err := kept.ListenPacket(ctx, "udp", ":0"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("listen packet udp outside the layer's planes = %v, want ErrUnsupported", err)
 	}
-	conn, err := derivingClient(t, mk("", "test-derive-kept")).DialContext(ctx, "unixgram", "/tmp/x")
+	conn, err := derivingClient(t, mk("", "test-derive-kept")).DialContext(ctx, "udp", "peer.invalid:1")
 	if err != nil {
-		t.Fatalf("dial unixgram within the layer's planes = %v", err)
+		t.Fatalf("dial udp within the layer's planes = %v", err)
 	}
 	conn.Close()
 	assertCalls(t)
 }
 
 func TestClientWithoutListenPacketRefusesListedDatagrams(t *testing.T) {
+	calls = nil
 	ctx := context.Background()
-	n := derivingClient(t, mk("", "test-derive-listed-udp"))
+	// The engine refuses datagrams to a proxy without Packet first, so this one is assembled directly.
+	n, err := derivingProxy("test-derive", Stream, 0, []string{"tcp", "udp", "unixgram"}, nil, dialRelay).client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := n.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("dial udp without ListenPacket = %v, want ErrUnsupported", err)
 	}
-	if _, err := n.ListenPacket(ctx, "udp", ":0"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("listen packet udp without ListenPacket = %v, want ErrUnsupported", err)
+	if _, err := n.ListenPacket(ctx, "unixgram", "/tmp/x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("listen packet unixgram without ListenPacket = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
 }
@@ -480,7 +485,7 @@ func TestClientReportsDerivedLossy(t *testing.T) {
 		lossy  map[string]bool
 	}{
 		{"test-derive", map[string]bool{"udp": true, "udp6": true, "unix": false, "tcp": false, "cmd": false, "unixgram": false}},
-		{"test-derive-kept", map[string]bool{"unixgram": true, "udp": false}},
+		{"test-derive-kept", map[string]bool{"udp": true, "unixgram": false}},
 		{"test-derive-uot", map[string]bool{"udp": false, "udp4": false}},
 		{"test-lossy-derive-uot", map[string]bool{"udp": true, "tcp": false}},
 	}
