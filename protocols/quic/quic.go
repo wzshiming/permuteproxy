@@ -112,11 +112,9 @@ func addrPort(addr net.Addr) (netip.AddrPort, bool) {
 	return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port()), ap.IsValid()
 }
 
-// socket is a carrier as an Endpoint reads it: closed once, its peers unmapped as the Endpoint's own are.
+// socket is a carrier as an Endpoint reads it, its peers unmapped as the Endpoint's own are.
 type socket struct {
 	net.PacketConn
-	once sync.Once
-	err  error
 }
 
 func (s *socket) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -127,11 +125,6 @@ func (s *socket) ReadFrom(b []byte) (int, net.Addr, error) {
 		addr = net.UDPAddrFromAddrPort(ap)
 	}
 	return n, addr, err
-}
-
-func (s *socket) Close() error {
-	s.once.Do(func() { s.err = s.PacketConn.Close() })
-	return s.err
 }
 
 // listener hands out the streams of every connection its Endpoint accepts.
