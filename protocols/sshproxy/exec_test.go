@@ -296,8 +296,8 @@ func readAll(t *testing.T, conn net.Conn) string {
 	return string(recv(t, read, "the output to end"))
 }
 
-// rawExecServer hands run each exec's channel, for the stderr this layer's server never sends.
-func rawExecServer(t *testing.T, run func(ch ssh.Channel)) string {
+// rawServer serves SSH without authentication on loopback, handing handle each channel a client opens.
+func rawServer(t *testing.T, handle func(newChan ssh.NewChannel)) string {
 	t.Helper()
 	signer, err := ssh.ParsePrivateKey(hostKeyPEM)
 	if err != nil {
@@ -319,23 +319,31 @@ func rawExecServer(t *testing.T, run func(ch ssh.Channel)) string {
 				}
 				go ssh.DiscardRequests(reqs)
 				for newChan := range chans {
-					ch, reqs, err := newChan.Accept()
-					if err != nil {
-						continue
-					}
-					go func() {
-						for req := range reqs {
-							req.Reply(req.Type == "exec", nil)
-							if req.Type == "exec" {
-								go run(ch)
-							}
-						}
-					}()
+					handle(newChan)
 				}
 			}()
 		}
 	}()
 	return ln.Addr().String()
+}
+
+// rawExecServer hands run each exec's channel, for the stderr this layer's server never sends.
+func rawExecServer(t *testing.T, run func(ch ssh.Channel)) string {
+	t.Helper()
+	return rawServer(t, func(newChan ssh.NewChannel) {
+		ch, reqs, err := newChan.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			for req := range reqs {
+				req.Reply(req.Type == "exec", nil)
+				if req.Type == "exec" {
+					go run(ch)
+				}
+			}
+		}()
+	})
 }
 
 func TestCmdRoundTripsThroughExec(t *testing.T) {
