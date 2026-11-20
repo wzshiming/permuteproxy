@@ -42,10 +42,11 @@ func isCTL(r rune) bool {
 // placeholders lists per AddressKind the letters a template may put after '%', besides the '%' that "%%" writes.
 var placeholders = map[AddressKind]string{AddressHost: "hp", AddressPath: "h", AddressOpaque: "a"}
 
-// check refuses a placeholder of x's template that is unknown, unfit for kind, or quoted or escaped for a shell.
+// check refuses a placeholder of x's template that is unknown, unfit for kind, or that a shell may read quoted or escaped.
 func (x expression) check(kind AddressKind) error {
 	t := x.template
-	var quote byte // the quote a POSIX shell reading t is inside
+	var quote byte    // the quote a POSIX shell reading t is inside
+	var opener string // the last "$(", "${", "`" or "$'" read, past which quoting is not followed
 	for i := 0; i < len(t); i++ {
 		switch c := t[i]; {
 		case c == '%':
@@ -58,6 +59,8 @@ func (x expression) check(kind AddressKind) error {
 				return fmt.Errorf("placeholder %q is inside quotes", p)
 			case i > 0 && t[i-1] == '\\':
 				return fmt.Errorf("placeholder %q follows a backslash", p)
+			case opener != "":
+				return fmt.Errorf("placeholder %q follows %q", p, opener)
 			}
 			i++
 		case quote == '\'':
@@ -66,6 +69,10 @@ func (x expression) check(kind AddressKind) error {
 			}
 		case c == '\\' && i+1 < len(t) && t[i+1] != '%':
 			i++
+		case c == '`':
+			opener = "`"
+		case c == '$' && i+1 < len(t) && (t[i+1] == '(' || t[i+1] == '{' || t[i+1] == '\'' && quote == 0):
+			opener = t[i : i+2]
 		case c == quote:
 			quote = 0
 		case quote == 0 && (c == '\'' || c == '"'):

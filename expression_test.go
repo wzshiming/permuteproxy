@@ -96,6 +96,7 @@ func TestRegisterNetworkRejectsExpressions(t *testing.T) {
 		{"placeholder in single quotes", host("cmd:sh -c 'exec nc %h %p'", ""), `placeholder "%h" is inside quotes`},
 		{"placeholder in double quotes", host(`cmd:sh -c "exec nc %h %p"`, ""), `placeholder "%h" is inside quotes`},
 		{"path placeholder in quotes", NetworkSpec{AddressKind: AddressPath, Dial: `cmd:sh -c 'printf "<%%s>" %h'`}, `placeholder "%h" is inside quotes`},
+		{"placeholder after command substitution", host(`cmd:sh -c "$(printf "nc %h %p")"`, ""), `placeholder "%h" follows "$("`},
 		{"layer requiring a plane the network lacks", host("test-quic+cmd:nc %h %p", ""), `"test-quic" requires`},
 		{"packet required over lossy datagrams", host("test-dtls+dgram+cmd:nc %h %p", ""), "datagram boundaries"},
 		{"plane with dial", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Dial: "cmd:nc %h %p"}, "Plane set with Dial"},
@@ -129,6 +130,12 @@ func TestExpressionRefusesPlaceholdersAShellReadsQuoted(t *testing.T) {
 		`cmd:printf "\%h" %p`:                 true,
 		`cmd:nc '%h' %p`:                      true,
 		`cmd:nc \%h %p`:                       true,
+		`cmd:printf %%s "$(echo "a %h")"`:     true,
+		`cmd:printf %%s "${x:-"a %h"}"`:       true,
+		"cmd:printf %%s \"`echo \"a %h\"`\"":  true,
+		`cmd:printf %%s $'it\'s %h'`:          true,
+		`cmd:printf '$(' %h`:                  false,
+		`cmd:printf "$'" %h`:                  false,
 	} {
 		if _, err := checkExpression(template, AddressHost); (err != nil) != refused {
 			t.Fatalf("checkExpression(%q) = %v, want refused: %v", template, err, refused)
