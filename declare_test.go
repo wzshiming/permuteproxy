@@ -461,7 +461,7 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 			"test-ss+udp://127.0.0.1:1",
 			map[string]string{
 				"dial udp":              "test-ss.listenpacket packet local=base udp :0",
-				"dial udp4":             "test-ss.listenpacket packet local=base udp4 :0",
+				"dial udp4":             "test-ss.listenpacket packet local=base udp :0",
 				"listenpacket udp6":     "test-ss.listenpacket packet local=base udp6 x:1",
 				"listenpacket unixgram": "test-ss.listenpacket packet local=base unixgram x:1",
 			},
@@ -471,7 +471,7 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 			"test-ss://127.0.0.1:1",
 			map[string]string{
 				"dial tcp4":        "test-ss.dial stream|packet tcp4 x:1",
-				"dial udp6":        "test-ss.listenpacket stream|packet local=base udp6 :0",
+				"dial udp6":        "test-ss.listenpacket stream|packet local=base udp :0",
 				"listenpacket udp": "test-ss.listenpacket stream|packet local=base udp x:1",
 			},
 			[]string{"dial unix", "dial fakenet", "listenpacket unix", "listenpacket tcp4"},
@@ -543,7 +543,7 @@ func TestClientDerivesUDPDial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-socks5.listenpacket stream local=base udp6 :0")
+	assertCalls(t, "test-socks5.listenpacket stream local=base udp :0")
 	if _, ok := conn.(net.PacketConn); !ok {
 		t.Fatal("udp conn is not a net.PacketConn")
 	}
@@ -561,11 +561,11 @@ func TestClientAsksPeerOfUDPDial(t *testing.T) {
 	}
 	target := datagramPeer(t, "udp")
 	address := target.LocalAddr().String()
-	conn, err := n.DialContext(ctx, "udp", address)
+	conn, err := n.DialContext(ctx, "udp4", address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-peer.peer udp "+address, "test-peer.listenpacket udp :0")
+	assertCalls(t, "test-peer.peer udp4 "+address, "test-peer.listenpacket udp :0")
 	exchange(t, conn, target)
 	closedPacket(t, conn)
 	if _, err := n.DialContext(ctx, "udp", "x"); err == nil {

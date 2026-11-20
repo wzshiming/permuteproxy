@@ -282,7 +282,8 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 			return nil, err
 		}
 	}
-	pc, err := f.ListenPacket(ctx, inner, local, network, ":0")
+	// The socket faces the proxy's relay, so the target's family must not constrain it.
+	pc, err := f.ListenPacket(ctx, inner, local, "udp", ":0")
 	if err != nil {
 		return nil, err
 	}
