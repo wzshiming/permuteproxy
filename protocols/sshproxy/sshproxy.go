@@ -340,11 +340,14 @@ func pipe(ch ssh.Channel, cmd net.Conn) {
 // exitStatus is the status a command's exit error carries, if it carries one.
 func exitStatus(err error) (uint32, bool) {
 	var coded interface{ ExitCode() int }
+	var status interface{ ExitStatus() int } // as *ssh.ExitError reports the status of the next hop
 	switch {
 	case err == nil:
 		return 0, true
 	case errors.As(err, &coded) && coded.ExitCode() >= 0:
 		return uint32(coded.ExitCode()), true
+	case errors.As(err, &status) && status.ExitStatus() >= 0:
+		return uint32(status.ExitStatus()), true
 	}
 	return 0, false
 }

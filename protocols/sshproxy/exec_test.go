@@ -599,6 +599,25 @@ func TestCmdReportsExitStatus(t *testing.T) {
 	}
 }
 
+func TestCmdExitStatusSurvivesTwoHops(t *testing.T) {
+	first := dialServer(t, &clientBase{}, serveExec(t, newUpstream()), withCredentials())
+	n := dialServer(t, &clientBase{}, serveExec(t, first), withCredentials())
+	conn, err := n.DialContext(timeout(t), "cmd", "exit 3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if out := readAll(t, conn); out != "bye" {
+		t.Fatalf("output = %q, want bye", out)
+	}
+	p := process(t, conn)
+	recv(t, p.Done(), "the command to exit")
+	var exit *ssh.ExitError
+	if err := p.Err(); !errors.As(err, &exit) || exit.ExitStatus() != 3 {
+		t.Fatalf("Err() through two hops = %v, want status 3", err)
+	}
+}
+
 func TestCmdKillEndsFarCommand(t *testing.T) {
 	up := newUpstream()
 	n := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
