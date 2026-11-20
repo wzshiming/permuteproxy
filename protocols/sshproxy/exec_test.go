@@ -669,6 +669,35 @@ func TestOneProbeRunsAtATime(t *testing.T) {
 	}
 }
 
+func TestDialWithEndedCtxStartsNoProbe(t *testing.T) {
+	keepAlives := make(chan *ssh.Request, 16)
+	addr := rawServer(t, func(newChan ssh.NewChannel) {
+		newChan.Reject(ssh.Prohibited, "connecting only")
+	}, func(reqs <-chan *ssh.Request) {
+		for req := range reqs {
+			req.Reply(true, nil)
+			keepAlives <- req
+		}
+	})
+	n := dialServer(t, &clientBase{}, addr, nil)
+	var refused *ssh.OpenChannelError
+	if _, err := n.DialContext(timeout(t), "tcp", "127.0.0.1:1"); !errors.As(err, &refused) {
+		t.Fatalf("tcp dial = %v, want it refused", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, d := range []struct{ network, address string }{{"tcp", "127.0.0.1:1"}, {"unix", "/tmp/x.sock"}, {"cmd", "anything"}} {
+		if _, err := n.DialContext(canceled, d.network, d.address); !errors.Is(err, context.Canceled) {
+			t.Fatalf("%s dial with an ended ctx = %v, want context.Canceled", d.network, err)
+		}
+	}
+	select {
+	case <-keepAlives:
+		t.Fatal("a dial whose ctx had ended when it was called probed the connection")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())

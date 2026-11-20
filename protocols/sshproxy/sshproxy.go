@@ -111,6 +111,10 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 	if err := checkName(network, address); err != nil {
 		return nil, err
 	}
+	// A ctx that had ended before the dial says nothing about the connection, so it probes nothing.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cli, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
