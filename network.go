@@ -137,8 +137,7 @@ func split(dial, listen Transport) Transport {
 	return pinned{TransportFuncs{Plane: dial.Planes(), DialFunc: dial.Dial, ListenFunc: listen.Listen, ListenPacketFunc: listen.ListenPacket}, dial}
 }
 
-// borrowed hides everything but Network on an injected base, so a constructor returning it hands
-// back nothing closable.
+// borrowed forwards only Network and Lossy of an injected base, never its Close.
 type borrowed struct{ Network }
 
 // Lossy forwards what the borrowed network reports.
