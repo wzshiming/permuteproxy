@@ -2,8 +2,10 @@ package anyproxy
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -133,4 +135,29 @@ func TestStalledPrefixDoesNotBlockOthers(t *testing.T) {
 	client := ln.dial(t)
 	writeAll(t, client, "\x05", "\x01\x00")
 	expect(t, client, "\x05\x00")
+}
+
+func TestURIKeepsNameAndKeys(t *testing.T) {
+	uri := "any://u:p@127.0.0.1:1"
+	c, err := permuteproxy.ParseURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []permuteproxy.Layer{{Scheme: "any", Options: permuteproxy.Options{"username": "u", "password": "p"}}}
+	if !reflect.DeepEqual(c.Layers, want) {
+		t.Fatalf("ParseURI(%q).Layers = %+v, want %+v", uri, c.Layers, want)
+	}
+	if back, err := c.URI(); back != uri || err != nil {
+		t.Fatalf("URI() = %q, %v, want %q", back, err, uri)
+	}
+	if _, err := permuteproxy.ParseURI("any://127.0.0.1:1?bogus=1"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+		t.Fatalf("ParseURI with an undeclared option = %v, want ErrInvalidChain", err)
+	}
+}
+
+func TestClientIsUnsupported(t *testing.T) {
+	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "any"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
+	if _, err := (permuteproxy.Engine{}).Client(c); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("Client = %v, want ErrUnsupported", err)
+	}
 }
