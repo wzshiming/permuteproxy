@@ -294,9 +294,11 @@ func (s *sessions) Close() error {
 		}
 	}
 	s.mu.Unlock()
+	var closing sync.WaitGroup
 	for _, conn := range conns {
-		conn.Close()
+		closing.Go(func() { conn.Close() })
 	}
+	closing.Wait()
 	s.readers.Wait()
 	return nil
 }

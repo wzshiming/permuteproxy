@@ -533,6 +533,34 @@ func TestSessionsCloseWaitsForSessionReads(t *testing.T) {
 	})
 }
 
+// slowClosingConn takes half a second to close.
+type slowClosingConn struct{ net.Conn }
+
+func (c slowClosingConn) Close() error {
+	time.Sleep(500 * time.Millisecond)
+	return c.Conn.Close()
+}
+
+func TestSessionsCloseClosesSessionConnsConcurrently(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pc := NewSessions(func(context.Context, net.Addr) (net.Conn, error) {
+			local, remote := net.Pipe()
+			go io.Copy(io.Discard, remote)
+			return slowClosingConn{local}, nil
+		}, SessionOptions{})
+		for i := 1; i <= 16; i++ {
+			writeTo(t, pc, "open", testPeer(i))
+		}
+		start := time.Now()
+		if err := pc.Close(); err != nil {
+			t.Fatalf("Close = %v", err)
+		}
+		if took := time.Since(start); took > time.Second {
+			t.Fatalf("Close of 16 sessions whose conns take 500ms each to close took %v, want about 500ms", took)
+		}
+	})
+}
+
 func TestSessionsCloseWinsOverExpiredDeadline(t *testing.T) {
 	pc := NewSessions(newPipeDialer().dial, SessionOptions{})
 	pc.SetDeadline(time.Now())
