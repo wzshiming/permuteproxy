@@ -459,24 +459,19 @@ func TestDerivedDialReopensEndedSession(t *testing.T) {
 	assertCalls(t, "test-derive.dial stream cmd relay peer.invalid 53", "relay.close relay peer.invalid 53", "test-derive.dial stream cmd relay peer.invalid 53")
 }
 
-func TestDerivationThroughNetworkWithoutDialIsRefused(t *testing.T) {
-	ctx := context.Background()
-	// A layer offering only datagrams lists cmd for its derivation alone, so nothing has it declare a Dial.
+func TestClientRefusesDerivationOverNetworkWithoutDial(t *testing.T) {
+	calls = nil
+	// A layer offering only datagrams lists cmd for its derivation alone, so nothing else has it declare a Dial.
 	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"cmd"}, NewClient: func(Options) (*ClientFuncs, error) {
-		return &ClientFuncs{Derive: map[string]string{"udp": "dgram+cmd:relay %h %p"}}, nil
+		return &ClientFuncs{
+			Derive: map[string]string{"udp": "dgram+cmd:relay %h %p"},
+			Close:  func() error { record("test-dialless.close"); return nil },
+		}, nil
 	}}
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
-	if err != nil {
-		t.Fatal(err)
+	if _, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}); !errors.Is(err, ErrInvalidChain) {
+		t.Fatalf("client deriving udp over cmd without Dial = %v, want ErrInvalidChain", err)
 	}
-	conn, err := n.DialContext(ctx, "udp", "peer.invalid:53")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, err := conn.Write([]byte("ping")); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Write through a cmd network without Dial = %v, want ErrUnsupported", err)
-	}
+	assertCalls(t, "test-dialless.close")
 }
 
 func TestClientReportsDerivedLossy(t *testing.T) {

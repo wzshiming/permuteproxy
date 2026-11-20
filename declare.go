@@ -196,12 +196,14 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	if err != nil {
 		return nil, reject(funcs.Close, err)
 	}
-	var derivedPlanes Plane
+	var derivedPlanes, overPlanes Plane
 	for _, d := range derived {
 		derivedPlanes |= d.plane
+		over, _ := lookupNetwork(d.x.network)
+		overPlanes |= over.Plane
 	}
 	switch {
-	case funcs.Dial == nil && (s.Provides|s.Preserves)&Stream != 0:
+	case funcs.Dial == nil && (s.Provides|s.Preserves|overPlanes)&Stream != 0:
 		return nil, reject(funcs.Close, fmt.Errorf("no Dial for %v", Stream))
 	case funcs.ListenPacket == nil && derivedPlanes&Packet == 0 && (s.Provides|s.Preserves)&Packet != 0:
 		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket or derived datagram network for %v", Packet))
