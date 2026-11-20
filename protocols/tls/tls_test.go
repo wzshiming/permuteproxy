@@ -131,6 +131,11 @@ func echoServer(t *testing.T, uri string) net.Addr {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return serveEcho(t, ln)
+}
+
+// serveEcho echoes on each connection ln accepts until the test ends.
+func serveEcho(t *testing.T, ln net.Listener) net.Addr {
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		for {
