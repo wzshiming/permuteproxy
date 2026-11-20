@@ -457,6 +457,8 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 			[]string{"dial unix", "dial fakenet", "listenpacket unix", "listenpacket tcp4"},
 		},
 		{"test-peer://127.0.0.1:1", nil, []string{"listenpacket unixgram", "dial unixgram", "dial tcp"}},
+		// cmd is listed but no system network, so only its registration lets the plane gate admit it.
+		{"test-derive://127.0.0.1:1", map[string]string{"dial cmd": "test-derive.dial stream cmd x:1"}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
