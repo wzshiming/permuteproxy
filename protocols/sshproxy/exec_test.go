@@ -244,20 +244,24 @@ func (b *clientBase) drop() {
 }
 
 // hold keeps what servers send from the clients until the test ends.
-func (b *clientBase) hold(t *testing.T) {
-	held := make(chan struct{})
+func (b *clientBase) hold(t *testing.T) { b.block(t, &b.held) }
+
+// block sets gate to a chan the end of the test closes.
+func (b *clientBase) block(t *testing.T, gate *chan struct{}) {
+	blocked := make(chan struct{})
 	b.mu.Lock()
-	b.held = held
+	*gate = blocked
 	b.mu.Unlock()
-	t.Cleanup(func() { close(held) })
+	t.Cleanup(func() { close(blocked) })
 }
 
-func (b *clientBase) wait() {
+// wait returns once gate is unset or closed.
+func (b *clientBase) wait(gate *chan struct{}) {
 	b.mu.Lock()
-	held := b.held
+	blocked := *gate
 	b.mu.Unlock()
-	if held != nil {
-		<-held
+	if blocked != nil {
+		<-blocked
 	}
 }
 
@@ -268,7 +272,7 @@ type heldConn struct {
 
 func (c heldConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	c.base.wait()
+	c.base.wait(&c.base.held)
 	return n, err
 }
 
