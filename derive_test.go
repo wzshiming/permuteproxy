@@ -302,6 +302,10 @@ func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 	for _, tt := range []struct{ network, address string }{
 		{"udp", "peer.invalid"},
 		{"udp", "-oProxyCommand=x:1"},
+		{"udp", "-h:1"},
+		{"udp", "[--help]:1"},
+		{"udp", "a=b:1"},
+		{"udp", "a,b:1"},
 		{"udp6", "a;b:1"},
 		{"unix", "-x.sock"},
 		{"unix", "/tmp/a\nb.sock"},
@@ -349,6 +353,10 @@ func TestDerivedListenPacketReachesEachPeer(t *testing.T) {
 	}
 	for _, peer := range []net.Addr{
 		netutils.NewNetAddr("udp", "-oProxyCommand=x:1"),
+		netutils.NewNetAddr("udp", "-h:1"),
+		netutils.NewNetAddr("udp", "[--help]:1"),
+		netutils.NewNetAddr("udp", "a=b:1"),
+		netutils.NewNetAddr("udp", "a,b:1"),
 		netutils.NewNetAddr("udp", "a b:1"),
 		netutils.NewNetAddr("udp", "a.invalid"),
 		&net.UnixAddr{Name: "/tmp/x", Net: "unixgram"},
