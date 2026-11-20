@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -119,6 +120,38 @@ func TestUDPConcurrentWritesToOnePeerArriveWhole(t *testing.T) {
 		if run := strings.Repeat(string(rune('a'+i)), 1024); strings.Count(got.String(), run) != 2 {
 			t.Fatalf("writes of %q did not arrive whole", run[:1])
 		}
+	}
+}
+
+func TestUDPWriteEndsAtDeadlineOrCloseWhileExecWaits(t *testing.T) {
+	up := newUpstream()
+	n := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials("udp_command", "stall %h %p"))
+	pc, err := n.ListenPacket(timeout(t), "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	write := func(peer string) <-chan error {
+		written := make(chan error, 1)
+		go func() {
+			_, err := pc.WriteTo([]byte("hi"), netutils.NewNetAddr("udp", peer))
+			written <- err
+		}()
+		return written
+	}
+	pc.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+	if err := recv(t, write("198.51.100.7:53"), "the deadline to end the first write"); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("first WriteTo past its deadline = %v, want os.ErrDeadlineExceeded", err)
+	}
+	pc.SetWriteDeadline(time.Time{})
+	written := write("198.51.100.8:53")
+	// The deadline may have cut the first write's dial before its exec was sent.
+	for line := ""; line != "stall 198.51.100.8 53"; {
+		line = recv(t, up.stalls, "the second write's exec request")
+	}
+	pc.Close()
+	if err := recv(t, written, "Close to end the second write"); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("WriteTo across Close = %v, want net.ErrClosed", err)
 	}
 }
 

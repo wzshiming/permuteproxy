@@ -122,8 +122,40 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The SSH handshake, the session's open and the exec's reply ignore ctx, so they run aside.
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result)
+	go func() {
+		conn, err := c.start(ctx, address, argv)
+		select {
+		case results <- result{conn, err}:
+		case <-ctx.Done():
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	}()
+	select {
+	case r := <-results:
+		return r.conn, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// start runs argv on a new session of the shared connection, opening none once ctx has ended.
+func (c *client) start(ctx context.Context, address string, argv []string) (net.Conn, error) {
 	cli, err := c.dialer.SSHClient(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	sess, err := cli.NewSession()
@@ -133,6 +165,10 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 		if !errors.As(err, &refused) {
 			c.dialer.Close()
 		}
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		sess.Close()
 		return nil, err
 	}
 	// The pipes fail only once set or started.

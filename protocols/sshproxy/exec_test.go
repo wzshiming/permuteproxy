@@ -75,10 +75,8 @@ var programs = map[string]func(c *command, argv []string) error{
 		c.far.Write([]byte("bye"))
 		return nil
 	},
-	"sleep": func(c *command, _ []string) error {
-		_, err := io.Copy(io.Discard, c.far)
-		return err
-	},
+	"sleep": drain,
+	"stall": drain, // its exec request waits for the reply until upstream.released closes
 	"record": func(c *command, _ []string) error {
 		for {
 			buf := make([]byte, 64<<10)
@@ -89,6 +87,12 @@ var programs = map[string]func(c *command, argv []string) error{
 			c.input <- buf[:n]
 		}
 	},
+}
+
+// drain reads what it is sent until its input ends.
+func drain(c *command, _ []string) error {
+	_, err := io.Copy(io.Discard, c.far)
+	return err
 }
 
 // relay answers each read with its line and what it read, the way a datagram relay names its peer.
@@ -110,10 +114,12 @@ type upstream struct {
 	permuteproxy.NetworkFuncs
 	dials    atomic.Int32
 	commands chan *command
+	stalls   chan string // the line of each stall command whose exec request arrived
+	released chan struct{}
 }
 
 func newUpstream() *upstream {
-	return &upstream{commands: make(chan *command, 64)}
+	return &upstream{commands: make(chan *command, 64), stalls: make(chan string, 64), released: make(chan struct{})}
 }
 
 func (u *upstream) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -124,6 +130,14 @@ func (u *upstream) DialContext(ctx context.Context, network, address string) (ne
 	argv, err := shlex.Split(address)
 	if err != nil || len(argv) == 0 || programs[argv[0]] == nil {
 		return nil, fmt.Errorf("no program runs %q", address)
+	}
+	if argv[0] == "stall" {
+		u.stalls <- address
+		select {
+		case <-u.released:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	near, far := net.Pipe()
 	c := &command{Conn: near, far: far, line: address, input: make(chan []byte, 1024), done: make(chan struct{}), killed: make(chan struct{}), closed: make(chan struct{})}
@@ -296,6 +310,19 @@ func readAll(t *testing.T, conn net.Conn) string {
 	return string(recv(t, read, "the output to end"))
 }
 
+// dialAside dials n aside, closing the conn if any, and reports the dial's error.
+func dialAside(ctx context.Context, n permuteproxy.Network, network, address string) <-chan error {
+	dialed := make(chan error, 1)
+	go func() {
+		conn, err := n.DialContext(ctx, network, address)
+		if conn != nil {
+			conn.Close()
+		}
+		dialed <- err
+	}()
+	return dialed
+}
+
 // rawServer serves SSH without authentication on loopback, handing handle each channel a client opens.
 func rawServer(t *testing.T, handle func(newChan ssh.NewChannel)) string {
 	t.Helper()
@@ -416,6 +443,86 @@ func TestCmdRefusesLineWithoutCommand(t *testing.T) {
 	if base.dials.Load() != 0 || up.dials.Load() != 0 {
 		t.Fatalf("client dials %d, server commands %d; want the lines refused before any I/O", base.dials.Load(), up.dials.Load())
 	}
+}
+
+func TestCmdDialWithCanceledCtxStartsNothing(t *testing.T) {
+	up, base := newUpstream(), &clientBase{}
+	n := dialServer(t, base, serveExec(t, up), withCredentials())
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if conn, err := n.DialContext(canceled, "cmd", "relay x"); !errors.Is(err, context.Canceled) || base.dials.Load() != 0 {
+		if conn != nil {
+			conn.Close()
+		}
+		t.Fatalf("cmd dial before connecting = %v after %d client dials, want context.Canceled and none", err, base.dials.Load())
+	}
+	conn, err := n.DialContext(timeout(t), "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if conn, err := n.DialContext(canceled, "cmd", "relay x"); !errors.Is(err, context.Canceled) || up.dials.Load() != 1 {
+		if conn != nil {
+			conn.Close()
+		}
+		t.Fatalf("cmd dial once connected = %v after %d server commands, want context.Canceled and only the first", err, up.dials.Load())
+	}
+}
+
+func TestCmdDialEndsWithCtxWhileSessionOpens(t *testing.T) {
+	opened, accept, ended := make(chan struct{}, 1), make(chan struct{}), make(chan int, 1)
+	release := sync.OnceFunc(func() { close(accept) })
+	addr := rawServer(t, func(newChan ssh.NewChannel) {
+		opened <- struct{}{}
+		go func() {
+			<-accept
+			ch, reqs, err := newChan.Accept()
+			if err != nil {
+				return
+			}
+			execs := 0
+			for req := range reqs {
+				if req.Type == "exec" {
+					execs++
+				}
+				req.Reply(false, nil)
+			}
+			ch.Close()
+			ended <- execs
+		}()
+	})
+	n := dialServer(t, &clientBase{}, addr, nil)
+	t.Cleanup(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dialed := dialAside(ctx, n, "cmd", "anything")
+	recv(t, opened, "the session's channel to be opened")
+	cancel()
+	if err := recv(t, dialed, "the dial to end with its ctx"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cmd dial = %v, want context.Canceled", err)
+	}
+	// The session the server opens too late is closed before any command starts.
+	release()
+	if execs := recv(t, ended, "the late session to close"); execs != 0 {
+		t.Fatalf("late session got %d exec requests, want none", execs)
+	}
+}
+
+func TestCmdDialEndsWithCtxWhileExecWaits(t *testing.T) {
+	up := newUpstream()
+	n := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dialed := dialAside(ctx, n, "cmd", "stall")
+	recv(t, up.stalls, "the exec request")
+	cancel()
+	if err := recv(t, dialed, "the dial to end with its ctx"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cmd dial = %v, want context.Canceled", err)
+	}
+	// The command the server starts too late has its session closed, which ends it.
+	close(up.released)
+	cmd := recv(t, up.commands, "the late command")
+	recv(t, cmd.closed, "the late command to close")
 }
 
 func TestClosingCmdClosesServerCommand(t *testing.T) {
