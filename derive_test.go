@@ -120,6 +120,12 @@ func init() {
 	RegisterLayer("test-derive-listed-udp", derivingProxy("test-derive-listed-udp", Stream|Packet, 0, []string{"tcp", "cmd", "udp"}, unixgram, dialRelay))
 	RegisterLayer("test-derive-unix", derivingProxy("test-derive-unix", Stream|Packet, 0, relayNetworks, unix, dialRelay))
 	RegisterLayer("test-derive-kept-unix", derivingProxy("test-derive-kept-unix", 0, Stream|Packet, relayNetworks, unix, dialRelay))
+	// test-uot keeps datagram boundaries over tcp, where dgram over cmd loses them.
+	uot := map[string]string{"udp": "test-uot+tcp://%h:%p"}
+	RegisterLayer("test-derive-uot", derivingProxy("test-derive-uot", Stream|Packet, 0, relayNetworks, uot, dialRelay))
+	lossyUot := derivingProxy("test-lossy-derive-uot", Stream|Packet, 0, relayNetworks, uot, dialRelay)
+	lossyUot.Lossy = Packet
+	RegisterLayer("test-lossy-derive-uot", lossyUot)
 	for name, d := range underived {
 		RegisterLayer(name, derivingProxy(name, Stream, 0, d.networks, d.derive, dialRelay))
 	}
@@ -440,4 +446,53 @@ func TestDerivationThroughNetworkWithoutDialIsRefused(t *testing.T) {
 	if _, err := conn.Write([]byte("ping")); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Write through a cmd network without Dial = %v, want ErrUnsupported", err)
 	}
+}
+
+func TestClientReportsDerivedLossy(t *testing.T) {
+	tests := []struct {
+		scheme string
+		lossy  map[string]bool
+	}{
+		{"test-derive", map[string]bool{"udp": true, "udp6": true, "unix": false, "tcp": false, "cmd": false, "unixgram": false}},
+		{"test-derive-kept", map[string]bool{"unixgram": true, "udp": false}},
+		{"test-derive-uot", map[string]bool{"udp": false, "udp4": false}},
+		{"test-lossy-derive-uot", map[string]bool{"udp": true, "tcp": false}},
+	}
+	for _, tt := range tests {
+		l, ok := derivingClient(t, mk("", tt.scheme)).(LossyNetwork)
+		if !ok {
+			t.Fatalf("Client of %s is not a LossyNetwork", tt.scheme)
+		}
+		for network, want := range tt.lossy {
+			if got := l.Lossy(network); got != want {
+				t.Fatalf("Client of %s: Lossy(%q) = %v, want %v", tt.scheme, network, got, want)
+			}
+		}
+	}
+}
+
+func TestDerivedLossyRefusesPacketToLayers(t *testing.T) {
+	ctx := context.Background()
+	tr, err := Engine{Base: derivingClient(t, mk("", "test-derive"))}.Transport(mk("udp", "test-dtls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Packet) over udp derived through dgram = %v, want ErrUnsupported", err)
+	}
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ListenPacket() over udp derived through dgram = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+	if tr, err = (Engine{Base: derivingClient(t, mk("", "test-derive-uot"))}).Transport(mk("udp", "test-dtls")); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	conn, err := tr.Dial(ctx, Packet)
+	if err != nil {
+		t.Fatalf("Dial(Packet) over udp derived with datagram boundaries = %v", err)
+	}
+	conn.Close()
+	assertCalls(t, "test-dtls.client")
 }

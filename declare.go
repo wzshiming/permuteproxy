@@ -249,10 +249,10 @@ func (a *assembledNetwork) Close() error {
 	return a.close()
 }
 
-// Lossy reports the networks its layer admits on a plane the layer declares Lossy.
+// Lossy reports the networks its client admits on a plane its layer declares Lossy, and those it derives through a lossy expression.
 func (a *assembledNetwork) Lossy(network string) bool {
-	_, plane := a.admit(network)
-	return plane&a.spec.Lossy != 0
+	base, plane := a.admit(network)
+	return plane&a.spec.Lossy != 0 || a.derived[base].lossy
 }
 
 // admit maps a network its client lists or derives to its base name and plane, and any other network to no plane.
@@ -288,6 +288,7 @@ type derivation struct {
 	network string
 	kind    AddressKind
 	plane   Plane
+	lossy   bool // its expression loses datagram boundaries, as through dgram
 	x       expression
 }
 
@@ -309,14 +310,14 @@ func (s Spec) derive(exprs map[string]string) (map[string]derivation, error) {
 		if !slices.Contains(s.Networks, x.network) {
 			return nil, fmt.Errorf("Derive %q: %q is not listed in Networks", network, x.network)
 		}
-		planes, err := x.offers()
+		planes, lossy, err := x.offers()
 		switch {
 		case err != nil:
 			return nil, fmt.Errorf("Derive %q: %w", network, err)
 		case planes&ns.Plane == 0:
 			return nil, fmt.Errorf("Derive %q: the expression offers %v, not %v", network, planes, ns.Plane)
 		}
-		derived[network] = derivation{network: network, kind: ns.AddressKind, plane: ns.Plane, x: x}
+		derived[network] = derivation{network: network, kind: ns.AddressKind, plane: ns.Plane, lossy: lossy&ns.Plane != 0, x: x}
 	}
 	return derived, nil
 }

@@ -150,22 +150,22 @@ func expressionPlane(spec NetworkSpec) (Plane, error) {
 			return 0, errors.New("Listen differs from Dial in its layers or network")
 		}
 	}
-	plane, err := dial.offers()
+	plane, _, err := dial.offers()
 	if err != nil {
 		return 0, fmt.Errorf("Dial: %w", err)
 	}
 	return plane, nil
 }
 
-// offers is what x's layers offer over its network, or that network's own plane without layers.
-func (x expression) offers() (Plane, error) {
+// offers is what x's layers offer over its network, or that network's own plane without layers, and which of those planes lose datagram boundaries.
+func (x expression) offers() (planes, lossy Plane, err error) {
 	r, err := x.over(x.template).resolve()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if len(r.planes) > 0 {
-		return r.planes[0], nil
+		return r.planes[0], r.planes[0] & r.specs[0].Lossy, nil
 	}
 	ns, _ := lookupNetwork(x.network)
-	return ns.Plane, nil
+	return ns.Plane, 0, nil
 }
