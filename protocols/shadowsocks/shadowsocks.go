@@ -13,7 +13,6 @@ import (
 	_ "github.com/wzshiming/shadowsocks/init"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
@@ -41,53 +40,34 @@ func cipher(opts permuteproxy.Options) (shadowsocks.ConnCipher, error) {
 	return shadowsocks.NewCipher(method, password)
 }
 
-func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	connCipher, err := cipher(opts)
 	if err != nil {
 		return nil, err
 	}
-	return &client{inner: inner, cipher: connCipher, dialer: &shadowsocks.Dialer{
-		ConnCipher: connCipher,
-		Timeout:    time.Minute,
-		ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return inner.Dial(ctx, permuteproxy.Stream)
-		},
-	}}, nil
+	c := &client{cipher: connCipher}
+	return &permuteproxy.ClientFuncs{Dial: c.dial, ListenPacket: c.listenPacket}, nil
 }
 
 // client carries tcp over the inner stream plane and udp over its packet plane with one cipher.
 type client struct {
-	inner  permuteproxy.Transport
 	cipher shadowsocks.ConnCipher
-	dialer *shadowsocks.Dialer
 }
 
-func (c *client) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-		return c.dialer.DialContext(ctx, network, address)
-	case "udp", "udp4", "udp6":
-		pc, err := c.ListenPacket(ctx, network, ":0")
-		if err != nil {
-			return nil, err
-		}
-		return netutils.WrapPacket(pc, netutils.NewNetAddr("udp", address)), nil
+func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+	dialer := &shadowsocks.Dialer{
+		ConnCipher: c.cipher,
+		Timeout:    time.Minute,
+		ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return inner.Dial(ctx, permuteproxy.Stream)
+		},
 	}
-	return nil, fmt.Errorf("dial %s: %w", network, permuteproxy.ErrUnsupported)
+	return dialer.DialContext(ctx, network, address)
 }
 
-func (c *client) Listen(_ context.Context, network, _ string) (net.Listener, error) {
-	return nil, fmt.Errorf("listen %s: %w", network, permuteproxy.ErrUnsupported)
-}
-
-// ListenPacket opens one datagram carrier to the proxy; WriteTo and ReadFrom name the targets.
-func (c *client) ListenPacket(ctx context.Context, network, _ string) (net.PacketConn, error) {
-	switch network {
-	case "udp", "udp4", "udp6":
-	default:
-		return nil, fmt.Errorf("listen packet %s: %w", network, permuteproxy.ErrUnsupported)
-	}
-	conn, err := c.inner.Dial(ctx, permuteproxy.Packet)
+// listenPacket opens one datagram carrier to the proxy; WriteTo and ReadFrom name the targets.
+func (c *client) listenPacket(ctx context.Context, inner permuteproxy.Transport, _ permuteproxy.Network, _, _ string) (net.PacketConn, error) {
+	conn, err := inner.Dial(ctx, permuteproxy.Packet)
 	if err != nil {
 		return nil, err
 	}

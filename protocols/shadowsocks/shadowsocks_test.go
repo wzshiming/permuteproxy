@@ -233,6 +233,47 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 	}
 }
 
+func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	proxy, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := permuteproxy.NetworkFuncs{ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return proxy, nil }}
+	srv, err := permuteproxy.Engine{Base: base, Upstream: system}.Server(chain(t, "ss+udp://aes-256-gcm:p@"+proxy.LocalAddr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Run(ctx)
+	defer srv.Close()
+	inner, err := permuteproxy.Engine{Base: system}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: proxy.LocalAddr().String()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	funcs, err := NewClient(permuteproxy.Options{KeyUsername: "aes-256-gcm", KeyPassword: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc, err := funcs.ListenPacket(ctx, inner, system, "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	peer := echo(t)
+	if _, err := pc.WriteTo([]byte("ping"), peer); err != nil {
+		t.Fatal(err)
+	}
+	pc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, from, err := pc.ReadFrom(make([]byte, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from.String() != peer.String() {
+		t.Fatalf("ReadFrom source = %v (%T), want %v as ip:port", from, from, peer)
+	}
+}
+
 func TestSchemesAcceptOnlyTheCredentialOptions(t *testing.T) {
 	want := permuteproxy.Options{"encrypto": "aes-256-gcm", "password": "p"}
 	for _, scheme := range []string{"ss", "shadowsocks"} {

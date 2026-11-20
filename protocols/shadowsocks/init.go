@@ -8,9 +8,10 @@ func init() {
 	spec := permuteproxy.Spec{
 		Kind:           permuteproxy.KindProxy,
 		Preserves:      permuteproxy.Stream | permuteproxy.Packet,
+		Networks:       []string{"tcp", "udp"},
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
-		Client:         NewClient,
+		NewClient:      NewClient,
 		Server:         NewServer,
 	}
 	permuteproxy.RegisterLayer("ss", spec)
