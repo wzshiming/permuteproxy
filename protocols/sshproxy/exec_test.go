@@ -472,10 +472,16 @@ func TestCmdDialWithCanceledCtxStartsNothing(t *testing.T) {
 	n := dialServer(t, base, serveExec(t, up), withCredentials())
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if conn, err := n.DialContext(canceled, "cmd", "relay x"); !errors.Is(err, context.Canceled) || base.dials.Load() != 0 {
+	// The dial path runs aside, so the counts are read after it would have reached the Base.
+	dial := func() error {
+		conn, err := n.DialContext(canceled, "cmd", "relay x")
 		if conn != nil {
 			conn.Close()
 		}
+		time.Sleep(200 * time.Millisecond)
+		return err
+	}
+	if err := dial(); !errors.Is(err, context.Canceled) || base.dials.Load() != 0 {
 		t.Fatalf("cmd dial before connecting = %v after %d client dials, want context.Canceled and none", err, base.dials.Load())
 	}
 	conn, err := n.DialContext(timeout(t), "cmd", "relay x")
@@ -483,11 +489,44 @@ func TestCmdDialWithCanceledCtxStartsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	if conn, err := n.DialContext(canceled, "cmd", "relay x"); !errors.Is(err, context.Canceled) || up.dials.Load() != 1 {
-		if conn != nil {
-			conn.Close()
-		}
+	if err := dial(); !errors.Is(err, context.Canceled) || up.dials.Load() != 1 {
 		t.Fatalf("cmd dial once connected = %v after %d server commands, want context.Canceled and only the first", err, up.dials.Load())
+	}
+}
+
+func TestCmdDialEndingWhileConnectingOpensNoSession(t *testing.T) {
+	opened := make(chan struct{}, 8)
+	addr := rawServer(t, func(newChan ssh.NewChannel) {
+		opened <- struct{}{}
+		newChan.Reject(ssh.Prohibited, "counted only")
+	})
+	connecting, connect := make(chan struct{}, 1), make(chan struct{})
+	base := permuteproxy.NetworkFuncs{DialContextFunc: func(_ context.Context, network, address string) (net.Conn, error) {
+		connecting <- struct{}{}
+		<-connect
+		return net.Dial(network, address)
+	}}
+	n := dialServer(t, base, addr, nil)
+	release := sync.OnceFunc(func() { close(connect) })
+	t.Cleanup(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	dialed := dialAside(ctx, n, "cmd", "anything")
+	recv(t, connecting, "the dial to connect")
+	cancel()
+	if err := recv(t, dialed, "the dial to end with its ctx"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cmd dial = %v, want context.Canceled", err)
+	}
+	// The connection made after the dial gave up carries the next dial's session only.
+	release()
+	var refused *ssh.OpenChannelError
+	if _, err := n.DialContext(timeout(t), "cmd", "anything"); !errors.As(err, &refused) {
+		t.Fatalf("next cmd dial = %v, want its session refused", err)
+	}
+	recv(t, opened, "the next dial's session")
+	select {
+	case <-opened:
+		t.Fatal("the dial that gave up while connecting opened a session")
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 
