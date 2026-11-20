@@ -330,16 +330,18 @@ func TestCommandPacketRunsItsAddress(t *testing.T) {
 
 func TestCommandPacketNetworksRefuseListening(t *testing.T) {
 	ctx := context.Background()
-	for _, c := range []permuteproxy.Chain{chain("cmd-nc-udp", "127.0.0.1:53"), chain("cmd-packet", "socat - UDP:127.0.0.1:53")} {
-		tr, err := permuteproxy.Engine{}.Transport(c)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tr.Listen(ctx); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Errorf("Listen on %s = %v, want ErrUnsupported", c.Endpoint.Network, err)
-		}
-		if _, err := tr.ListenPacket(ctx); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Errorf("ListenPacket on %s = %v, want ErrUnsupported", c.Endpoint.Network, err)
+	for base, e := range map[string]permuteproxy.Engine{"without a Base": {}, "with Local as Base": {Base: Network}} {
+		for _, c := range []permuteproxy.Chain{chain("cmd-nc-udp", "127.0.0.1:53"), chain("cmd-packet", "socat - UDP:127.0.0.1:53")} {
+			tr, err := e.Transport(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tr.Listen(ctx); !errors.Is(err, permuteproxy.ErrUnsupported) {
+				t.Errorf("Listen on %s %s = %v, want ErrUnsupported", c.Endpoint.Network, base, err)
+			}
+			if _, err := tr.ListenPacket(ctx); !errors.Is(err, permuteproxy.ErrUnsupported) {
+				t.Errorf("ListenPacket on %s %s = %v, want ErrUnsupported", c.Endpoint.Network, base, err)
+			}
 		}
 	}
 }

@@ -8,7 +8,23 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/wzshiming/permuteproxy"
 )
+
+func TestLocalRefusesNetworksItDoesNotHandle(t *testing.T) {
+	ctx := context.Background()
+	for op, call := range map[string]func() error{
+		"dial cmd-nc":              func() error { _, err := Network.DialContext(ctx, "cmd-nc", "127.0.0.1:1"); return err },
+		"listen cmd-nc":            func() error { _, err := Network.Listen(ctx, "cmd-nc", "127.0.0.1:1"); return err },
+		"listen packet cmd-nc-udp": func() error { _, err := Network.ListenPacket(ctx, "cmd-nc-udp", "127.0.0.1:1"); return err },
+	} {
+		var unknown net.UnknownNetworkError
+		if err := call(); !errors.Is(err, permuteproxy.ErrUnsupported) || !errors.As(err, &unknown) {
+			t.Errorf("%s = %v, want ErrUnsupported keeping the system's unknown network error", op, err)
+		}
+	}
+}
 
 func TestDialPacket(t *testing.T) {
 	ctx := context.Background()

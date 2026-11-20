@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
@@ -160,7 +162,8 @@ func (l *Local) DialContext(ctx context.Context, network, address string) (net.C
 	case "udp", "udp4", "udp6", "unixgram":
 		return netutils.DialPacket(ctx, network, address, l.ListenPacket)
 	}
-	return (&net.Dialer{}).DialContext(ctx, network, address)
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	return conn, unsupported(err)
 }
 
 func (l *Local) Listen(ctx context.Context, network, address string) (net.Listener, error) {
@@ -170,9 +173,19 @@ func (l *Local) Listen(ctx context.Context, network, address string) (net.Listen
 	case "cmd-nc-unix":
 		return l.listenNetcatUnix(ctx, network, address)
 	}
-	return (&net.ListenConfig{}).Listen(ctx, network, address)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
+	return ln, unsupported(err)
 }
 
 func (l *Local) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	return (&net.ListenConfig{}).ListenPacket(ctx, network, address)
+	pc, err := (&net.ListenConfig{}).ListenPacket(ctx, network, address)
+	return pc, unsupported(err)
+}
+
+// unsupported marks the system's refusal of a network it does not know as ErrUnsupported.
+func unsupported(err error) error {
+	if errors.As(err, new(net.UnknownNetworkError)) {
+		return fmt.Errorf("%w: %w", err, permuteproxy.ErrUnsupported)
+	}
+	return err
 }
