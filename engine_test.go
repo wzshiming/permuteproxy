@@ -616,7 +616,8 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 
 func TestEngineBorrowsUpstream(t *testing.T) {
 	var got Network
-	RegisterLayer("borrowing", Spec{
+	name := fresh("borrowing")
+	RegisterLayer(name, Spec{
 		Kind:     KindProxy,
 		Requires: Stream,
 		Provides: Stream,
@@ -628,7 +629,7 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 		},
 	})
 	upstream := &closableNet{fakeNet{name: "upstream"}}
-	srv, err := (Engine{Base: &fakeNet{name: "base"}, Upstream: upstream}).Server(parse(t, "borrowing://127.0.0.1:1"))
+	srv, err := (Engine{Base: &fakeNet{name: "base"}, Upstream: upstream}).Server(parse(t, name+"://127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}

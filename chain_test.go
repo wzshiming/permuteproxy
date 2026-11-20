@@ -452,6 +452,14 @@ func mustPanic(t *testing.T, name string, f func()) {
 	f()
 }
 
+var registered int
+
+// fresh numbers name anew on each call, so a test registering it passes when run again in one process.
+func fresh(name string) string {
+	registered++
+	return fmt.Sprintf("%s-%d", name, registered)
+}
+
 func TestRegisterRejects(t *testing.T) {
 	adapter := fakeAdapter("x", Stream, Stream)
 	mustPanic(t, "duplicate layer", func() { RegisterLayer("test-tls", adapter) })
@@ -487,7 +495,7 @@ func TestRegisterRejects(t *testing.T) {
 	for _, name := range []string{"Upper", "cmd_nc", "1bad", "a b", "-x", ".x"} {
 		mustPanic(t, "name "+name, func() { RegisterLayer(name, adapter) })
 	}
-	RegisterLayer("ok.name-1", adapter)
+	RegisterLayer(fresh("ok.name"), adapter)
 	mustPanic(t, "dual-plane network", func() { RegisterNetwork("dual", NetworkSpec{Plane: Stream | Packet}) })
 	mustPanic(t, "nested alias", func() { RegisterAlias("nested", "test-https+tcp") })
 	mustPanic(t, "self alias", func() { RegisterAlias("self", "self") })
@@ -554,8 +562,8 @@ func TestRegisterLossy(t *testing.T) {
 			t.Fatalf("rejected layer %q was registered", name)
 		}
 	}
-	RegisterLayer("lossy-provided", Spec{Requires: Stream, Provides: Packet, Lossy: Packet, NewAdapter: newAdapter})
-	RegisterLayer("lossy-preserved", Spec{Requires: Stream, Provides: Stream, Preserves: Packet, Lossy: Packet, NewAdapter: newAdapter})
+	RegisterLayer(fresh("lossy-provided"), Spec{Requires: Stream, Provides: Packet, Lossy: Packet, NewAdapter: newAdapter})
+	RegisterLayer(fresh("lossy-preserved"), Spec{Requires: Stream, Provides: Stream, Preserves: Packet, Lossy: Packet, NewAdapter: newAdapter})
 }
 
 func TestRegisterCopiesNetworks(t *testing.T) {
@@ -563,9 +571,10 @@ func TestRegisterCopiesNetworks(t *testing.T) {
 	networks := []string{"tcp"}
 	spec := fakeProxy("test-copied", Stream, Stream, 0, "", "")
 	spec.Networks = networks
-	RegisterLayer("test-copied", spec)
+	name := fresh("test-copied")
+	RegisterLayer(name, spec)
 	networks[0] = "unix"
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-copied"))
+	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,22 +604,23 @@ func TestRootDeclaresBaseNetworks(t *testing.T) {
 
 func TestImplementNetwork(t *testing.T) {
 	calls = nil
-	RegisterNetwork("test-later", NetworkSpec{Plane: Stream})
+	name := fresh("test-later")
+	RegisterNetwork(name, NetworkSpec{Plane: Stream})
 	later, again := &fakeNet{name: "later"}, &fakeNet{name: "again"}
 	mustPanic(t, "unknown network", func() { ImplementNetwork("test-unknown", later) })
 	mustPanic(t, "layer name", func() { ImplementNetwork("test-tls", later) })
-	mustPanic(t, "nil network", func() { ImplementNetwork("test-later", nil) })
+	mustPanic(t, "nil network", func() { ImplementNetwork(name, nil) })
 	mustPanic(t, "network registered with its implementation", func() { ImplementNetwork("fakenet", later) })
-	ImplementNetwork("test-later", later)
-	mustPanic(t, "network implemented twice", func() { ImplementNetwork("test-later", again) })
-	tr, err := Engine{}.Transport(Chain{Endpoint: Endpoint{Network: "test-later", Address: "x"}})
+	ImplementNetwork(name, later)
+	mustPanic(t, "network implemented twice", func() { ImplementNetwork(name, again) })
+	tr, err := Engine{}.Transport(Chain{Endpoint: Endpoint{Network: name, Address: "x"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tr.Dial(context.Background(), Stream); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "later.dial test-later x")
+	assertCalls(t, "later.dial "+name+" x")
 }
 
 func mk(network string, schemes ...string) Chain {
