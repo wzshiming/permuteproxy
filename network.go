@@ -235,7 +235,7 @@ func (b *bound) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	return b.network.ListenPacket(ctx, b.packet, b.address)
 }
 
-// restricted refuses Network operations outside the chain's declared planes before they reach the layer.
+// restricted refuses dials and datagram sockets outside the chain's declared planes before they reach the client, which never listens.
 type restricted struct {
 	network Network
 	plane   Plane
@@ -256,9 +256,6 @@ func (n restricted) DialContext(ctx context.Context, network, address string) (n
 }
 
 func (n restricted) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	if err := n.check("listen", network, Stream); err != nil {
-		return nil, err
-	}
 	return n.network.Listen(ctx, network, address)
 }
 
