@@ -162,6 +162,8 @@ func TestExpressionAcceptsCommandPlaceholdersOnlyAmongInertBytes(t *testing.T) {
 		{"cmd:/usr/bin/nc %h %p #?", AddressHost, false},
 		{"cmd:socat - UDP:%h:%p", AddressHost, false},
 		{"cmd:relay host=%h port=%p", AddressHost, false},
+		// every inert byte group but blank, colon and equals stands next to a placeholder
+		{"cmd:relay a%h+%p,%h-%p.%h/%p@%h_%p%%%h0 Z%p", AddressHost, false},
 		{"dgram+cmd:%a", AddressOpaque, false},
 		{"cmd:(%a)", AddressOpaque, false},
 		{"tcp://[%h]:%p", AddressHost, false},
@@ -172,6 +174,8 @@ func TestExpressionAcceptsCommandPlaceholdersOnlyAmongInertBytes(t *testing.T) {
 		{"cmd:[[ %h -eq 0 ]]", AddressHost, true},
 		{"cmd:a[%h]=1", AddressHost, true},
 		{"cmd:{ nc %h %p; }", AddressHost, true},
+		{"cmd:echo {a,%h,b}", AddressPath, true},
+		{"cmd:`which nc` -U %h", AddressPath, true},
 		{"cmd:printf %%s %h</dev/null", AddressPath, true},
 		{"cmd:printf %%s %h>/dev/null", AddressPath, true},
 		{"cmd:nc ~%h", AddressPath, true},
