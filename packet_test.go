@@ -1,8 +1,11 @@
 package permuteproxy_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -546,5 +549,174 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 	case err := <-done:
 		t.Fatalf("server stopped after a wrong-key datagram: %v", err)
 	default:
+	}
+}
+
+// streamPayload is random bytes enough for many datagrams of a stream carried over them.
+var streamPayload = func() []byte {
+	b := make([]byte, 64<<10)
+	rand.Read(b)
+	return b
+}()
+
+// echoed writes payload to conn and wants it back whole, reading aside since a cmd conn over ssh has no deadlines.
+func echoed(t *testing.T, conn net.Conn, payload []byte) {
+	t.Helper()
+	got := make([]byte, len(payload))
+	read := make(chan error, 1)
+	go func() {
+		_, err := io.ReadFull(conn, got)
+		read <- err
+	}()
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-read:
+		if err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("reading back the %d bytes written: %v, intact %v", len(payload), err, bytes.Equal(got, payload))
+		}
+	case <-time.After(20 * time.Second):
+		conn.Close()
+		t.Fatalf("the %d bytes written did not come back", len(payload))
+	}
+}
+
+// echoAll echoes what each conn ln accepts sends, until ln closes.
+func echoAll(ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			io.Copy(conn, conn)
+			conn.Close()
+		}()
+	}
+}
+
+// tcpEcho echoes each tcp conn until the test ends and returns its address.
+func tcpEcho(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go echoAll(ln)
+	return ln.Addr().String()
+}
+
+// quicChain is the quic layer over udp at address, with a self-signed certificate.
+func quicChain(address string) permuteproxy.Chain {
+	return permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "quic", Options: selfSigned}}, Endpoint: permuteproxy.Endpoint{Address: address}}
+}
+
+// quicEcho echoes each stream it accepts through quic on loopback until the test ends and returns its address.
+func quicEcho(t *testing.T) string {
+	t.Helper()
+	tr, err := permuteproxy.Engine{}.Transport(quicChain("127.0.0.1:0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tr.Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go echoAll(ln)
+	return ln.Addr().String()
+}
+
+func TestQUICOverSOCKS5TwoHops(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	hop2, clientBase, firstUpstream, secondUpstream := socks5TwoHops(t)
+	tr, err := permuteproxy.Engine{Base: hop2}.Transport(quicChain(quicEcho(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	echoed(t, conn, streamPayload)
+	// The quic socket is the second hop's association, whose own socket is the first hop's.
+	if firstUpstream.dials.Load() != 1 || firstUpstream.packets.Load() != 1 {
+		t.Fatalf("first upstream dials %d packets %d, want 1 and 1", firstUpstream.dials.Load(), firstUpstream.packets.Load())
+	}
+	if secondUpstream.dials.Load() != 0 || secondUpstream.packets.Load() != 1 {
+		t.Fatalf("second upstream dials %d packets %d, want 0 and 1", secondUpstream.dials.Load(), secondUpstream.packets.Load())
+	}
+	if clientBase.dials.Load() != 2 || clientBase.packets.Load() != 1 {
+		t.Fatalf("client base dials %d packets %d, want two control conns and one socket", clientBase.dials.Load(), clientBase.packets.Load())
+	}
+}
+
+func TestQUICOverShadowsocksPacket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := parse(t, "ss+udp://aes-256-gcm:p@127.0.0.1:0")
+	base, upstream := newProbe(system), newProbe(system)
+	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
+	clientBase := newProbe(system)
+	ss, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(ss)
+	tr, err := permuteproxy.Engine{Base: ss}.Transport(quicChain(quicEcho(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	echoed(t, conn, streamPayload)
+	// The client seals the quic datagrams on one socket, which the server relays from one of its own.
+	if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {
+		t.Fatalf("client base dials %d packets %d, want 0 and 1", clientBase.dials.Load(), clientBase.packets.Load())
+	}
+	if upstream.dials.Load() != 0 || upstream.packets.Load() != 1 {
+		t.Fatalf("upstream dials %d packets %d, want 0 and 1", upstream.dials.Load(), upstream.packets.Load())
+	}
+}
+
+func TestShadowsocksStreamOverQUIC(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := parse(t, "ss+quic://aes-256-gcm:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
+	base, upstream := newProbe(system), newProbe(system)
+	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
+	clientBase := newProbe(system)
+	n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(n)
+	conn, err := n.DialContext(ctx, "tcp", tcpEcho(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	echoed(t, conn, streamPayload)
+	// quic offers ss a stream only, so the client has no datagrams to give.
+	if _, err := n.DialContext(ctx, "udp", udpEcho(t).String()); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("DialContext(udp) over ss+quic = %v, want ErrUnsupported", err)
+	}
+	if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {
+		t.Fatalf("client base dials %d packets %d, want 0 and 1", clientBase.dials.Load(), clientBase.packets.Load())
+	}
+	if base.listens.Load() != 0 || base.packets.Load() != 1 {
+		t.Fatalf("server base listens %d packets %d, want 0 and 1", base.listens.Load(), base.packets.Load())
+	}
+	if upstream.dials.Load() != 1 || upstream.packets.Load() != 0 {
+		t.Fatalf("upstream dials %d packets %d, want 1 and 0", upstream.dials.Load(), upstream.packets.Load())
 	}
 }
