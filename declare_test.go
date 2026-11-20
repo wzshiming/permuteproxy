@@ -287,20 +287,36 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 }
 
 func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
-	calls = nil
 	ctx := context.Background()
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-hook-keep"))
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		scheme string
+		plane  Plane // the plane passed through
+		calls  []string
+	}{
+		{"test-hook-keep", Packet, []string{"base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1"}},
+		{"test-hook-keep-stream", Stream, []string{"base.dial tcp 127.0.0.1:1", "base.listen tcp 127.0.0.1:1"}},
 	}
-	calls = nil
-	if _, err := tr.Dial(ctx, Packet); err != nil {
-		t.Fatal(err)
+	for _, tt := range tests {
+		t.Run(tt.scheme, func(t *testing.T) {
+			tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", tt.scheme))
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			if _, err := tr.Dial(ctx, tt.plane); err != nil {
+				t.Fatal(err)
+			}
+			if tt.plane == Stream {
+				_, err = tr.Listen(ctx)
+			} else {
+				_, err = tr.ListenPacket(ctx)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCalls(t, tt.calls...)
+		})
 	}
-	if _, err := tr.ListenPacket(ctx); err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1")
 }
 
 func TestAdapterRefusesMissingFunctions(t *testing.T) {

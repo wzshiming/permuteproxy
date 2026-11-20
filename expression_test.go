@@ -127,6 +127,7 @@ func TestExpressionRefusesPlaceholdersAShellReadsQuoted(t *testing.T) {
 		`cmd:printf "a\\" %h %p`:              false,
 		`cmd:nc %h %p \`:                      false,
 		`cmd:printf "a\" %h" %p`:              true,
+		`cmd:printf "a\" %h"`:                 true,
 		`cmd:printf "\%h" %p`:                 true,
 		`cmd:nc '%h' %p`:                      true,
 		`cmd:nc \%h %p`:                       true,

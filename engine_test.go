@@ -600,6 +600,7 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 		{"nil Client", client, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
 		{"rejected ClientFuncs", client, mk("tcp", "test-reject-client", "test-counted"), []string{"test-reject-client.close", "test-counted.close"}},
 		{"rejected ClientFuncs without ListenPacket", client, mk("tcp", "test-reject-client-packet", "test-counted"), []string{"test-reject-client-packet.close", "test-counted.close"}},
+		{"rejected Derive", client, mk("tcp", "test-derive-quoted", "test-counted"), []string{"test-derive-quoted.close", "test-counted.close"}},
 		{"failing NewServer", server, mk("tcp", "test-server-broken", "test-counted"), []string{"test-counted.close"}},
 		{"nil Server", server, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
 		{"rejected ServerFuncs", server, mk("tcp", "test-reject-server", "test-counted"), []string{"test-reject-server.close", "test-counted.close"}},
