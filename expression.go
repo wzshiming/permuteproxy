@@ -100,6 +100,9 @@ func (x expression) over(address string) Chain {
 // hostBytes are the bytes a host may carry into a template.
 const hostBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_:%"
 
+// maxHost bounds the host a template carries, since no DNS name is longer.
+const maxHost = 255
+
 // expand fills x's template from address, an address of kind, refusing values the template cannot carry.
 func (x expression) expand(kind AddressKind, address string) (string, error) {
 	var pairs []string
@@ -108,6 +111,9 @@ func (x expression) expand(kind AddressKind, address string) (string, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			return "", errors.New("address is not host:port")
+		}
+		if len(host) > maxHost {
+			return "", fmt.Errorf("host of %d bytes is longer than %d", len(host), maxHost)
 		}
 		if strings.HasPrefix(host, "-") || strings.Trim(host, hostBytes) != "" {
 			return "", errors.New("host starts with '-' or has a byte other than ASCII letters, digits, '.', '-', '_', ':' and '%'")

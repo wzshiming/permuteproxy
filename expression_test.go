@@ -318,6 +318,8 @@ func TestResolveValidatesExpressionValues(t *testing.T) {
 		{"test-nc", "h:+1", false},
 		{"test-nc", "h:x", false},
 		{"test-nc", "h:", false},
+		{"test-nc", strings.Repeat("a", 255) + ":1", true},
+		{"test-nc", strings.Repeat("a", 256) + ":1", false},
 		{"test-nc-unix", "/tmp/a b.sock", true},
 		{"test-nc-unix", "./é.sock", true},
 		{"test-nc-unix", "-x.sock", false},

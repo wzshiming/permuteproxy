@@ -434,6 +434,7 @@ func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 		{"udp", "a=b:1"},
 		{"udp", "a,b:1"},
 		{"udp6", "a;b:1"},
+		{"udp", strings.Repeat("a", 256) + ":1"},
 		{"unix", "-x.sock"},
 		{"unix", "/tmp/a\nb.sock"},
 	} {
