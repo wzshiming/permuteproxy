@@ -561,6 +561,38 @@ func TestSessionsCloseClosesSessionConnsConcurrently(t *testing.T) {
 	})
 }
 
+// lateClosingConn unblocks its pending Read at once on Close and returns from Close only a second later.
+type lateClosingConn struct {
+	net.Conn
+	returned atomic.Bool
+}
+
+func (c *lateClosingConn) Close() error {
+	err := c.Conn.Close()
+	time.Sleep(time.Second)
+	c.returned.Store(true)
+	return err
+}
+
+func TestSessionsCloseWaitsForSessionConnsToClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		conns := make(chan *lateClosingConn, 1)
+		pc := NewSessions(func(context.Context, net.Addr) (net.Conn, error) {
+			local, remote := net.Pipe()
+			go io.Copy(io.Discard, remote)
+			c := &lateClosingConn{Conn: local}
+			conns <- c
+			return c, nil
+		}, SessionOptions{})
+		writeTo(t, pc, "open", testPeer(1))
+		c := <-conns
+		pc.Close()
+		if !c.returned.Load() {
+			t.Fatal("Close returned while a session conn's Close was still running")
+		}
+	})
+}
+
 func TestSessionsCloseWinsOverExpiredDeadline(t *testing.T) {
 	pc := NewSessions(newPipeDialer().dial, SessionOptions{})
 	pc.SetDeadline(time.Now())
