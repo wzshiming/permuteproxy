@@ -668,7 +668,6 @@ func TestQUICOverSOCKS5TwoHops(t *testing.T) {
 }
 
 func TestQUICOverShadowsocksPacket(t *testing.T) {
-	t.Skip("the ss packet server relays quic's two first datagrams from two upstream sockets, and quic drops what comes from the second")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c := parse(t, "ss+udp://aes-256-gcm:p@127.0.0.1:0")
@@ -691,12 +690,12 @@ func TestQUICOverShadowsocksPacket(t *testing.T) {
 	}
 	defer conn.Close()
 	echoed(t, conn, streamPayload)
-	// The client seals the quic datagrams on one socket, which the server relays from one of its own.
+	// The client seals the quic datagrams on one socket, which the server relays from one of its own, closing at once any other it opened for the first flight.
 	if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {
 		t.Fatalf("client base dials %d packets %d, want 0 and 1", clientBase.dials.Load(), clientBase.packets.Load())
 	}
-	if upstream.dials.Load() != 0 || upstream.packets.Load() != 1 {
-		t.Fatalf("upstream dials %d packets %d, want 0 and 1", upstream.dials.Load(), upstream.packets.Load())
+	if open := upstream.packets.Load() - int32(len(upstream.packetClosed)); upstream.dials.Load() != 0 || open != 1 {
+		t.Fatalf("upstream dials %d, sockets left open %d of %d opened, want 0 and 1", upstream.dials.Load(), open, upstream.packets.Load())
 	}
 }
 
