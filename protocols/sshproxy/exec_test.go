@@ -864,6 +864,48 @@ func TestDialFailingOverAGivenUpConnectionKeepsItsReplacement(t *testing.T) {
 	}
 }
 
+func TestAbandonedCmdDialFindingItsConnectionDeadDropsIt(t *testing.T) {
+	opened := make(chan struct{}, 1)
+	var conns atomic.Int32
+	addr := sshServer(t, func(conn net.Conn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
+		if conns.Add(1) > 1 {
+			go ssh.DiscardRequests(reqs)
+			for newChan := range chans {
+				newChan.Reject(ssh.Prohibited, "connecting only")
+			}
+			return
+		}
+		// The first connection leaves sessions opening and ends right after it answers a probe.
+		go func() {
+			for range chans {
+				opened <- struct{}{}
+			}
+		}()
+		for req := range reqs {
+			req.Reply(true, nil)
+			conn.Close()
+		}
+	})
+	base := &clientBase{}
+	n := dialServer(t, base, addr, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	dialed := dialAside(ctx, n, "cmd", "anything")
+	recv(t, opened, "the session's open")
+	cancel()
+	if err := recv(t, dialed, "the dial to end with its ctx"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cmd dial = %v, want context.Canceled", err)
+	}
+	// The probe reads its answer before the connection's end, which then fails the session the dial left opening.
+	time.Sleep(200 * time.Millisecond)
+	var refused *ssh.OpenChannelError
+	if _, err := n.DialContext(timeout(t), "tcp", "127.0.0.1:1"); !errors.As(err, &refused) {
+		t.Fatalf("next dial = %v, want it refused over a new connection", err)
+	}
+	if got := base.dials.Load(); got != 2 {
+		t.Fatalf("client dials = %d, want one reconnect", got)
+	}
+}
+
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())

@@ -313,8 +313,8 @@ func (c *client) start(ctx context.Context, address string, argv []string) (net.
 	}
 	sess, err := l.NewSession()
 	if err != nil {
-		// Drop a dead connection, unless the caller left, so that the next dial connects again.
-		if dead(err) && ctx.Err() == nil {
+		// Drop a dead connection, also for a caller that left, so that the next dial connects again.
+		if dead(err) {
 			c.drop(l)
 		}
 		return nil, err
