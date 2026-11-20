@@ -50,7 +50,7 @@ var options = []string{
 	keyAllowExec,
 }
 
-// keepAliveTimeout bounds the wait for the shared connection to answer a probe.
+// keepAliveTimeout is how long a probe waits with neither its answer nor a byte from the connection it probes.
 var keepAliveTimeout = 5 * time.Second
 
 // endpoint renders the options as the URL form sshproxy parses; the host is a placeholder since
@@ -90,9 +90,28 @@ type client struct {
 	dialer  *sshproxy.Dialer
 	once    sync.Once
 	closed  atomic.Bool
-	mu      sync.Mutex                 // orders the dialer's connects and drops
-	cli     atomic.Pointer[ssh.Client] // the connection the dialer holds, if any
+	mu      sync.Mutex           // orders the dialer's connects and drops
+	held    atomic.Pointer[link] // the connection the dialer holds, if any
+	next    *link                // the connection ProxyDial makes while connect holds mu
 	probing atomic.Bool
+}
+
+// link is a connection of the client and the bytes read from it.
+type link struct {
+	*ssh.Client
+	read atomic.Int64
+}
+
+// counted adds the bytes each Read returns to n.
+type counted struct {
+	net.Conn
+	n *atomic.Int64
+}
+
+func (c counted) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.n.Add(int64(n))
+	return n, err
 }
 
 func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
@@ -102,7 +121,12 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 			if c.closed.Load() {
 				return nil, net.ErrClosed
 			}
-			return inner.Dial(ctx, permuteproxy.Stream)
+			conn, err := inner.Dial(ctx, permuteproxy.Stream)
+			if err != nil {
+				return nil, err
+			}
+			c.next = &link{}
+			return counted{conn, &c.next.read}, nil
 		}
 	})
 	if network == "cmd" {
@@ -115,61 +139,86 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cli, err := c.connect(ctx)
+	l, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	conn, err := cli.DialContext(ctx, network, address)
+	conn, err := l.DialContext(ctx, network, address)
 	switch {
 	case err == nil:
 	case ctx.Err() != nil:
 		c.probe()
 	case dead(err):
-		c.drop(cli)
+		c.drop(l)
 	}
 	return conn, err
 }
 
 // connect returns the shared connection, connecting when there is none.
-func (c *client) connect(ctx context.Context) (*ssh.Client, error) {
+func (c *client) connect(ctx context.Context) (*link, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cli, err := c.dialer.SSHClient(ctx)
-	c.cli.Store(cli)
-	return cli, err
+	if err != nil {
+		c.held.Store(nil)
+		return nil, err
+	}
+	if l := c.held.Load(); l != nil && l.Client == cli {
+		return l, nil
+	}
+	// The dialer made cli over the conn ProxyDial counts into next.
+	c.next.Client = cli
+	c.held.Store(c.next)
+	return c.next, nil
 }
 
-// drop closes cli, so that the next dial connects again, unless a newer connection replaced it.
-func (c *client) drop(cli *ssh.Client) {
+// drop closes l, so that the next dial connects again, unless a newer connection replaced it.
+func (c *client) drop(l *link) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.cli.CompareAndSwap(cli, nil) {
+	if c.held.CompareAndSwap(l, nil) {
 		c.dialer.Close()
 	}
 }
 
-// probe drops the shared connection unless it answers a keep-alive in time, one probe at a time.
+// probe sends the shared connection a keep-alive and drops it if it fails or nothing arrives, one probe at a time.
 func (c *client) probe() {
-	cli := c.cli.Load()
-	if cli == nil || !c.probing.CompareAndSwap(false, true) {
+	l := c.held.Load()
+	if l == nil || !c.probing.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
 		defer c.probing.Store(false)
 		answered := make(chan error, 1)
 		go func() {
-			_, _, err := cli.SendRequest("keepalive@openssh.com", true, nil)
+			_, _, err := l.SendRequest("keepalive@openssh.com", true, nil)
 			answered <- err
 		}()
+		if l.await(answered) {
+			c.drop(l)
+		}
+	}()
+}
+
+// await reports whether the request failed, or a whole bound passed with neither its answer nor a byte from l.
+func (l *link) await(answered <-chan error) bool {
+	read := l.read.Load()
+	bound := time.NewTimer(keepAliveTimeout)
+	defer bound.Stop()
+	for {
 		select {
 		case err := <-answered:
-			if err == nil {
-				return
+			return err != nil
+		case <-bound.C:
+			// The answer queues behind whatever the connection still delivers.
+			n := l.read.Load()
+			if n == read {
+				return true
 			}
-		case <-time.After(keepAliveTimeout):
+			read = n
+			bound.Reset(keepAliveTimeout)
 		}
-		c.drop(cli)
-	}()
+	}
 }
 
 // dead reports whether err may come from the connection itself, not a refusal or a bad address.
@@ -242,18 +291,18 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 
 // start runs argv on a new session of the shared connection, opening none once ctx has ended.
 func (c *client) start(ctx context.Context, address string, argv []string) (net.Conn, error) {
-	cli, err := c.connect(ctx)
+	l, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	sess, err := cli.NewSession()
+	sess, err := l.NewSession()
 	if err != nil {
 		// Drop a dead connection, unless the caller left, so that the next dial connects again.
 		if dead(err) && ctx.Err() == nil {
-			c.drop(cli)
+			c.drop(l)
 		}
 		return nil, err
 	}

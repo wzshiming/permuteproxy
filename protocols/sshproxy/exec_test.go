@@ -215,14 +215,15 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase carries test clients to their server, counting dials; it holds, stalls or drops conns.
+// clientBase carries test clients to their server, counting dials; it holds, stalls, throttles or drops conns.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
-	dials   atomic.Int32
-	mu      sync.Mutex
-	held    chan struct{} // while set, reads wait for it to close
-	stalled chan struct{} // while set, writes wait for it to close
-	conns   []*baseConn
+	dials     atomic.Int32
+	throttled atomic.Bool // while set, reads crawl at about 50 KiB/s
+	mu        sync.Mutex
+	held      chan struct{} // while set, reads wait for it to close
+	stalled   chan struct{} // while set, writes wait for it to close
+	conns     []*baseConn
 }
 
 func (b *clientBase) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -275,6 +276,12 @@ func (b *clientBase) freeze() (thaw func()) {
 // hold keeps what servers send from the clients until the test ends.
 func (b *clientBase) hold(t *testing.T) { b.block(t, &b.held) }
 
+// throttle slows the clients' reads to a crawl until release.
+func (b *clientBase) throttle() (release func()) {
+	b.throttled.Store(true)
+	return func() { b.throttled.Store(false) }
+}
+
 // stall keeps what the clients send from the servers until the test ends.
 func (b *clientBase) stall(t *testing.T) { b.block(t, &b.stalled) }
 
@@ -308,6 +315,10 @@ type baseConn struct {
 }
 
 func (c *baseConn) Read(p []byte) (int, error) {
+	if c.base.throttled.Load() {
+		time.Sleep(20 * time.Millisecond)
+		p = p[:min(len(p), 1<<10)]
+	}
 	n, err := c.Conn.Read(p)
 	c.base.wait(&c.base.held)
 	return n, err

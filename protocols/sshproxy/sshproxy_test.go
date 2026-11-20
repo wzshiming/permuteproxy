@@ -72,6 +72,30 @@ func echoTarget(t *testing.T) string {
 	return ln.Addr().String()
 }
 
+// firehose accepts tcp conns and writes to each until it fails.
+func firehose(t *testing.T) string {
+	t.Helper()
+	ln := listen(t)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				buf := make([]byte, 32<<10)
+				for {
+					if _, err := conn.Write(buf); err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
 // recv waits for a value from ch, failing the test after a while.
 func recv[T any](t *testing.T, ch <-chan T, what string) T {
 	t.Helper()
@@ -295,14 +319,7 @@ func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
 }
 
 func TestDialTimingOutOverAHealthyConnectionKeepsIt(t *testing.T) {
-	up := newUpstream()
-	slow := permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
-		if address == "slow.invalid:1" {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		}
-		return up.DialContext(ctx, network, address)
-	}}
+	slow := slowTargets(newUpstream())
 	for _, tt := range []struct{ network, address string }{
 		{"tcp", "slow.invalid:1"},
 		{"cmd", "stall"},
@@ -334,6 +351,69 @@ func TestDialTimingOutOverAHealthyConnectionKeepsIt(t *testing.T) {
 				t.Fatalf("client dials = %d, want the connection kept", got)
 			}
 		})
+	}
+}
+
+// slowTargets is up, except that a dial to slow.invalid:1 waits for its ctx to end.
+func slowTargets(up permuteproxy.Network) permuteproxy.Network {
+	return permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "slow.invalid:1" {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return up.DialContext(ctx, network, address)
+	}}
+}
+
+func TestDialTimingOutOverABusySlowLinkKeepsIt(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, slowTargets(newUpstream())), withCredentials())
+	ctx := timeout(t)
+	conn, err := n.DialContext(ctx, "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	download, err := n.DialContext(ctx, "tcp", firehose(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer download.Close()
+	var received atomic.Int64
+	go func() {
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := download.Read(buf)
+			received.Add(int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}()
+	// What the server sends queues on the crawling link, the answer to a keep-alive included.
+	release := base.throttle()
+	defer release()
+	short, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if c, err := n.DialContext(short, "tcp", "slow.invalid:1"); !errors.Is(err, context.DeadlineExceeded) {
+		if c != nil {
+			c.Close()
+		}
+		t.Fatalf("dial to a slow target = %v, want context.DeadlineExceeded", err)
+	}
+	arrived := received.Load()
+	select {
+	case <-process(t, conn).Done():
+		t.Fatal("the open cmd conn ended while the link was still delivering the download")
+	case <-time.After(3 * keepAliveTimeout):
+	}
+	if received.Load() == arrived {
+		t.Fatal("the download stalled, so no byte arrived to keep the probe waiting")
+	}
+	release()
+	roundTrip(t, conn, "ping", "relay x|ping")
+	if got := base.dials.Load(); got != 1 {
+		t.Fatalf("client dials = %d, want the connection kept", got)
 	}
 }
 
