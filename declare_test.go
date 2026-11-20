@@ -894,6 +894,29 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 	assertRun(t, srv, "base.listenpacket udp 127.0.0.1:1", "test-packet-server.servepacket upstream=default")
 }
 
+func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
+	name := fresh("test-dual-server")
+	RegisterLayer(name, Spec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, Server: func(inner Transport, _ Network, _ Options) (Server, error) {
+		record("test-dual-server.server %v", inner.Planes())
+		return fakeServer{}, nil
+	}})
+	// The Base reports udp lossy, so the layer's carrier keeps only its stream.
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	for _, tt := range []struct {
+		chain Chain
+		want  []string
+	}{
+		{mk("", name), nil},
+		{mk("", name, "test-counted"), []string{"test-counted.close"}},
+	} {
+		calls = nil
+		if _, err := e.Server(tt.chain); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("Server() over a carrier lacking packet = %v, want ErrUnsupported", err)
+		}
+		assertCalls(t, tt.want...)
+	}
+}
+
 func TestServerClosesOnce(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}, Upstream: &closableNet{fakeNet{name: "upstream"}}}

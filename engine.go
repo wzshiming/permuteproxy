@@ -128,9 +128,9 @@ func (e Engine) Server(c Chain) (Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if inner.Planes()&(spec.Requires|spec.Preserves) == 0 {
+	if p := inner.Planes(); p&(spec.Requires|spec.Preserves) == 0 || p&spec.Requires != spec.Requires {
 		closeIf(inner)
-		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, inner.Planes(), ErrUnsupported)
+		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, p, ErrUnsupported)
 	}
 	upstream := e.Upstream
 	if upstream == nil {
