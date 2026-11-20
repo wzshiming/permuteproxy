@@ -563,7 +563,7 @@ func TestClientRefusesListen(t *testing.T) {
 	}
 	calls = nil
 	for _, network := range []string{"tcp", "tcp6", "unix", "fakenet", "udp", "bogus"} {
-		if _, err := n.Listen(ctx, network, "x:1"); !errors.Is(err, ErrUnsupported) {
+		if _, err := n.Listen(ctx, network, "x:1"); !errors.Is(err, ErrUnsupported) || err.Error() != "listen "+network+": unsupported" {
 			t.Fatalf("Listen(%q) = %v, want ErrUnsupported", network, err)
 		}
 	}
