@@ -403,26 +403,6 @@ func TestAdapterClosesOnce(t *testing.T) {
 	}
 }
 
-func TestAdaptAndNewAdapterCoexist(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("tcp", "test-snappy", "wide", "test-tls"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "test-tls.new", "wide.adapt stream", "test-snappy.new")
-	if tr.Planes() != Stream {
-		t.Fatalf("Planes() = %v, want stream", tr.Planes())
-	}
-	if _, err := tr.Dial(ctx, Stream); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tr.Listen(ctx); err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "wide.dial stream", "test-snappy.client", "wide.listen", "test-snappy.listener")
-}
-
 func TestClientDialsStream(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
@@ -634,31 +614,6 @@ func TestClientClosesOnce(t *testing.T) {
 		}
 		assertCalls(t, tt.want...)
 	}
-}
-
-func TestClientAndNewClientCoexist(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	declaredNet, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-http"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyNet, err := Engine{Base: declaredNet}.Client(mk("", "test-legacy"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "test-http.new", "test-legacy.client stream|packet")
-	if _, err := legacyNet.DialContext(ctx, "tcp4", "x:1"); err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "test-http.dial stream tcp4 x:1")
-	if _, err := legacyNet.Listen(ctx, "tcp", "x:1"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Listen through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
-	}
-	if _, err := legacyNet.DialContext(ctx, "udp", "x:1"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("udp dial through the Client-style hop = %v, want the declared client's ErrUnsupported", err)
-	}
-	assertCalls(t)
 }
 
 func TestClientReportsLossyFromSpec(t *testing.T) {
@@ -874,7 +829,6 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 	}{
 		{"NewServer over a stream carrier", e, mk("tcp", "test-packet-server", "closable"), []string{"closable.close"}},
 		{"NewServer over lossy udp", lossy, mk("udp", "test-ss", "test-counted"), []string{"test-counted.close"}},
-		{"Server over lossy udp", lossy, mk("udp", "test-legacy", "test-counted"), []string{"test-counted.close"}},
 		{"NewServer right over lossy udp", lossy, mk("udp", "test-ss"), nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -945,22 +899,4 @@ func TestServerClosesOnce(t *testing.T) {
 		}
 		assertCalls(t)
 	}
-}
-
-func TestServerAndNewServerCoexist(t *testing.T) {
-	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}, Upstream: &fakeNet{name: "upstream"}}
-	legacySrv, err := e.Server(mk("", "test-legacy", "test-tls"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	declaredSrv, err := e.Server(mk("", "test-http", "test-tls"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "test-tls.new", "test-legacy.server stream upstream=upstream", "test-tls.new", "test-http.newserver")
-	if _, ok := legacySrv.(fakeServer); !ok {
-		t.Fatalf("Server-style layer served %T, want its own fakeServer", legacySrv)
-	}
-	assertRun(t, declaredSrv, "base.listen tcp 127.0.0.1:1", "test-tls.listener", "test-http.serve upstream=upstream")
 }

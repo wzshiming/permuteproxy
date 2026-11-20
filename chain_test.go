@@ -59,12 +59,6 @@ func netName(n Network) string {
 	return "?"
 }
 
-type fakeServer struct{}
-
-func (fakeServer) Run(context.Context) error { return nil }
-
-func (fakeServer) Close() error { return nil }
-
 type closableNet struct{ fakeNet }
 
 func (n *closableNet) Close() error { record("%s.close", n.name); return nil }
@@ -157,24 +151,6 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 					record("%s.servepacket upstream=%s", name, netName(upstream))
 					return nil
 				},
-			}, nil
-		},
-	}
-}
-
-// wideAdapter declares Stream but hands back a transport exposing both planes.
-func wideAdapter() Spec {
-	return Spec{
-		Kind:     KindAdapter,
-		Requires: Stream,
-		Provides: Stream,
-		Adapt: func(inner Transport, _ Options) (Transport, error) {
-			record("wide.adapt %v", inner.Planes())
-			return TransportFuncs{
-				Plane:            Stream | Packet,
-				DialFunc:         func(_ context.Context, plane Plane) (net.Conn, error) { record("wide.dial %v", plane); return nil, nil },
-				ListenFunc:       func(context.Context) (net.Listener, error) { record("wide.listen"); return nil, nil },
-				ListenPacketFunc: func(context.Context) (net.PacketConn, error) { record("wide.listenpacket"); return nil, nil },
 			}, nil
 		},
 	}
@@ -336,19 +312,6 @@ func init() {
 	anyProxy := fakeProxy("test-any", Stream, Stream, 0, "username", "password")
 	anyProxy.NewClient, anyProxy.Networks = nil, nil
 	RegisterLayer("test-any", anyProxy)
-	// test-legacy keeps the Client and Server forms, handing back its base and a fakeServer.
-	RegisterLayer("test-legacy", Spec{
-		Kind:      KindProxy,
-		Preserves: Stream | Packet,
-		Client: func(inner Transport, base Network, _ Options) (Network, error) {
-			record("test-legacy.client %v", inner.Planes())
-			return base, nil
-		},
-		Server: func(inner Transport, upstream Network, _ Options) (Server, error) {
-			record("test-legacy.server %v upstream=%s", inner.Planes(), netName(upstream))
-			return fakeServer{}, nil
-		},
-	})
 	// test-peer resolves the default peer of its udp dials and binds their sockets through local.
 	RegisterLayer("test-peer", Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
@@ -362,16 +325,6 @@ func init() {
 			},
 		}, nil
 	}})
-	RegisterLayer("wide", wideAdapter())
-	// test-nil-adapt and test-nil-legacy keep the Adapt, Client and Server forms, each returning nil, nil.
-	RegisterLayer("test-nil-adapt", Spec{Kind: KindAdapter, Requires: Stream, Provides: Stream, Adapt: func(Transport, Options) (Transport, error) { return nil, nil }})
-	RegisterLayer("test-nil-legacy", Spec{
-		Kind:     KindProxy,
-		Requires: Stream,
-		Provides: Stream,
-		Client:   func(Transport, Network, Options) (Network, error) { return nil, nil },
-		Server:   func(Transport, Network, Options) (Server, error) { return nil, nil },
-	})
 	RegisterLayer("niladapter", declared(Stream, Stream, nil, nil))
 	RegisterLayer("test-broken", declared(Stream, Stream, nil, errDeclare))
 	for name, spec := range uncovered {
@@ -480,14 +433,7 @@ func TestRegisterRejects(t *testing.T) {
 	mustPanic(t, "alias named like layer", func() { RegisterAlias("test-tls", "test-http+test-tls") })
 	mustPanic(t, "name with plus", func() { RegisterLayer("a+b", adapter) })
 	mustPanic(t, "network without plane", func() { RegisterNetwork("np", NetworkSpec{}) })
-	mustPanic(t, "adapter without Adapt or NewAdapter", func() { RegisterLayer("na", Spec{Requires: Stream, Provides: Stream}) })
-	adapt := wideAdapter().Adapt
-	mustPanic(t, "proxy with Adapt", func() {
-		RegisterLayer("pa", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Adapt: adapt})
-	})
-	mustPanic(t, "adapter with Adapt and NewAdapter", func() {
-		RegisterLayer("both", Spec{Requires: Stream, Provides: Stream, Adapt: adapt, NewAdapter: adapter.NewAdapter})
-	})
+	mustPanic(t, "adapter without NewAdapter", func() { RegisterLayer("na", Spec{Requires: Stream, Provides: Stream}) })
 	mustPanic(t, "proxy with NewAdapter", func() {
 		proxy := fakeProxy("pn", Stream, Stream, 0, "", "")
 		proxy.NewAdapter = adapter.NewAdapter
@@ -513,7 +459,7 @@ func TestRegisterRejects(t *testing.T) {
 	mustPanic(t, "self alias", func() { RegisterAlias("self", "self") })
 	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", "HTTP+test-tls") })
 	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", "test-snappy") })
-	for _, name := range []string{"na", "both", "pn"} {
+	for _, name := range []string{"na", "pn"} {
 		if _, ok := lookupLayer(name); ok {
 			t.Fatalf("rejected layer %q was registered", name)
 		}
@@ -522,15 +468,13 @@ func TestRegisterRejects(t *testing.T) {
 
 func TestRegisterRejectsClientDeclarations(t *testing.T) {
 	proxy := fakeProxy("pc", Stream, Stream, 0, "", "")
-	twice, unlisted, listed, unknown, variant, adapter := proxy, proxy, proxy, proxy, proxy, fakeAdapter("ac", Stream, Stream)
-	twice.Client = func(Transport, Network, Options) (Network, error) { return nil, nil }
+	unlisted, listed, unknown, variant, adapter := proxy, proxy, proxy, proxy, fakeAdapter("ac", Stream, Stream)
 	unlisted.Networks = nil
 	listed.NewClient = nil
 	unknown.Networks = []string{"tcp", "bogus"}
 	variant.Networks = []string{"udp", "tcp4"}
 	adapter.NewClient, adapter.Networks = proxy.NewClient, proxy.Networks
 	for name, spec := range map[string]Spec{
-		"client-twice":    twice,
 		"client-unlisted": unlisted,
 		"client-listed":   listed,
 		"client-unknown":  unknown,
@@ -546,11 +490,9 @@ func TestRegisterRejectsClientDeclarations(t *testing.T) {
 
 func TestRegisterRejectsServerDeclarations(t *testing.T) {
 	proxy := fakeProxy("ps", Stream, Stream, 0, "", "")
-	twice, adapter := proxy, fakeAdapter("as", Stream, Stream)
-	twice.Server = func(Transport, Network, Options) (Server, error) { return fakeServer{}, nil }
+	adapter := fakeAdapter("as", Stream, Stream)
 	adapter.NewServer = proxy.NewServer
 	for name, spec := range map[string]Spec{
-		"server-twice":   twice,
 		"server-adapter": adapter,
 		"server-none":    {Kind: KindProxy, Requires: Stream, Provides: Stream},
 	} {
@@ -733,7 +675,6 @@ func TestLossyPlaneNotOfferedAbove(t *testing.T) {
 		{mk("tcp", "test-lossy"), Packet, []string{"test-lossy.new"}},
 		{mk("", "test-lossy-keep"), Stream | Packet, []string{"test-lossy-keep.new"}},
 		{mk("", "test-keep", "test-lossy-keep"), Stream, []string{"test-lossy-keep.new", "test-keep.new"}},
-		{mk("", "wide", "test-lossy-keep"), Stream, []string{"test-lossy-keep.new", "wide.adapt stream"}},
 	}
 	for _, tt := range tests {
 		tr, err := e.Transport(tt.chain)

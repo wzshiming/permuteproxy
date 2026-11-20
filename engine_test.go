@@ -476,33 +476,6 @@ func TestNativeDialFamilies(t *testing.T) {
 	}
 }
 
-func TestEngineRestrictsTransport(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(parse(t, "wide://127.0.0.1:1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "wide.adapt stream")
-	if tr.Planes() != Stream {
-		t.Fatalf("Planes() = %v, want the declared stream", tr.Planes())
-	}
-	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Dial(Packet) = %v, want ErrUnsupported", err)
-	}
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() = %v, want ErrUnsupported", err)
-	}
-	assertCalls(t)
-	if _, err := tr.Dial(ctx, Stream); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tr.Listen(ctx); err != nil {
-		t.Fatal(err)
-	}
-	assertCalls(t, "wide.dial stream", "wide.listen")
-}
-
 func netOp(ctx context.Context, n Network, op string) error {
 	kind, network, _ := strings.Cut(op, " ")
 	var err error
@@ -517,63 +490,12 @@ func netOp(ctx context.Context, n Network, op string) error {
 	return err
 }
 
-func TestEngineRestrictsClient(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	e := Engine{Base: &fakeNet{name: "base"}}
-	tests := []struct {
-		uri     string
-		allowed []string
-		refused []string
-	}{
-		{
-			"test-legacy+tcp://127.0.0.1:1",
-			[]string{"dial tcp", "dial tcp4", "dial unix", "dial fakenet", "listen tcp6"},
-			[]string{"dial udp", "dial unixgram", "dial bogus", "dial ", "listen udp", "listenpacket tcp", "listenpacket udp"},
-		},
-		{
-			"test-legacy+udp://127.0.0.1:1",
-			[]string{"dial udp", "dial udp6", "dial unixgram", "listenpacket udp4"},
-			[]string{"dial tcp", "dial bogus", "listen tcp", "listen udp", "listenpacket tcp"},
-		},
-		{
-			"test-legacy://127.0.0.1:1",
-			[]string{"dial tcp", "dial udp", "listen unix", "listenpacket unixgram"},
-			[]string{"dial bogus", "listen udp", "listenpacket tcp"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.uri, func(t *testing.T) {
-			n, err := e.Client(parse(t, tt.uri))
-			if err != nil {
-				t.Fatal(err)
-			}
-			calls = nil
-			for _, op := range tt.refused {
-				if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
-					t.Fatalf("%q = %v, want ErrUnsupported", op, err)
-				}
-				assertCalls(t)
-			}
-			for _, op := range tt.allowed {
-				if err := netOp(ctx, n, op); err != nil {
-					t.Fatalf("%q = %v", op, err)
-				}
-				assertCalls(t, "base."+op+" x:1")
-			}
-		})
-	}
-}
-
 func TestEngineRejectsNilResults(t *testing.T) {
 	e := Engine{Base: &fakeNet{name: "base"}}
 	for name, err := range map[string]error{
-		"adapter":             func() error { _, err := e.Transport(parse(t, "niladapter://x:1")); return err }(),
-		"client":              func() error { _, err := e.Client(parse(t, "nilproxy://x:1")); return err }(),
-		"server":              func() error { _, err := e.Server(parse(t, "nilproxy://x:1")); return err }(),
-		"Adapt-style adapter": func() error { _, err := e.Transport(parse(t, "test-nil-adapt://x:1")); return err }(),
-		"Client-style client": func() error { _, err := e.Client(parse(t, "test-nil-legacy://x:1")); return err }(),
-		"Server-style server": func() error { _, err := e.Server(parse(t, "test-nil-legacy://x:1")); return err }(),
+		"adapter": func() error { _, err := e.Transport(parse(t, "niladapter://x:1")); return err }(),
+		"client":  func() error { _, err := e.Client(parse(t, "nilproxy://x:1")); return err }(),
+		"server":  func() error { _, err := e.Server(parse(t, "nilproxy://x:1")); return err }(),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("%s: got %v, want an error naming the nil result", name, err)
@@ -877,7 +799,6 @@ func TestEngineForwardsClose(t *testing.T) {
 		{"test-tls://127.0.0.1:1", false, nil},
 		{"closableproxy://127.0.0.1:1", true, []string{"closableproxy.close"}},
 		{"test-http://127.0.0.1:1", true, nil},
-		{"test-legacy://127.0.0.1:1", true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
