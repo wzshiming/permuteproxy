@@ -103,11 +103,10 @@ func (c *conn) Close() error {
 			defer close(released)
 			defer cancel()
 			// A closed conn discards what its peer keeps writing until the peer ends its side or linger passes.
-			if _, err := io.Copy(io.Discard, c.stream); err == nil {
-				// Closing the stream waits until the peer has acknowledged all we wrote.
-				c.stream.SetWriteContext(ctx)
-				c.stream.Close()
-			}
+			io.Copy(io.Discard, c.stream)
+			// Closing the stream waits until the peer has acknowledged all we wrote.
+			c.stream.SetWriteContext(ctx)
+			c.stream.Close()
 			c.release()
 		}()
 		// What is not delivered yet is lost if the process exits once Close returns.

@@ -559,6 +559,7 @@ func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
 		ended error // what the dialer's read ends with once the peer's end arrives
 	}{
 		{"close", (*xquic.Stream).CloseWrite, nil},
+		{"reset", func(s *xquic.Stream) { s.Reset(7) }, xquic.StreamErrorCode(7)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			k := issue(t)
