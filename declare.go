@@ -191,9 +191,10 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 	case funcs.ListenPacket == nil && (s.Provides|s.Preserves)&Packet != 0:
 		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket for %v", Packet))
 	}
-	n := NetworkFuncs{
+	a := &assembledNetwork{close: closeOnce(funcs.Close, inner), spec: s}
+	a.NetworkFuncs = NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
-			switch base, plane := s.admit(network); {
+			switch base, plane := a.admit(network); {
 			case plane == Stream:
 				return funcs.Dial(ctx, inner, network, address)
 			case base == "udp" && !isLossy(local, network):
@@ -202,13 +203,13 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
-			if _, plane := s.admit(network); plane != Packet || isLossy(local, network) {
+			if _, plane := a.admit(network); plane != Packet || isLossy(local, network) {
 				return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
 			}
 			return funcs.ListenPacket(ctx, inner, local, network, address)
 		},
 	}
-	return assembledNetwork{n, closeOnce(funcs.Close, inner), s}, nil
+	return a, nil
 }
 
 // assembledNetwork is a declared client's Network; the engine built its inner Transport, so Close releases it too.
@@ -219,20 +220,20 @@ type assembledNetwork struct {
 }
 
 // Close releases the client and then its inner Transport, once.
-func (a assembledNetwork) Close() error {
+func (a *assembledNetwork) Close() error {
 	return a.close()
 }
 
 // Lossy reports the networks its layer admits on a plane the layer declares Lossy.
-func (a assembledNetwork) Lossy(network string) bool {
-	_, plane := a.spec.admit(network)
+func (a *assembledNetwork) Lossy(network string) bool {
+	_, plane := a.admit(network)
 	return plane&a.spec.Lossy != 0
 }
 
-// admit maps a network s lists to its base name and plane, and any other network to no plane.
-func (s Spec) admit(network string) (string, Plane) {
+// admit maps a network its layer lists to its base name and plane, and any other network to no plane.
+func (a *assembledNetwork) admit(network string) (string, Plane) {
 	base, plane, _ := lookupBase(network)
-	if !slices.Contains(s.Networks, base) {
+	if !slices.Contains(a.spec.Networks, base) {
 		return "", 0
 	}
 	return base, plane
