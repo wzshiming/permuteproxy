@@ -593,6 +593,18 @@ func TestCmdCloseReturnsAndUnblocksReadAtOnce(t *testing.T) {
 	}
 }
 
+func TestCmdWriteAfterCloseReturnsErrClosed(t *testing.T) {
+	n := dialServer(t, &clientBase{}, serveExec(t, newUpstream()), withCredentials())
+	conn, err := n.DialContext(timeout(t), "cmd", "sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if _, err := conn.Write([]byte("late")); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Write after Close = %v, want net.ErrClosed", err)
+	}
+}
+
 func TestCmdReportsExitStatus(t *testing.T) {
 	n := dialServer(t, &clientBase{}, serveExec(t, newUpstream()), withCredentials())
 	for _, tt := range []struct {

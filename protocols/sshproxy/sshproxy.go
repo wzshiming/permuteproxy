@@ -222,6 +222,7 @@ type execConn struct {
 	remote  net.Addr
 	done    chan struct{}
 	err     error
+	closed  atomic.Bool
 }
 
 func (c *execConn) Read(b []byte) (int, error) { return c.stdout.Read(b) }
@@ -229,10 +230,14 @@ func (c *execConn) Read(b []byte) (int, error) { return c.stdout.Read(b) }
 func (c *execConn) Write(b []byte) (int, error) {
 	c.writing.Lock()
 	defer c.writing.Unlock()
+	if c.closed.Load() {
+		return 0, net.ErrClosed
+	}
 	return c.stdin.Write(b)
 }
 
 func (c *execConn) Close() error {
+	c.closed.Store(true)
 	c.feed.CloseWithError(net.ErrClosed)
 	// Sending the channel's close waits for the transport, which a stalled peer may hold.
 	go c.sess.Close()
