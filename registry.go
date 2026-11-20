@@ -105,30 +105,17 @@ func RegisterLayer(name string, spec Spec) {
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
 	case spec.Lossy&^Packet != 0, spec.Lossy&^(spec.Provides|spec.Preserves) != 0:
 		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
-	case spec.Kind == KindAdapter && ((spec.Adapt == nil) == (spec.NewAdapter == nil) || spec.Client != nil || spec.NewClient != nil || spec.Server != nil || spec.NewServer != nil):
-		panic(fmt.Sprintf("permuteproxy: adapter %q must declare only one of Adapt and NewAdapter", name))
-	case spec.Kind == KindProxy && (spec.Adapt != nil || spec.NewAdapter != nil || (spec.Client == nil && spec.NewClient == nil && spec.Server == nil && spec.NewServer == nil)):
-		panic(fmt.Sprintf("permuteproxy: proxy %q must declare Client, NewClient, Server or NewServer, not Adapt or NewAdapter", name))
+	case spec.Kind == KindAdapter && (spec.NewAdapter == nil || spec.NewClient != nil || spec.NewServer != nil):
+		panic(fmt.Sprintf("permuteproxy: adapter %q must declare NewAdapter and neither NewClient nor NewServer", name))
+	case spec.Kind == KindProxy && (spec.NewAdapter != nil || (spec.NewClient == nil && spec.NewServer == nil)):
+		panic(fmt.Sprintf("permuteproxy: proxy %q must declare NewClient or NewServer, not NewAdapter", name))
 	case spec.Kind > KindProxy:
 		panic(fmt.Sprintf("permuteproxy: unknown kind of layer %q", name))
-	case spec.Client != nil && spec.NewClient != nil:
-		panic(fmt.Sprintf("permuteproxy: proxy %q must declare only one of Client and NewClient", name))
-	case spec.Server != nil && spec.NewServer != nil:
-		panic(fmt.Sprintf("permuteproxy: proxy %q must declare only one of Server and NewServer", name))
 	case (spec.NewClient == nil) != (len(spec.Networks) == 0):
 		panic(fmt.Sprintf("permuteproxy: layer %q must list Networks exactly when it declares NewClient", name))
 	}
 	spec.Options = append([]string(nil), spec.Options...)
 	spec.Networks = append([]string(nil), spec.Networks...)
-	if spec.NewAdapter != nil {
-		spec.Adapt = spec.adapt
-	}
-	if spec.NewClient != nil {
-		spec.Client = spec.client
-	}
-	if spec.NewServer != nil {
-		spec.Server = spec.server
-	}
 	layers[name] = spec
 }
 

@@ -78,7 +78,7 @@ func (s Spec) covers(funcs *AdapterFuncs) error {
 	return nil
 }
 
-// adapt is the Adapt that RegisterLayer derives from s.NewAdapter.
+// adapt builds over inner the adapter s.NewAdapter declares.
 func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
 	funcs, err := s.NewAdapter(opts)
 	switch {
@@ -183,7 +183,7 @@ type ClientFuncs struct {
 	Close        func() error                                                                                               // optional; releases what NewClient acquired
 }
 
-// client is the Client that RegisterLayer derives from s.NewClient.
+// client builds over inner the client s.NewClient declares, binding its own end through local.
 func (s Spec) client(inner Transport, local Network, opts Options) (Network, error) {
 	funcs, err := s.NewClient(opts)
 	switch {
@@ -405,7 +405,7 @@ type ServerFuncs struct {
 	Close       func() error                                                         // optional; releases what NewServer acquired, and may run while Serve or ServePacket are still returning
 }
 
-// server is the Server that RegisterLayer derives from s.NewServer.
+// server builds over inner the server s.NewServer declares, reaching its targets through upstream.
 func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, error) {
 	funcs, err := s.NewServer(opts)
 	switch {

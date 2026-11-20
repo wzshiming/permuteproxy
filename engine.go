@@ -51,14 +51,10 @@ func bind(n Network, stream, packet, address string, layered bool) *bound {
 // stack builds layers hi-1 out to lo over t, closing what it holds when a layer fails.
 func (r *resolved) stack(t Transport, lo, hi int) (Transport, error) {
 	for i := hi - 1; i >= lo; i-- {
-		next, err := r.specs[i].Adapt(t, r.layers[i].Options.clone())
+		next, err := r.specs[i].adapt(t, r.layers[i].Options.clone())
 		if err != nil {
 			closeIf(t)
 			return nil, fmt.Errorf("layer %q: %w", r.layers[i].Scheme, err)
-		}
-		if next == nil {
-			closeIf(t)
-			return nil, fmt.Errorf("layer %q: Adapt returned nil", r.layers[i].Scheme)
 		}
 		t = pinned{TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
 	}
@@ -95,21 +91,17 @@ func (e Engine) Client(c Chain) (Network, error) {
 		return nil, err
 	}
 	scheme, spec := c.Layers[0].Scheme, r.specs[0]
-	if spec.Client == nil {
+	if spec.NewClient == nil {
 		return nil, fmt.Errorf("layer %q: client: %w", scheme, ErrUnsupported)
 	}
 	inner, err := e.build(r, 1)
 	if err != nil {
 		return nil, err
 	}
-	n, err := spec.Client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
+	n, err := spec.client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
-	}
-	if n == nil {
-		closeIf(inner)
-		return nil, fmt.Errorf("layer %q: Client returned nil", scheme)
 	}
 	return restricted{network: n, plane: r.planes[0]}, nil
 }
@@ -121,7 +113,7 @@ func (e Engine) Server(c Chain) (Server, error) {
 		return nil, err
 	}
 	scheme, spec := c.Layers[0].Scheme, r.specs[0]
-	if spec.Server == nil {
+	if spec.NewServer == nil {
 		return nil, fmt.Errorf("layer %q: server: %w", scheme, ErrUnsupported)
 	}
 	inner, err := e.build(r, 1)
@@ -136,14 +128,10 @@ func (e Engine) Server(c Chain) (Server, error) {
 	if upstream == nil {
 		upstream = byName{}
 	}
-	s, err := spec.Server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
+	s, err := spec.server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
-	}
-	if s == nil {
-		closeIf(inner)
-		return nil, fmt.Errorf("layer %q: Server returned nil", scheme)
 	}
 	return s, nil
 }
