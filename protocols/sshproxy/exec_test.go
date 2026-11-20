@@ -709,6 +709,53 @@ func TestDialWithEndedCtxStartsNoProbe(t *testing.T) {
 	}
 }
 
+// probedServer serves SSH whose channel opens and keep-alives go unanswered, sending the number of each probed connection to probes.
+func probedServer(t *testing.T) (addr string, probes <-chan int32) {
+	t.Helper()
+	var conns atomic.Int32
+	keepAlives := make(chan int32, 16)
+	return rawServer(t, func(ssh.NewChannel) {}, func(reqs <-chan *ssh.Request) {
+		conn := conns.Add(1)
+		for range reqs {
+			keepAlives <- conn
+		}
+	}), keepAlives
+}
+
+// timesOut dials tcp over n with a short ctx, wanting it to time out.
+func timesOut(t *testing.T, n permuteproxy.Network) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := n.DialContext(ctx, "tcp", "127.0.0.1:1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("tcp dial = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestConnectionReplacedWhileProbedGetsAProbeOfItsOwn(t *testing.T) {
+	addr, probes := probedServer(t)
+	base := &clientBase{}
+	n := dialServer(t, base, addr, nil)
+	timesOut(t, n)
+	if got := recv(t, probes, "the first connection's probe"); got != 1 {
+		t.Fatalf("probe of connection %d, want the first", got)
+	}
+	// The client gives up the first connection while its probe waits, which freezing keeps open until thawed.
+	t.Cleanup(base.freeze())
+	for try := 0; base.dials.Load() < 2; try++ {
+		if try == 10 {
+			t.Fatal("the client did not connect again")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		n.DialContext(ctx, "tcp", "127.0.0.1:1")
+		cancel()
+	}
+	// The dial that connected again timed out over the new connection.
+	if got := recv(t, probes, "the second connection's probe"); got != 2 {
+		t.Fatalf("probe of connection %d, want the second", got)
+	}
+}
+
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())

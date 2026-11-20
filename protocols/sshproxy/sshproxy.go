@@ -87,19 +87,19 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 
 // client dials over one SSH connection, made on first use over the stream inner dials.
 type client struct {
-	dialer  *sshproxy.Dialer
-	once    sync.Once
-	closed  atomic.Bool
-	mu      sync.Mutex           // orders the dialer's connects and drops
-	held    atomic.Pointer[link] // the connection the dialer holds, if any
-	next    *link                // the connection ProxyDial makes while connect holds mu
-	probing atomic.Bool
+	dialer *sshproxy.Dialer
+	once   sync.Once
+	closed atomic.Bool
+	mu     sync.Mutex           // orders the dialer's connects and drops
+	held   atomic.Pointer[link] // the connection the dialer holds, if any
+	next   *link                // the connection ProxyDial makes while connect holds mu
 }
 
-// link is a connection of the client and the bytes read from it.
+// link is a connection of the client, the bytes read from it and whether a probe of it runs.
 type link struct {
 	*ssh.Client
-	read atomic.Int64
+	read    atomic.Int64
+	probing atomic.Bool
 }
 
 // counted adds the bytes each Read returns to n.
@@ -181,14 +181,14 @@ func (c *client) drop(l *link) {
 	}
 }
 
-// probe sends the shared connection a keep-alive and drops it if it fails or nothing arrives, one probe at a time.
+// probe sends the shared connection a keep-alive and drops it if it fails or nothing arrives, one probe per connection.
 func (c *client) probe() {
 	l := c.held.Load()
-	if l == nil || !c.probing.CompareAndSwap(false, true) {
+	if l == nil || !l.probing.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
-		defer c.probing.Store(false)
+		defer l.probing.Store(false)
 		answered := make(chan error, 1)
 		go func() {
 			_, _, err := l.SendRequest("keepalive@openssh.com", true, nil)
