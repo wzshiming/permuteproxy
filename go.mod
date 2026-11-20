@@ -11,7 +11,7 @@ require (
 	github.com/wzshiming/cmux v0.4.2
 	github.com/wzshiming/hostmatcher v0.0.1
 	github.com/wzshiming/httpproxy v0.6.1
-	github.com/wzshiming/shadowsocks v0.4.2
+	github.com/wzshiming/shadowsocks v0.5.0
 	github.com/wzshiming/socks4 v0.4.0
 	github.com/wzshiming/socks5 v0.7.0
 	github.com/wzshiming/sshd v0.2.5

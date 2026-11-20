@@ -278,6 +278,42 @@ func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
 	}
 }
 
+func TestPacketTargetByNameReachesItsPeer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	proxy, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := chain(t, "ss+udp://aes-256-gcm:p@"+proxy.LocalAddr().String())
+	base := permuteproxy.NetworkFuncs{ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return proxy, nil }}
+	srv, err := permuteproxy.Engine{Base: base, Upstream: system}.Server(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Run(ctx)
+	defer srv.Close()
+	n, err := permuteproxy.Engine{Base: system}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, port, _ := net.SplitHostPort(echo(t).String())
+	// The client carries the name unresolved, so the server has to resolve it.
+	conn, err := n.DialContext(ctx, "udp", net.JoinHostPort("localhost", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 16)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := conn.Read(buf); err != nil || string(buf[:n]) != "ping" {
+		t.Fatalf("Read = %q, %v; want the echo of the datagram sent to localhost:%s", buf[:n], err, port)
+	}
+}
+
 func TestSchemesAcceptOnlyTheCredentialOptions(t *testing.T) {
 	want := permuteproxy.Options{"encrypto": "aes-256-gcm", "password": "p"}
 	for _, scheme := range []string{"ss", "shadowsocks"} {
