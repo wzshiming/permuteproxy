@@ -218,7 +218,7 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 			switch {
 			case ok:
 				return d.dialContext(ctx, a, address)
-			case plane == Stream && funcs.Dial != nil:
+			case plane == Stream:
 				return funcs.Dial(ctx, inner, network, address)
 			case base == "udp" && funcs.ListenPacket != nil && !isLossy(local, network):
 				return funcs.dialUDP(ctx, inner, local, network, address)
