@@ -11,6 +11,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -295,6 +296,7 @@ func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
 			}
 			conn.Close()
 			silent := base.mute()
+			before := runtime.NumGoroutine()
 			short, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
 			if conn, err := n.DialContext(short, tt.network, tt.address); !errors.Is(err, context.DeadlineExceeded) {
@@ -303,8 +305,26 @@ func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
 				}
 				t.Fatalf("dial over the silent connection = %v, want context.DeadlineExceeded", err)
 			}
-			// The keep-alive the client sends then goes unanswered, so it drops the connection.
+			timedOut := time.Now()
+			// More dials time out meanwhile, without a probe of their own.
+			for range 8 {
+				ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				if conn, err := n.DialContext(ctx, tt.network, tt.address); err == nil {
+					conn.Close()
+				}
+				cancel()
+			}
+			// The keep-alive the client sends then goes unanswered and nothing else arrives, so it drops the connection.
 			recv(t, silent[0].closed, "the client to drop the silent connection")
+			if waited := time.Since(timedOut); waited < keepAliveTimeout*9/10 || waited > 2*keepAliveTimeout {
+				t.Fatalf("silent connection dropped %v after the dial timed out, want about %v", waited, keepAliveTimeout)
+			}
+			// What the timed-out dials left waiting ends with the connection.
+			for wait := time.Now().Add(10 * time.Second); runtime.NumGoroutine() > before+4; time.Sleep(50 * time.Millisecond) {
+				if time.Now().After(wait) {
+					t.Fatalf("goroutines = %d once the silent connection was dropped, %d before the dials; want none left behind", runtime.NumGoroutine(), before)
+				}
+			}
 			conn, err = n.DialContext(timeout(t), tt.network, tt.address)
 			if err != nil {
 				t.Fatalf("dial after the silent connection was dropped = %v", err)
