@@ -103,8 +103,8 @@ func build(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) permutepro
 	return tr
 }
 
-// pair listens through quic on e and returns the listener and a transport dialing it.
-func pair(t *testing.T, e permuteproxy.Engine) (net.Listener, permuteproxy.Transport) {
+// listenQUIC listens through quic on e and returns the listener and the keys to dial it with.
+func listenQUIC(t *testing.T, e permuteproxy.Engine) (net.Listener, keys) {
 	t.Helper()
 	k := issue(t)
 	ln, err := build(t, e, quicChain("127.0.0.1:0", k.server)).Listen(context.Background())
@@ -112,6 +112,13 @@ func pair(t *testing.T, e permuteproxy.Engine) (net.Listener, permuteproxy.Trans
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
+	return ln, k
+}
+
+// pair listens through quic on e and returns the listener and a transport dialing it.
+func pair(t *testing.T, e permuteproxy.Engine) (net.Listener, permuteproxy.Transport) {
+	t.Helper()
+	ln, k := listenQUIC(t, e)
 	return ln, build(t, e, quicChain(ln.Addr().String(), k.client))
 }
 

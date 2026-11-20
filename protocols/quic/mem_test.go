@@ -134,7 +134,7 @@ func (m *memNet) deliver(d datagram, to string) {
 	}
 }
 
-// memSocket is a socket of a memNet; it counts its writes and Close calls.
+// memSocket is a socket of a memNet; it counts its writes, its Close calls and the calls in flight.
 type memSocket struct {
 	net    *memNet
 	local  net.Addr
@@ -143,9 +143,12 @@ type memSocket struct {
 	once   sync.Once
 	writes atomic.Int32
 	closes atomic.Int32
+	active atomic.Int32
 }
 
 func (s *memSocket) ReadFrom(b []byte) (int, net.Addr, error) {
+	s.active.Add(1)
+	defer s.active.Add(-1)
 	if err := s.net.failRead; err != nil {
 		return 0, nil, err
 	}
@@ -158,6 +161,8 @@ func (s *memSocket) ReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (s *memSocket) WriteTo(b []byte, addr net.Addr) (int, error) {
+	s.active.Add(1)
+	defer s.active.Add(-1)
 	s.writes.Add(1)
 	if err := s.net.failWrite; err != nil {
 		return 0, err

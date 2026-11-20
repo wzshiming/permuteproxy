@@ -222,6 +222,14 @@ func TestCloseInterruptsABlockedWrite(t *testing.T) {
 	}
 }
 
+// released fails unless s was closed once and nothing reads or writes it any more.
+func released(t *testing.T, s *memSocket, what string) {
+	t.Helper()
+	if c, a := s.closes.Load(), s.active.Load(); c != 1 || a != 0 {
+		t.Fatalf("%s carrier closed %d times with %d calls in flight, want once with none", what, c, a)
+	}
+}
+
 func TestCloseReleasesEverythingOnce(t *testing.T) {
 	noGoroutinesLeft(t)
 	mem := newMemNet()
@@ -238,18 +246,14 @@ func TestCloseReleasesEverythingOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if n := mem.socket(t, 1).closes.Load(); n != 1 {
-		t.Fatalf("dialed carrier closed %d times, want 1", n)
-	}
+	released(t, mem.socket(t, 1), "dialed")
 	srv.Close()
 	for range 2 {
 		if err := ln.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n := mem.socket(t, 0).closes.Load(); n != 1 {
-		t.Fatalf("listened carrier closed %d times, want 1", n)
-	}
+	released(t, mem.socket(t, 0), "listened")
 	noGoroutinesLeft(t)
 }
 
@@ -273,9 +277,7 @@ func TestCancelingADialInItsHandshakeReleasesEverything(t *testing.T) {
 	if d := time.Since(start); d > time.Second {
 		t.Fatalf("Dial returned %v after its cancel", d)
 	}
-	if n := mem.socket(t, 0).closes.Load(); n != 1 {
-		t.Fatalf("carrier closed %d times, want 1", n)
-	}
+	released(t, mem.socket(t, 0), "dialed")
 	noGoroutinesLeft(t)
 }
 
