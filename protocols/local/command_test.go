@@ -24,6 +24,9 @@ func TestMain(m *testing.M) {
 	if os.Getenv("PERMUTEPROXY_FAKE_NC") != "" {
 		os.Exit(fakeNetcat(os.Args[1:]))
 	}
+	if os.Getenv("PERMUTEPROXY_FAKE_SOCAT") != "" {
+		os.Exit(fakeSocat(os.Args[1:]))
+	}
 	m.Run()
 }
 
@@ -67,6 +70,25 @@ func fakeNetcat(args []string) int {
 		if shutdown {
 			conn.(*net.TCPConn).CloseWrite()
 		}
+	}()
+	io.Copy(os.Stdout, conn)
+	return 0
+}
+
+// fakeSocat relays as socat - UDP:host:port does, one datagram per read of stdin, until stdin ends.
+func fakeSocat(args []string) int {
+	if len(args) != 3 || args[0] != "socat" || args[1] != "-" || !strings.HasPrefix(args[2], "UDP:") {
+		fmt.Fprintln(os.Stderr, "fake socat: want socat - UDP:host:port")
+		return 2
+	}
+	conn, err := net.Dial("udp", strings.TrimPrefix(args[2], "UDP:"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fake socat:", err)
+		return 1
+	}
+	go func() {
+		io.Copy(conn, os.Stdin)
+		conn.Close()
 	}()
 	io.Copy(os.Stdout, conn)
 	return 0
