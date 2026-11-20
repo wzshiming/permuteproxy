@@ -286,6 +286,23 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 	}
 }
 
+func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-hook-keep"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.Dial(ctx, Packet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.ListenPacket(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1")
+}
+
 func TestAdapterRefusesMissingFunctions(t *testing.T) {
 	calls = nil
 	ctx := context.Background()

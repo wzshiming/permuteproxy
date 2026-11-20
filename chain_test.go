@@ -397,6 +397,9 @@ func init() {
 	RegisterLayer("test-hookfail-ss", hookedAdapter("test-hookfail-ss", Stream, Stream, errHook))
 	RegisterLayer("test-hookfail-sp", hookedAdapter("test-hookfail-sp", Packet, Stream, errHook))
 	RegisterLayer("test-hookfail-pp", hookedAdapter("test-hookfail-pp", Packet, Packet, errHook))
+	hookKeep := hookedAdapter("test-hook-keep", Stream, Stream, nil)
+	hookKeep.Preserves = Packet
+	RegisterLayer("test-hook-keep", hookKeep)
 	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
 	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("closableserver", declaredServer(Stream, 0, &ServerFuncs{Serve: failServe, Close: func() error { record("closableserver.close"); return nil }}, nil))
