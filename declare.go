@@ -208,6 +208,8 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 		return nil, reject(funcs.Close, fmt.Errorf("no Dial for %v", Stream))
 	case funcs.ListenPacket == nil && derivedPlanes&Packet == 0 && (s.Provides|s.Preserves)&Packet != 0:
 		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket or derived datagram network for %v", Packet))
+	case funcs.ListenPacket == nil && overPlanes&Packet != 0:
+		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket for a derivation over %v", Packet))
 	}
 	a := &assembledNetwork{close: closeOnce(funcs.Close, inner), spec: s, derived: derived}
 	a.NetworkFuncs = NetworkFuncs{
