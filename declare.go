@@ -244,18 +244,21 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 type assembledNetwork struct {
 	NetworkFuncs
 	close   func() error
-	mu      sync.RWMutex // derived dials hold it for reading, so Close waits for those in flight
+	mu      sync.RWMutex // a derived dial checks closed and joins dials under it for reading
 	closed  bool
+	dials   sync.WaitGroup // derived dials in flight
 	spec    Spec
 	derived map[string]derivation
 }
 
-// Close releases the client and then its inner Transport, once; its derived networks refuse from then on.
+// Close refuses derived dials, releases the client once, which may end those in flight, and then waits for them.
 func (a *assembledNetwork) Close() error {
 	a.mu.Lock()
 	a.closed = true
 	a.mu.Unlock()
-	return a.close()
+	err := a.close()
+	a.dials.Wait()
+	return err
 }
 
 // Lossy reports the networks its client admits on a plane its layer declares Lossy, and those it derives through a lossy expression.
@@ -372,10 +375,13 @@ func (d derivation) sessions(a *assembledNetwork) (net.PacketConn, error) {
 // dial builds d's expression for address over a and dials the derived plane; the conn's Close releases what it built.
 func (d derivation) dial(ctx context.Context, a *assembledNetwork, address string) (net.Conn, error) {
 	a.mu.RLock()
-	defer a.mu.RUnlock()
 	if a.closed {
+		a.mu.RUnlock()
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, net.ErrClosed)
 	}
+	a.dials.Add(1)
+	a.mu.RUnlock()
+	defer a.dials.Done()
 	text, err := d.x.expand(d.kind, address)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
