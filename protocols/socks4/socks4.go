@@ -9,7 +9,6 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -18,28 +17,36 @@ const (
 	KeyPassword = "password"
 )
 
-func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
-	dialer := &socks4.Dialer{
-		Username:  opts[KeyUsername],
-		IsResolve: true,
-		Timeout:   time.Minute,
-		ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return inner.Dial(ctx, permuteproxy.Stream)
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
+	username := opts[KeyUsername]
+	return &permuteproxy.ClientFuncs{
+		Dial: func(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+			dialer := &socks4.Dialer{
+				Username:  username,
+				IsResolve: true,
+				Timeout:   time.Minute,
+				ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return inner.Dial(ctx, permuteproxy.Stream)
+				},
+			}
+			return dialer.DialContext(ctx, network, address)
 		},
-	}
-	return protoutils.DialNetwork(dialer.DialContext, "tcp", "tcp4", "tcp6"), nil
+	}, nil
 }
 
-func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
-	srv := socks4.NewServer()
-	srv.ProxyDial = upstream.DialContext
-	srv.ProxyListenBind = upstream.Listen
-	srv.BytesPool = pool.Bytes
-	if username := opts[KeyUsername]; username != "" {
-		srv.Authentication = socks4.UserAuth(username)
-	}
-	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
-		srv.Context = ctx
-		return srv.Serve(ln)
-	}), nil
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
+	username := opts[KeyUsername]
+	return &permuteproxy.ServerFuncs{
+		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+			srv := socks4.NewServer()
+			srv.Context = ctx
+			srv.ProxyDial = upstream.DialContext
+			srv.ProxyListenBind = upstream.Listen
+			srv.BytesPool = pool.Bytes
+			if username != "" {
+				srv.Authentication = socks4.UserAuth(username)
+			}
+			return srv.Serve(ln)
+		},
+	}, nil
 }

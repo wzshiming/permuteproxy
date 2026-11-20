@@ -11,8 +11,9 @@ func init() {
 		Provides:       permuteproxy.Stream,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
-		Client:         NewClient,
-		Server:         NewServer,
+		Networks:       []string{"tcp"},
+		NewClient:      NewClient,
+		NewServer:      NewServer,
 	}
 	permuteproxy.RegisterLayer("socks4", spec)
 	permuteproxy.RegisterLayer("socks4a", spec)
