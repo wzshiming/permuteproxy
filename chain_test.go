@@ -677,6 +677,7 @@ func TestChainValidateLossy(t *testing.T) {
 		{"lossy datagrams over cmd", Chain{Layers: []Layer{{Scheme: "test-lossy"}}, Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}}, nil},
 		{"packet required over datagrams with boundaries", mk("tcp", "test-dtls", "test-uot"), nil},
 		{"packet preserved over lossy datagrams beside stream", mk("", "test-keep", "test-lossy-keep"), nil},
+		{"packet provided above lossy datagrams", mk("", "test-dtls", "test-uot", "test-lossy-keep"), nil},
 		{"packet required over lossy datagrams", mk("tcp", "test-dtls", "test-lossy"), []string{`"test-dtls"`, "datagram boundaries"}},
 		{"packet required over lossy preserved datagrams", mk("", "test-quic", "test-lossy-keep"), []string{`"test-quic"`, "datagram boundaries"}},
 		{"only lossy datagrams preserved", mk("tcp", "test-ss", "test-lossy"), []string{`"test-ss"`}},
