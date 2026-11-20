@@ -68,6 +68,9 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	if !ok {
 		udp = cmdutils.NetcatDialUDP
 	}
+	if _, err := split(udp); err != nil {
+		return nil, fmt.Errorf("%s: %w", keyUDPCommand, err)
+	}
 	c := &client{dialer: dialer}
 	return &permuteproxy.ClientFuncs{
 		Dial:   c.dial,
@@ -104,9 +107,18 @@ func (c *client) close() error {
 	return c.dialer.Close()
 }
 
+// split splits line into words as a shell would, refusing a line without any.
+func split(line string) ([]string, error) {
+	argv, err := shlex.Split(line)
+	if err == nil && len(argv) == 0 {
+		err = fmt.Errorf("%q has no command", line)
+	}
+	return argv, err
+}
+
 // exec runs address, split as a shell would, on a new session of the shared connection.
 func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
-	argv, err := shlex.Split(address)
+	argv, err := split(address)
 	if err != nil {
 		return nil, err
 	}

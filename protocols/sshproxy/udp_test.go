@@ -153,7 +153,7 @@ func TestMalformedUDPCommandFailsClientBuild(t *testing.T) {
 		t.Fatalf("Client() with a well-formed udp_command = %v", err)
 	}
 	n.(io.Closer).Close()
-	for _, command := range []string{"", "nc -u '%h' %p", "nc -u %h %x"} {
+	for _, command := range []string{"", "nc -u '%h' %p", "nc -u %h %x", "nc -u %h %p 'oops", `nc -u %h %p \`, " ", "# %h %p"} {
 		base := &countingNetwork{}
 		if _, err := (permuteproxy.Engine{Base: base}).Client(chain(permuteproxy.Options{"udp_command": command}, "127.0.0.1:1")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 			t.Errorf("Client() with udp_command %q = %v, want ErrInvalidChain", command, err)

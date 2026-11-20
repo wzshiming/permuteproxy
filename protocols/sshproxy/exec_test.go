@@ -394,14 +394,19 @@ func TestCmdConnectsAgainAfterConnectionDrops(t *testing.T) {
 	}
 }
 
-func TestCmdRefusesLineShlexCannotSplit(t *testing.T) {
+func TestCmdRefusesLineWithoutCommand(t *testing.T) {
 	up, base := newUpstream(), &clientBase{}
 	n := dialServer(t, base, serveExec(t, up), withCredentials())
-	if _, err := n.DialContext(timeout(t), "cmd", "relay 'unterminated"); err == nil || errors.Is(err, permuteproxy.ErrUnsupported) {
-		t.Fatalf("cmd dial = %v, want the line refused", err)
+	for _, line := range []string{"relay 'unterminated", "", " ", "# only a comment"} {
+		if conn, err := n.DialContext(timeout(t), "cmd", line); err == nil || errors.Is(err, permuteproxy.ErrUnsupported) {
+			if conn != nil {
+				conn.Close()
+			}
+			t.Errorf("cmd dial %q = %v, want the line refused", line, err)
+		}
 	}
 	if base.dials.Load() != 0 || up.dials.Load() != 0 {
-		t.Fatalf("client dials %d, server commands %d; want the line refused before any I/O", base.dials.Load(), up.dials.Load())
+		t.Fatalf("client dials %d, server commands %d; want the lines refused before any I/O", base.dials.Load(), up.dials.Load())
 	}
 }
 
