@@ -212,6 +212,18 @@ func TestChainValidateExpandsExpression(t *testing.T) {
 	}
 }
 
+func TestResolveLeavesTheChainsSpareLayers(t *testing.T) {
+	layers := append(make([]Layer, 0, 2), Layer{Scheme: "test-tls"})
+	spare := layers[:2]
+	spare[1] = Layer{Scheme: "spare"}
+	if err := (Chain{Layers: layers, Endpoint: Endpoint{Network: "test-auth-tcp", Address: "127.0.0.1:1"}}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if spare[1].Scheme != "spare" {
+		t.Fatalf("resolve wrote %q into the spare capacity of the chain's Layers", spare[1].Scheme)
+	}
+}
+
 func TestResolveValidatesExpressionValues(t *testing.T) {
 	tests := []struct {
 		network string
@@ -314,6 +326,22 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 			assertCalls(t, tt.calls...)
 		})
 	}
+}
+
+func TestExpressionLayersRefuseALossyHopsDatagrams(t *testing.T) {
+	ctx := context.Background()
+	tr, err := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}.Transport(chainOver("test-dtls-udp", "127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Packet) of test-dtls over udp the hop reports lossy = %v, want ErrUnsupported", err)
+	}
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("ListenPacket() of test-dtls over udp the hop reports lossy = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
 }
 
 func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {

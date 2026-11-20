@@ -278,6 +278,24 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 	assertCalls(t, "relay.close relay -U /tmp/open.sock", "test-held.close")
 }
 
+func TestFailedDerivedDialReleasesWhatItBuilt(t *testing.T) {
+	calls = nil
+	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+		return &ClientFuncs{
+			Dial:   func(context.Context, Transport, string, string) (net.Conn, error) { return nil, errLink },
+			Derive: map[string]string{"unix": relayed["unix"]},
+		}, nil
+	}}
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.DialContext(context.Background(), "unix", "/tmp/x.sock"); !errors.Is(err, errLink) {
+		t.Fatalf("derived dial over a failing Dial = %v, want its error", err)
+	}
+	assertCalls(t, "test-held.close")
+}
+
 func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 	ctx := context.Background()
 	n := derivingClient(t, mk("", "test-derive"))
