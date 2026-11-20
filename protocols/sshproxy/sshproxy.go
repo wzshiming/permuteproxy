@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/url"
+	"sync"
 
 	_ "github.com/wzshiming/sshd/directstreamlocal"
 	_ "github.com/wzshiming/sshd/directtcp"
@@ -43,37 +44,38 @@ func endpoint(opts permuteproxy.Options) string {
 	return u.String()
 }
 
-// client keeps the cached SSH connection reachable for Close.
-type client struct {
-	permuteproxy.Network
-	dialer *sshproxy.Dialer
-}
-
-func (c *client) Close() error {
-	return c.dialer.Close()
-}
-
-func NewClient(inner permuteproxy.Transport, _ permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Network, error) {
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	dialer, err := sshproxy.NewDialer(endpoint(opts))
 	if err != nil {
 		return nil, err
 	}
-	dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return inner.Dial(ctx, permuteproxy.Stream)
-	}
-	return &client{protoutils.DialNetwork(dialer.DialContext, "tcp", "tcp4", "tcp6", "unix"), dialer}, nil
+	var once sync.Once
+	return &permuteproxy.ClientFuncs{
+		Dial: func(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+			once.Do(func() {
+				dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return inner.Dial(ctx, permuteproxy.Stream)
+				}
+			})
+			return dialer.DialContext(ctx, network, address)
+		},
+		Close: dialer.Close,
+	}, nil
 }
 
-func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
-	srv, err := sshproxy.NewSimpleServer(endpoint(opts))
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
+	simple, err := sshproxy.NewSimpleServer(endpoint(opts))
 	if err != nil {
 		return nil, err
 	}
-	srv.ProxyDial = upstream.DialContext
-	srv.ProxyListen = upstream.Listen
-	srv.BytesPool = pool.Bytes
-	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
-		srv.Context = ctx
-		return srv.Serve(ln)
-	}), nil
+	return &permuteproxy.ServerFuncs{
+		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+			srv := simple.Server
+			srv.Context = ctx
+			srv.ProxyDial = upstream.DialContext
+			srv.ProxyListen = upstream.Listen
+			srv.BytesPool = pool.Bytes
+			return srv.Serve(ln)
+		},
+	}, nil
 }

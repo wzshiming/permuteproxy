@@ -12,7 +12,8 @@ func init() {
 		Options:        options,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
-		Client:         NewClient,
-		Server:         NewServer,
+		Networks:       []string{"tcp", "unix"},
+		NewClient:      NewClient,
+		NewServer:      NewServer,
 	})
 }
