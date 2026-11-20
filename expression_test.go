@@ -233,14 +233,14 @@ func TestResolveValidatesExpressionValues(t *testing.T) {
 		{"test-nc", "127.0.0.1:1", true},
 		{"test-nc", "[fe80::1%en0]:65535", true},
 		{"test-nc", "my_host.example-1:80", true},
+		{"test-nc", ":1", true},
+		{"test-nc", "127.0.0.1:0", true},
 		{"test-nc", "127.0.0.1", false},
-		{"test-nc", ":1", false},
 		{"test-nc", "-oProxyCommand=x:1", false},
 		{"test-nc", "a b:1", false},
 		{"test-nc", "a;b:1", false},
 		{"test-nc", "a/b:1", false},
 		{"test-nc", "é:1", false},
-		{"test-nc", "h:0", false},
 		{"test-nc", "h:65536", false},
 		{"test-nc", "h:+1", false},
 		{"test-nc", "h:x", false},
@@ -297,6 +297,7 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 		calls   []string
 	}{
 		{base, "test-nc", "127.0.0.1:1", Stream, []string{"base.dial cmd nc 127.0.0.1 1"}},
+		{base, "test-nc", "127.0.0.1:0", Stream, []string{"base.dial cmd nc 127.0.0.1 0"}},
 		{base, "test-nc", "[fe80::1%p]:80", Stream, []string{"base.dial cmd nc fe80::1%p 80"}},
 		{base, "test-nc-unix", "/tmp/a b.sock", Stream, []string{"base.dial cmd nc -U '/tmp/a b.sock'"}},
 		{base, "test-nc-udp", "127.0.0.1:1", Packet, []string{"base.dial cmd nc -u -w 30 127.0.0.1 1"}},
@@ -406,6 +407,7 @@ func TestEngineListensOnExpressionNetwork(t *testing.T) {
 		calls  []string // what listening on the network's plane calls; nil when it is refused
 	}{
 		{"at the Listen template", base, chainOver("test-nc", "127.0.0.1:1"), []string{"base.listen cmd nc -l 127.0.0.1 1"}},
+		{"at the Listen template for any host", base, chainOver("test-nc", ":8080"), []string{"base.listen cmd nc -l  8080"}},
 		{"under the declared name", base, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"base.listen test-nc-unix /tmp/a b.sock"}},
 		{"under the declared name through its implementation", Engine{}, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"impl.listen test-nc-unix /tmp/a b.sock"}},
 		{"under the declared name around dgram", base, chainOver("test-nc-udp", "127.0.0.1:1"), []string{"base.listenpacket test-nc-udp 127.0.0.1:1"}},

@@ -303,7 +303,6 @@ func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 		{"udp", "peer.invalid"},
 		{"udp", "-oProxyCommand=x:1"},
 		{"udp6", "a;b:1"},
-		{"udp", "peer.invalid:0"},
 		{"unix", "-x.sock"},
 		{"unix", "/tmp/a\nb.sock"},
 	} {

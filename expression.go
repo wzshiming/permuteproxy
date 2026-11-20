@@ -78,11 +78,11 @@ func (x expression) expand(kind AddressKind, address string) (string, error) {
 		if err != nil {
 			return "", errors.New("address is not host:port")
 		}
-		if host == "" || host[0] == '-' || strings.Trim(host, hostBytes) != "" {
-			return "", errors.New("host is empty, starts with '-' or has a byte other than ASCII letters, digits, '.', '-', '_', ':' and '%'")
+		if strings.HasPrefix(host, "-") || strings.Trim(host, hostBytes) != "" {
+			return "", errors.New("host starts with '-' or has a byte other than ASCII letters, digits, '.', '-', '_', ':' and '%'")
 		}
-		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
-			return "", errors.New("port is not a decimal number from 1 to 65535")
+		if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+			return "", errors.New("port is not a decimal number from 0 to 65535")
 		}
 		pairs = []string{"%h", x.insert(host), "%p", x.insert(port)}
 	case AddressPath:
@@ -99,9 +99,9 @@ func (x expression) expand(kind AddressKind, address string) (string, error) {
 	return strings.NewReplacer(append(pairs, "%%", "%")...).Replace(x.template), nil
 }
 
-// insert is how a value enters x's template: quoted as one word into a command line, verbatim into another address.
+// insert is how a value enters x's template: one quoted word in a command line, else verbatim; empty as no text.
 func (x expression) insert(value string) string {
-	if x.opaque {
+	if x.opaque && value != "" {
 		return cmdutils.Quote([]string{value})
 	}
 	return value
