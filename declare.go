@@ -376,10 +376,6 @@ type ServerFuncs struct {
 
 // server is the Server that RegisterLayer derives from s.NewServer.
 func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, error) {
-	planes := inner.Planes() & (s.Requires | s.Preserves)
-	if planes == 0 {
-		return nil, fmt.Errorf("serve over %v: %w", inner.Planes(), ErrUnsupported)
-	}
 	funcs, err := s.NewServer(opts)
 	switch {
 	case err != nil:
@@ -393,6 +389,7 @@ func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, e
 	}
 	var listen func(context.Context) (net.Listener, error)
 	var listenPacket func(context.Context) (net.PacketConn, error)
+	planes := inner.Planes() & (s.Requires | s.Preserves)
 	if planes&Stream != 0 {
 		listen = inner.Listen
 	}

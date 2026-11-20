@@ -849,10 +849,27 @@ func TestServerRejectsDeclarations(t *testing.T) {
 func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
-	if _, err := e.Server(mk("tcp", "test-packet-server", "closable")); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Server() over a carrier with no plane to bind = %v, want ErrUnsupported", err)
+	lossy := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	for _, tt := range []struct {
+		name   string
+		engine Engine
+		chain  Chain
+		want   []string
+	}{
+		{"NewServer over a stream carrier", e, mk("tcp", "test-packet-server", "closable"), []string{"closable.close"}},
+		{"NewServer over lossy udp", lossy, mk("udp", "test-ss", "test-counted"), []string{"test-counted.close"}},
+		{"Server over lossy udp", lossy, mk("udp", "test-legacy", "test-counted"), []string{"test-counted.close"}},
+		{"Server right over lossy udp", lossy, mk("udp", "test-legacy"), nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls = nil
+			if _, err := tt.engine.Server(tt.chain); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("Server() over a carrier with no plane to bind = %v, want ErrUnsupported", err)
+			}
+			assertCalls(t, tt.want...)
+		})
 	}
-	assertCalls(t, "closable.close")
+	calls = nil
 	srv, err := e.Server(mk("udp", "test-packet-server"))
 	if err != nil {
 		t.Fatal(err)

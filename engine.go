@@ -128,6 +128,10 @@ func (e Engine) Server(c Chain) (Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if inner.Planes()&(spec.Requires|spec.Preserves) == 0 {
+		closeIf(inner)
+		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, inner.Planes(), ErrUnsupported)
+	}
 	upstream := e.Upstream
 	if upstream == nil {
 		upstream = byName{}
