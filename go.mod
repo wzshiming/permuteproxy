@@ -17,13 +17,13 @@ require (
 	github.com/wzshiming/sshd v0.2.5
 	github.com/wzshiming/sshproxy v0.5.4
 	golang.org/x/crypto v0.55.0
+	golang.org/x/net v0.58.0
 )
 
 require (
 	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
 	github.com/wzshiming/trie v0.3.1 // indirect
 	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
