@@ -136,7 +136,7 @@ func (s *socket) Close() error {
 // listener hands out the streams of every connection its Endpoint accepts.
 type listener struct {
 	endpoint *quic.Endpoint
-	sock     *socket
+	addr     net.Addr
 	ctx      context.Context
 	cancel   context.CancelFunc
 	conns    chan net.Conn
@@ -158,7 +158,7 @@ func listen(pc net.PacketConn, config *quic.Config) (net.Listener, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	l := &listener{endpoint: endpoint, sock: sock, ctx: ctx, cancel: cancel, conns: make(chan net.Conn), failed: make(chan struct{})}
+	l := &listener{endpoint: endpoint, addr: pc.LocalAddr(), ctx: ctx, cancel: cancel, conns: make(chan net.Conn), failed: make(chan struct{})}
 	l.wg.Add(1)
 	go l.acceptConns()
 	return l, nil
@@ -218,5 +218,5 @@ func (l *listener) Close() error {
 }
 
 func (l *listener) Addr() net.Addr {
-	return l.sock.LocalAddr()
+	return l.addr
 }
