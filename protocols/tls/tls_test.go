@@ -232,6 +232,64 @@ func TestServerConfigIsLazy(t *testing.T) {
 	}
 }
 
+// install moves an issued certificate and key to the paths a listener reads.
+func install(t *testing.T, certFile, keyFile, cert, key string) {
+	t.Helper()
+	for src, dst := range map[string]string{certFile: cert, keyFile: key} {
+		if err := os.Rename(src, dst); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// verify dials addr through tls, verifying its certificate for name against caFile.
+func verify(t *testing.T, addr net.Addr, name, caFile string) error {
+	t.Helper()
+	tr := transport(t, permuteproxy.Engine{}, "tls://"+addr.String()+"?tls_server_name="+name+"&tls_ca_file="+caFile)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err == nil {
+		conn.Close()
+	}
+	return err
+}
+
+func TestFailedServerConfigIsRetried(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
+	if _, err := tr.Listen(context.Background()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Listen before the key material exists = %v, want it missing", err)
+	}
+	caFile, certFile, keyFile := issue(t, "proxy.test")
+	install(t, certFile, keyFile, cert, key)
+	ln, err := tr.Listen(context.Background())
+	if err != nil {
+		t.Fatalf("Listen once the key material exists = %v, want the failed build retried", err)
+	}
+	if err := verify(t, serveEcho(t, ln), "proxy.test", caFile); err != nil {
+		t.Fatalf("handshake after the retried build = %v", err)
+	}
+}
+
+func TestEachListenBuildsItsServerConfig(t *testing.T) {
+	dir := t.TempDir()
+	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
+	for _, name := range []string{"first.test", "second.test"} {
+		caFile, certFile, keyFile := issue(t, name)
+		install(t, certFile, keyFile, cert, key)
+		ln, err := tr.Listen(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := verify(t, serveEcho(t, ln), name, caFile); err != nil {
+			t.Fatalf("Listen after installing the %s certificate serves another: %v", name, err)
+		}
+	}
+}
+
 func TestClientConfigIsLazy(t *testing.T) {
 	_, certFile, keyFile := issue(t, "proxy.test")
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
