@@ -598,7 +598,7 @@ func TestProxyRejectsBadCredentials(t *testing.T) {
 }
 
 func TestClientRefusesPacket(t *testing.T) {
-	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1", "ssh://127.0.0.1:1"} {
+	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1"} {
 		t.Run(uri, func(t *testing.T) {
 			base := newProbe(system)
 			n, err := permuteproxy.Engine{Base: base}.Client(parse(t, uri))

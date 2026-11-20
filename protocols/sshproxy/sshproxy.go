@@ -31,7 +31,8 @@ const (
 	KeyUsername = "username"
 	KeyPassword = "password"
 
-	keyAllowExec = "allow_exec"
+	keyUDPCommand = "udp_command"
+	keyAllowExec  = "allow_exec"
 )
 
 var options = []string{
@@ -41,6 +42,7 @@ var options = []string{
 	"authorized_file",
 	"hostkey_data",
 	"hostkey_file",
+	keyUDPCommand,
 	keyAllowExec,
 }
 
@@ -61,8 +63,16 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	if err != nil {
 		return nil, err
 	}
+	udp, ok := opts[keyUDPCommand]
+	if !ok {
+		udp = cmdutils.NetcatDialUDP
+	}
 	c := &client{dialer: dialer}
-	return &permuteproxy.ClientFuncs{Dial: c.dial, Close: dialer.Close}, nil
+	return &permuteproxy.ClientFuncs{
+		Dial:   c.dial,
+		Derive: map[string]string{"udp": "dgram+cmd:" + udp},
+		Close:  dialer.Close,
+	}, nil
 }
 
 // client dials over one SSH connection, made on first use over the stream inner dials.

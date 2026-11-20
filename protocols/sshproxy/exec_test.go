@@ -542,6 +542,15 @@ func TestExecOffRefusesSessionsAndKeepsTcp(t *testing.T) {
 			if !errors.As(err, &refused) || refused.Reason != ssh.Prohibited {
 				t.Fatalf("cmd dial = %v, want the session refused as prohibited", err)
 			}
+			// A udp dial opens its session on the first write.
+			udp, err := n.DialContext(ctx, "udp", "198.51.100.7:53")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer udp.Close()
+			if _, err := udp.Write([]byte("hi")); !errors.As(err, &refused) || refused.Reason != ssh.Prohibited {
+				t.Fatalf("udp write = %v, want the session refused as prohibited", err)
+			}
 			conn, err := n.DialContext(ctx, "tcp", echoTarget(t))
 			if err != nil {
 				t.Fatal(err)
