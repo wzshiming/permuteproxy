@@ -233,7 +233,7 @@ func (b *clientBase) DialContext(ctx context.Context, network, address string) (
 	b.mu.Lock()
 	b.conns = append(b.conns, conn)
 	b.mu.Unlock()
-	return heldConn{conn, b}, nil
+	return baseConn{conn, b}, nil
 }
 
 // drop closes every conn the base dialed, as a network that went away.
@@ -270,18 +270,18 @@ func (b *clientBase) wait(gate *chan struct{}) {
 	}
 }
 
-type heldConn struct {
+type baseConn struct {
 	net.Conn
 	base *clientBase
 }
 
-func (c heldConn) Read(p []byte) (int, error) {
+func (c baseConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	c.base.wait(&c.base.held)
 	return n, err
 }
 
-func (c heldConn) Write(p []byte) (int, error) {
+func (c baseConn) Write(p []byte) (int, error) {
 	c.base.wait(&c.base.stalled)
 	return c.Conn.Write(p)
 }
