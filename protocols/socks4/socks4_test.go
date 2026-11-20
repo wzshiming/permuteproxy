@@ -272,3 +272,31 @@ func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
 	close(release)
 	wait(t, closed, "the close of a BIND listener opened after Serve returned")
 }
+
+func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
+	upstream := permuteproxy.NetworkFuncs{ListenFunc: func(context.Context, string, string) (net.Listener, error) {
+		return nil, errors.New("no listener")
+	}}
+	funcs, err := NewServer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := listen(t)
+	done := make(chan error, 1)
+	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replies := make(chan accepted, 1)
+	go func() {
+		conn, err := bind.Accept()
+		replies <- accepted{conn, err}
+	}()
+	if reply := wait(t, replies, "the BIND reply"); reply.err == nil {
+		reply.conn.Close()
+		t.Fatal("BIND succeeded without a listener")
+	}
+	ln.Close()
+	wait(t, done, "Serve")
+}
