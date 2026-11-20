@@ -66,9 +66,18 @@ func quicConfig(config *tls.Config) *quic.Config {
 // dial opens one QUIC connection over the carrier to its default peer, and one stream on it.
 func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn, error) {
 	peer, ok := addrPort(carrier.RemoteAddr())
-	if _, local := addrPort(carrier.LocalAddr()); !ok || !local {
+	local, localOK := addrPort(carrier.LocalAddr())
+	if !ok || !localOK {
 		carrier.Close()
 		return nil, fmt.Errorf("quic from %v to %v: not ip:port: %w", carrier.LocalAddr(), carrier.RemoteAddr(), permuteproxy.ErrUnsupported)
+	}
+	if peer.Addr().IsUnspecified() {
+		// As net.Dial does, take an unspecified peer for this host, at the loopback of the socket's family.
+		loopback := netip.IPv6Loopback()
+		if local.Addr().Is4() {
+			loopback = netip.AddrFrom4([4]byte{127, 0, 0, 1})
+		}
+		peer = netip.AddrPortFrom(loopback, peer.Port())
 	}
 	sock := &socket{PacketConn: carrier.(net.PacketConn)}
 	endpoint, err := quic.NewEndpoint(sock, nil)
@@ -105,6 +114,10 @@ func addrPort(addr net.Addr) (netip.AddrPort, bool) {
 	var ap netip.AddrPort
 	if a, ok := addr.(*net.UDPAddr); ok {
 		ap = a.AddrPort()
+		if len(a.IP) == 0 {
+			// An empty host, as in ":port", is unspecified.
+			ap = netip.AddrPortFrom(netip.IPv6Unspecified(), ap.Port())
+		}
 	} else {
 		ap, _ = netip.ParseAddrPort(addr.String())
 	}
