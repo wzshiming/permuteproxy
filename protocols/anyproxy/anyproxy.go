@@ -34,25 +34,27 @@ var prefixes = slices.Concat(pattern.Pattern[pattern.HTTP], pattern.Pattern[patt
 
 var maxPrefix = len(slices.MaxFunc(prefixes, func(a, b string) int { return len(a) - len(b) }))
 
-func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	user := protoutils.Userinfo(opts, KeyUsername, KeyPassword)
 	addrs := make([]string, 0, len(protocols))
 	for _, scheme := range protocols {
 		u := url.URL{Scheme: scheme, Host: host, User: user}
 		addrs = append(addrs, u.String())
 	}
-	conf := &anyproxy.Config{
-		Dialer:       upstream,
-		ListenConfig: upstream,
-		BytesPool:    pool.Bytes,
-	}
-	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
-		proxy, err := anyproxy.NewAnyProxy(ctx, addrs, conf)
-		if err != nil {
-			return err
-		}
-		return proxy.Match(host).Serve(sniffListener{ln})
-	}), nil
+	return &permuteproxy.ServerFuncs{
+		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+			conf := &anyproxy.Config{
+				Dialer:       upstream,
+				ListenConfig: upstream,
+				BytesPool:    pool.Bytes,
+			}
+			proxy, err := anyproxy.NewAnyProxy(ctx, addrs, conf)
+			if err != nil {
+				return err
+			}
+			return proxy.Match(host).Serve(sniffListener{ln})
+		},
+	}, nil
 }
 
 // partial reports whether some prefix extends b, so more bytes are needed before matching.

@@ -11,6 +11,6 @@ func init() {
 		Provides:       permuteproxy.Stream,
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
-		Server:         NewServer,
+		NewServer:      NewServer,
 	})
 }

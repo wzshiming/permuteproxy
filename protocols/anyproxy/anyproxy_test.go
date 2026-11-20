@@ -161,3 +161,27 @@ func TestClientIsUnsupported(t *testing.T) {
 		t.Fatalf("Client = %v, want ErrUnsupported", err)
 	}
 }
+
+func TestServeReachesTargetThroughUpstream(t *testing.T) {
+	funcs, err := NewServer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := newPipeListener()
+	dials := make(chan string, 1)
+	recording := permuteproxy.NetworkFuncs{DialContextFunc: func(_ context.Context, network, address string) (net.Conn, error) {
+		dials <- network + " " + address
+		return nil, errors.New("unreachable")
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- funcs.Serve(ctx, ln, recording) }()
+	defer func() { ln.Close(); <-done }()
+	client := ln.dial(t)
+	writeAll(t, client, "CONNECT 127.0.0.1:1 HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n")
+	expect(t, client, "HTTP/1.1 ")
+	if got, want := <-dials, "tcp 127.0.0.1:1"; got != want {
+		t.Fatalf("upstream dial = %q, want %q", got, want)
+	}
+}
