@@ -199,12 +199,13 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase is what the clients under test reach their server through; it counts their dials and can hold back what servers send.
+// clientBase is what the clients under test reach their server through; it counts their dials and can hold back what servers send or drop the conns.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
 	dials atomic.Int32
 	mu    sync.Mutex
 	held  chan struct{} // while set, reads wait for it to close
+	conns []net.Conn
 }
 
 func (b *clientBase) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -213,7 +214,19 @@ func (b *clientBase) DialContext(ctx context.Context, network, address string) (
 	if err != nil {
 		return nil, err
 	}
+	b.mu.Lock()
+	b.conns = append(b.conns, conn)
+	b.mu.Unlock()
 	return heldConn{conn, b}, nil
+}
+
+// drop closes every conn the base dialed, as a network that went away.
+func (b *clientBase) drop() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, conn := range b.conns {
+		conn.Close()
+	}
 }
 
 // hold keeps what servers send from the clients until the test ends.
@@ -353,6 +366,32 @@ func TestCmdFailsWhenServerCannotRunIt(t *testing.T) {
 	}
 	defer conn.Close()
 	roundTrip(t, conn, "ping", "relay x|ping")
+}
+
+func TestCmdConnectsAgainAfterConnectionDrops(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+	ctx := timeout(t)
+	conn, err := n.DialContext(ctx, "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	base.drop()
+	// As for tcp, the dial that finds the connection gone fails and the next one connects again.
+	if conn, err := n.DialContext(ctx, "cmd", "relay x"); err == nil {
+		conn.Close()
+		t.Fatal("cmd dial over the dropped connection succeeded")
+	}
+	conn, err = n.DialContext(ctx, "cmd", "relay x")
+	if err != nil {
+		t.Fatalf("cmd dial after the connection dropped = %v", err)
+	}
+	defer conn.Close()
+	roundTrip(t, conn, "ping", "relay x|ping")
+	if got := base.dials.Load(); got != 2 {
+		t.Fatalf("client dials = %d, want one reconnect", got)
+	}
 }
 
 func TestCmdRefusesLineShlexCannotSplit(t *testing.T) {

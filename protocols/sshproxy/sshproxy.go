@@ -116,6 +116,11 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	}
 	sess, err := cli.NewSession()
 	if err != nil {
+		// Like the dialer's tcp path, drop a dead connection for the next dial; a refusal proves it alive.
+		var refused *ssh.OpenChannelError
+		if !errors.As(err, &refused) {
+			c.dialer.Close()
+		}
 		return nil, err
 	}
 	// The pipes fail only once set or started.
