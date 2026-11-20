@@ -23,8 +23,8 @@ func init() {
 		Kind:     permuteproxy.KindAdapter,
 		Requires: permuteproxy.Packet,
 		Provides: permuteproxy.Packet,
-		Adapt: func(inner permuteproxy.Transport, _ permuteproxy.Options) (permuteproxy.Transport, error) {
-			return inner, nil
+		NewAdapter: func(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
+			return &permuteproxy.AdapterFuncs{Packet: &permuteproxy.Link{}}, nil
 		},
 	})
 }
