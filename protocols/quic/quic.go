@@ -59,6 +59,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 }
 
 func quicConfig(config *tls.Config) *quic.Config {
+	config.MinVersion = tls.VersionTLS13
 	config.NextProtos = []string{alpn}
 	return &quic.Config{TLSConfig: config}
 }

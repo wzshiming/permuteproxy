@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,7 +112,7 @@ func rawDial(t *testing.T, addr, caFile string, alpns ...string) (*xquic.Conn, e
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return ep.Dial(ctx, "udp", addr, &xquic.Config{TLSConfig: &tls.Config{ServerName: "proxy.test", RootCAs: roots, NextProtos: alpns}})
+	return ep.Dial(ctx, "udp", addr, &xquic.Config{TLSConfig: &tls.Config{ServerName: "proxy.test", RootCAs: roots, NextProtos: alpns, MinVersion: tls.VersionTLS13}})
 }
 
 func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
@@ -144,8 +145,9 @@ func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
 func TestListenerRequiresItsALPN(t *testing.T) {
 	ln, k := listenQUIC(t, permuteproxy.Engine{})
 	for _, alpns := range [][]string{{"h3"}, nil} {
-		if _, err := rawDial(t, ln.Addr().String(), k.caFile, alpns...); err == nil {
-			t.Fatalf("a connection offering %q was accepted", alpns)
+		// 120 is TLS's no_application_protocol alert.
+		if _, err := rawDial(t, ln.Addr().String(), k.caFile, alpns...); err == nil || !strings.Contains(err.Error(), "CRYPTO_ERROR(120)") {
+			t.Fatalf("a connection offering %q = %v, want the listener's no_application_protocol alert", alpns, err)
 		}
 	}
 }
