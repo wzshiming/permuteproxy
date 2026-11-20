@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,4 +145,130 @@ func TestServerReachesTargetThroughUpstream(t *testing.T) {
 	if got, want := <-dials, "tcp "+target.Addr().String(); got != want {
 		t.Fatalf("upstream dial = %q, want %q", got, want)
 	}
+}
+
+func wait[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s: timed out", what)
+	}
+	panic("unreachable")
+}
+
+// freeAddress is a loopback tcp address nothing listens on.
+func freeAddress(t *testing.T) string {
+	t.Helper()
+	ln := listen(t)
+	ln.Close()
+	return ln.Addr().String()
+}
+
+type accepted struct {
+	conn net.Conn
+	err  error
+}
+
+func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
+	target := freeAddress(t)
+	proxies := make(chan string, 1)
+	base := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
+		ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
+		if err == nil {
+			proxies <- ln.Addr().String()
+		}
+		return ln, err
+	}}
+	binds := make(chan error, 1)
+	upstream := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
+		ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
+		binds <- err
+		return ln, err
+	}}
+	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks4"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:0"}}
+	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	for run := 1; run <= 2; run++ {
+		ctx, stop := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- srv.Run(ctx) }()
+		dialer := &socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: wait(t, proxies, "the proxy's listener")}
+		bind, err := dialer.Listen(ctx, "tcp", target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replies := make(chan accepted, 1)
+		go func() {
+			conn, err := bind.Accept()
+			replies <- accepted{conn, err}
+		}()
+		if err := wait(t, binds, "the BIND listen"); err != nil {
+			t.Fatalf("run %d: BIND listen on %s = %v", run, target, err)
+		}
+		peer, err := net.Dial("tcp", target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply := wait(t, replies, "the BIND reply")
+		if reply.err != nil {
+			t.Fatalf("run %d: BIND = %v", run, reply.err)
+		}
+		if got, want := reply.conn.RemoteAddr().String(), peer.LocalAddr().String(); got != want {
+			t.Fatalf("run %d: BIND accepted %s, want %s", run, got, want)
+		}
+		reply.conn.Close()
+		peer.Close()
+		stop()
+		if err := wait(t, done, "Run"); err != nil {
+			t.Fatalf("run %d: Run = %v", run, err)
+		}
+	}
+}
+
+// notifyingListener closes closed on its first Close.
+type notifyingListener struct {
+	net.Listener
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *notifyingListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return l.Listener.Close()
+}
+
+func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
+	entered, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	upstream := permuteproxy.NetworkFuncs{ListenFunc: func(_ context.Context, network, address string) (net.Listener, error) {
+		close(entered)
+		<-release
+		ln, err := net.Listen(network, address)
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(func() { ln.Close() })
+		return &notifyingListener{Listener: ln, closed: closed}, nil
+	}}
+	funcs, err := NewServer(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := listen(t)
+	done := make(chan error, 1)
+	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go bind.Accept()
+	wait(t, entered, "the BIND listen")
+	ln.Close()
+	wait(t, done, "Serve")
+	close(release)
+	wait(t, closed, "the close of a BIND listener opened after Serve returned")
 }
