@@ -69,7 +69,7 @@ func RegisterNetwork(name string, spec NetworkSpec) {
 	networks[name] = spec
 }
 
-// ImplementNetwork gives a declared network without an implementation its implementation.
+// ImplementNetwork implements a declared network, panicking on an unknown name, a nil Network or one implemented already.
 func ImplementNetwork(name string, n Network) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
