@@ -162,6 +162,7 @@ func TestEngineRejects(t *testing.T) {
 		{"server of adapter", func(c Chain) error { _, err := e.Server(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
 		{"server of raw endpoint", func(c Chain) error { _, err := e.Server(c); return err }, "tcp://127.0.0.1:1", ErrInvalidChain},
 		{"client without constructor", func(c Chain) error { _, err := e.Client(c); return err }, "test-any+test-tls://127.0.0.1:1", ErrUnsupported},
+		{"server without constructor", func(c Chain) error { _, err := e.Server(c); return err }, "test-peer://127.0.0.1:1", ErrUnsupported},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -593,16 +594,16 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 		want  []string
 	}{
 		{"failing NewAdapter", transport, mk("tcp", "test-broken", "test-counted"), []string{"test-counted.close"}},
-		{"nil Adapt", transport, mk("tcp", "test-nil-adapt", "test-counted"), []string{"test-counted.close"}},
+		{"nil AdapterFuncs", transport, mk("tcp", "niladapter", "test-counted"), []string{"test-counted.close"}},
 		{"rejected AdapterFuncs", transport, mk("tcp", "test-reject-adapter", "test-counted"), []string{"test-reject-adapter.close", "test-counted.close"}},
 		{"failing layer over two", transport, mk("tcp", "test-tls", "test-broken", "test-counted", "test-counted"), []string{"test-counted.close", "test-counted.close"}},
 		{"failing NewClient", client, mk("tcp", "test-client-broken", "test-counted"), []string{"test-counted.close"}},
-		{"nil Client", client, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
+		{"nil ClientFuncs", client, mk("tcp", "nilproxy", "test-counted"), []string{"test-counted.close"}},
 		{"rejected ClientFuncs", client, mk("tcp", "test-reject-client", "test-counted"), []string{"test-reject-client.close", "test-counted.close"}},
 		{"rejected ClientFuncs without ListenPacket", client, mk("tcp", "test-reject-client-packet", "test-counted"), []string{"test-reject-client-packet.close", "test-counted.close"}},
 		{"rejected Derive", client, mk("tcp", "test-derive-quoted", "test-counted"), []string{"test-derive-quoted.close", "test-counted.close"}},
 		{"failing NewServer", server, mk("tcp", "test-server-broken", "test-counted"), []string{"test-counted.close"}},
-		{"nil Server", server, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
+		{"nil ServerFuncs", server, mk("tcp", "nilproxy", "test-counted"), []string{"test-counted.close"}},
 		{"rejected ServerFuncs", server, mk("tcp", "test-reject-server", "test-counted"), []string{"test-reject-server.close", "test-counted.close"}},
 		{"rejected ServerFuncs without ServePacket", server, mk("tcp", "test-reject-server-packet", "test-counted"), []string{"test-reject-server-packet.close", "test-counted.close"}},
 	}
@@ -644,6 +645,37 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 	}
 	if b, ok := got.(borrowed); !ok || b.Network != Network(upstream) {
 		t.Fatalf("server upstream = %#v, want the injected network borrowed", got)
+	}
+}
+
+func TestEngineBorrowsBaseForClient(t *testing.T) {
+	var got Network
+	name := fresh("borrowing-client")
+	RegisterLayer(name, Spec{
+		Kind:     KindProxy,
+		Requires: Stream,
+		Provides: Packet,
+		Networks: []string{"udp"},
+		NewClient: func(Options) (*ClientFuncs, error) {
+			return &ClientFuncs{ListenPacket: func(_ context.Context, _ Transport, local Network, _, _ string) (net.PacketConn, error) {
+				got = local
+				return idlePacketConn{}, nil
+			}}, nil
+		},
+	})
+	base := &closableNet{fakeNet{name: "base"}}
+	n, err := (Engine{Base: base}).Client(parse(t, name+"://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.ListenPacket(context.Background(), "udp", ":0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.(io.Closer); ok {
+		t.Fatal("client received a closable base")
+	}
+	if b, ok := got.(borrowed); !ok || b.Network != Network(base) {
+		t.Fatalf("client local = %#v, want the injected base borrowed", got)
 	}
 }
 
@@ -735,7 +767,7 @@ func TestBuiltPlanesFollowALossyCarrier(t *testing.T) {
 		}
 	})
 	t.Run("client", func(t *testing.T) {
-		n, err := e.Client(mk("", "test-legacy", "test-keep"))
+		n, err := e.Client(mk("", "test-derive-kept", "test-keep"))
 		if err != nil {
 			t.Fatal(err)
 		}

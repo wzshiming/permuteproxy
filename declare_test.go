@@ -875,7 +875,7 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 		{"NewServer over a stream carrier", e, mk("tcp", "test-packet-server", "closable"), []string{"closable.close"}},
 		{"NewServer over lossy udp", lossy, mk("udp", "test-ss", "test-counted"), []string{"test-counted.close"}},
 		{"Server over lossy udp", lossy, mk("udp", "test-legacy", "test-counted"), []string{"test-counted.close"}},
-		{"Server right over lossy udp", lossy, mk("udp", "test-legacy"), nil},
+		{"NewServer right over lossy udp", lossy, mk("udp", "test-ss"), nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls = nil
@@ -896,9 +896,9 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 
 func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 	name := fresh("test-dual-server")
-	RegisterLayer(name, Spec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, Server: func(inner Transport, _ Network, _ Options) (Server, error) {
-		record("test-dual-server.server %v", inner.Planes())
-		return fakeServer{}, nil
+	RegisterLayer(name, Spec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
+		record("test-dual-server.newserver")
+		return &ServerFuncs{Serve: failServe, ServePacket: failServePacket}, nil
 	}})
 	// The Base reports udp lossy, so the layer's carrier keeps only its stream.
 	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
