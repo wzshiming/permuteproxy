@@ -7,10 +7,14 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/quic"
 )
+
+// linger bounds how long the Close of a dialed conn waits for the peer to acknowledge what was written.
+const linger = 5 * time.Second
 
 // conn is a net.Conn over one QUIC stream; release, when set, frees the connection a Dial opened for it.
 type conn struct {
@@ -19,6 +23,7 @@ type conn struct {
 	release         func()
 	readMu, writeMu sync.Mutex // a stream takes one Read and one Write at a time
 	rd, wd          *deadline
+	closed          atomic.Bool
 	once            sync.Once
 }
 
@@ -61,7 +66,10 @@ func (c *conn) Write(b []byte) (int, error) {
 }
 
 func (c *conn) opError(op string, err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
+	switch {
+	case c.closed.Load():
+		err = net.ErrClosed
+	case errors.Is(err, context.DeadlineExceeded):
 		err = os.ErrDeadlineExceeded
 	}
 	return &net.OpError{Op: op, Net: "quic", Source: c.local, Addr: c.remote, Err: err}
@@ -69,13 +77,29 @@ func (c *conn) opError(op string, err error) error {
 
 func (c *conn) Close() error {
 	c.once.Do(func() {
+		c.closed.Store(true)
+		// Stopping the deadlines ends a blocked Read or Write, so the stream is closed under their locks.
+		c.rd.stop()
+		c.wd.stop()
+		c.readMu.Lock()
+		c.stream.CloseRead()
+		c.readMu.Unlock()
+		c.writeMu.Lock()
 		if c.release == nil {
-			c.stream.CloseRead()
 			c.stream.CloseWrite()
+			c.writeMu.Unlock()
 			return
 		}
+		until := time.Now().Add(linger)
+		if at := c.wd.time(); !at.IsZero() && at.Before(until) {
+			until = at
+		}
+		ctx, cancel := context.WithDeadline(context.Background(), until)
+		defer cancel()
+		c.stream.SetWriteContext(ctx)
 		// Closing the connection discards what the peer has not acknowledged, so the stream's Close waits for that first.
 		c.stream.Close()
+		c.writeMu.Unlock()
 		c.release()
 	})
 	return nil
@@ -131,11 +155,13 @@ func expired(done <-chan struct{}) bool {
 	}
 }
 
-// deadline closes its channel once its time passes, as net.Pipe's does; a later time renews it.
+// deadline closes its channel once its time passes, as net.Pipe's does; a later time renews it, until stop.
 type deadline struct {
-	mu    sync.Mutex
-	timer *time.Timer
-	done  chan struct{}
+	mu      sync.Mutex
+	at      time.Time
+	timer   *time.Timer
+	done    chan struct{}
+	stopped bool
 }
 
 func newDeadline() *deadline {
@@ -145,10 +171,11 @@ func newDeadline() *deadline {
 func (d *deadline) set(t time.Time) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.timer != nil && !d.timer.Stop() {
-		<-d.done // the timer has fired: wait until it has closed done
+	if d.stopped {
+		return
 	}
-	d.timer = nil
+	d.at = t
+	d.stopTimer()
 	passed := expired(d.done)
 	if t.IsZero() {
 		if passed {
@@ -169,8 +196,32 @@ func (d *deadline) set(t time.Time) {
 	}
 }
 
+// stop closes the channel for good.
+func (d *deadline) stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.stopped = true
+	d.stopTimer()
+	if !expired(d.done) {
+		close(d.done)
+	}
+}
+
+func (d *deadline) stopTimer() {
+	if d.timer != nil && !d.timer.Stop() {
+		<-d.done // the timer has fired: wait until it has closed done
+	}
+	d.timer = nil
+}
+
 func (d *deadline) wait() <-chan struct{} {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.done
+}
+
+func (d *deadline) time() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.at
 }

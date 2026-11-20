@@ -1,10 +1,13 @@
 package quic_test
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,4 +120,184 @@ func TestSetDeadlineCoversBothDirections(t *testing.T) {
 	assertTimeout(t, err, "Read past the deadline")
 	_, err = c.Write([]byte("x"))
 	assertTimeout(t, err, "Write past the deadline")
+}
+
+// quicGoroutines are the stacks of the goroutines running x/net/quic, its TLS handshakes or this package.
+func quicGoroutines() []string {
+	buf := make([]byte, 1<<22)
+	buf = buf[:runtime.Stack(buf, true)]
+	var found []string
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "golang.org/x/net/quic.") || strings.Contains(g, "crypto/tls.(*QUICConn)") || strings.Contains(g, "permuteproxy/protocols/quic.") {
+			found = append(found, g)
+		}
+	}
+	return found
+}
+
+// noGoroutinesLeft fails unless the goroutines quicGoroutines lists are gone within a second.
+func noGoroutinesLeft(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		left := quicGoroutines()
+		if len(left) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d goroutines left:\n\n%s", len(left), strings.Join(left, "\n\n"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func signaled(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s: timed out", what)
+	}
+}
+
+// ends dials ln through tr and returns the end of the stream side names, then the other.
+func ends(t *testing.T, ln net.Listener, tr permuteproxy.Transport, side string) (end, peer net.Conn) {
+	t.Helper()
+	c, srv := connected(t, ln, tr)
+	if side == "accepted" {
+		return srv, c
+	}
+	return c, srv
+}
+
+func TestCloseInterruptsABlockedRead(t *testing.T) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+		ln, tr := pair(t, e)
+		for _, side := range []string{"dialed", "accepted"} {
+			end, _ := ends(t, ln, tr, side)
+			errc := make(chan error, 1)
+			go func() {
+				_, err := end.Read(make([]byte, 1))
+				errc <- err
+			}()
+			time.Sleep(100 * time.Millisecond)
+			start := time.Now()
+			end.Close()
+			if err := recv(t, errc, side+" Read"); !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("%s Read blocked at Close = %v, want net.ErrClosed", side, err)
+			}
+			if d := time.Since(start); d > 2*time.Second {
+				t.Fatalf("%s Read returned %v after Close", side, d)
+			}
+		}
+	})
+}
+
+func TestCloseInterruptsABlockedWrite(t *testing.T) {
+	ln, tr := pair(t, permuteproxy.Engine{})
+	for _, side := range []string{"dialed", "accepted"} {
+		end, peer := ends(t, ln, tr, side)
+		errc := make(chan error, 1)
+		go func() {
+			// The peer reads nothing, so flow control stops the Write.
+			_, err := end.Write(make([]byte, 8<<20))
+			errc <- err
+		}()
+		time.Sleep(200 * time.Millisecond)
+		start := time.Now()
+		closed := make(chan struct{})
+		go func() {
+			end.Close()
+			close(closed)
+		}()
+		if err := recv(t, errc, side+" Write"); !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("%s Write blocked at Close = %v, want net.ErrClosed", side, err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("%s Write returned %v after Close", side, d)
+		}
+		// The peer refusing the rest ends the wait of a dialed end for its acknowledgement.
+		peer.Close()
+		signaled(t, closed, side+" Close")
+	}
+}
+
+func TestCloseReleasesEverythingOnce(t *testing.T) {
+	noGoroutinesLeft(t)
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, srv := connected(t, ln, tr)
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(srv, make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := mem.socket(t, 1).closes.Load(); n != 1 {
+		t.Fatalf("dialed carrier closed %d times, want 1", n)
+	}
+	srv.Close()
+	for range 2 {
+		if err := ln.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := mem.socket(t, 0).closes.Load(); n != 1 {
+		t.Fatalf("listened carrier closed %d times, want 1", n)
+	}
+	noGoroutinesLeft(t)
+}
+
+func TestCancelingADialInItsHandshakeReleasesEverything(t *testing.T) {
+	noGoroutinesLeft(t)
+	mem := newMemNet()
+	// Nothing listens at the endpoint, so the handshake waits.
+	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := tr.Dial(ctx, permuteproxy.Stream)
+		errc <- err
+	}()
+	signaled(t, mem.sent, "the first handshake datagram")
+	start := time.Now()
+	cancel()
+	if err := recv(t, errc, "Dial"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Dial = %v, want context.Canceled", err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("Dial returned %v after its cancel", d)
+	}
+	if n := mem.socket(t, 0).closes.Load(); n != 1 {
+		t.Fatalf("carrier closed %d times, want 1", n)
+	}
+	noGoroutinesLeft(t)
+}
+
+func TestCloseGivesUpOnAPeerThatNeverAcknowledges(t *testing.T) {
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, _ := connected(t, ln, tr)
+	mem.cut()
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	within(t, 4*time.Second, 8*time.Second, "Close", func() { c.Close() })
+}
+
+func TestCloseWaitsNoLongerThanTheWriteDeadline(t *testing.T) {
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, _ := connected(t, ln, tr)
+	mem.cut()
+	if _, err := c.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	setDeadline(t, c.SetWriteDeadline, time.Now().Add(300*time.Millisecond))
+	within(t, 0, 2*time.Second, "Close", func() { c.Close() })
 }

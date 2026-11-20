@@ -98,6 +98,13 @@ func (m *memNet) socket(t *testing.T, i int) *memSocket {
 	return m.bound[i]
 }
 
+// cut loses every datagram from now on.
+func (m *memNet) cut() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.loss = 1
+}
+
 func (m *memNet) send(d datagram, to string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
