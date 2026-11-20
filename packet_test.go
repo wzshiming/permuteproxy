@@ -20,22 +20,8 @@ import (
 // udpEcho answers every datagram to its sender until the test ends.
 func udpEcho(t *testing.T) net.Addr {
 	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], addr)
-		}
-	}()
-	return pc.LocalAddr()
+	addr, _ := watchedUDPEcho(t)
+	return addr
 }
 
 // watchedUDPEcho is udpEcho, also signaling each datagram it receives.
