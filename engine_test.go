@@ -717,12 +717,20 @@ func TestBuiltPlanesFollowALossyCarrier(t *testing.T) {
 	ctx := context.Background()
 	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
 	t.Run("transport", func(t *testing.T) {
-		tr, err := e.Transport(mk("", "test-keep"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if tr.Planes() != Stream {
-			t.Fatalf("Planes() above a carrier whose udp is lossy = %v, want stream", tr.Planes())
+		for _, tt := range []struct {
+			chain  Chain
+			planes Plane
+		}{
+			{mk("", "test-keep"), Stream},
+			{mk("udp", "test-quic"), 0}, // test-quic's carrier lost all it requires
+		} {
+			tr, err := e.Transport(tt.chain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tr.Planes() != tt.planes {
+				t.Fatalf("Planes() of %+v above a carrier whose udp is lossy = %v, want %v", tt.chain.Layers, tr.Planes(), tt.planes)
+			}
 		}
 	})
 	t.Run("client", func(t *testing.T) {
