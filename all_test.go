@@ -279,6 +279,12 @@ var proxyRows = []string{
 
 var anyClients = []string{"http", "socks4", "socks5", "ssh"}
 
+// matrixRow is a chain of the stream matrix and the name its subtest runs under.
+type matrixRow struct {
+	name  string
+	chain permuteproxy.Chain
+}
+
 func TestProxy(t *testing.T) {
 	want := "OK"
 	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
@@ -286,9 +292,13 @@ func TestProxy(t *testing.T) {
 	}))
 	t.Cleanup(target.Close)
 	dir := t.TempDir()
-	for i, uri := range proxyRows {
-		t.Run(uri, func(t *testing.T) {
-			c := parse(t, uri)
+	rows := make([]matrixRow, 0, len(proxyRows))
+	for _, uri := range proxyRows {
+		rows = append(rows, matrixRow{uri, parse(t, uri)})
+	}
+	for i, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			c := row.chain
 			command := strings.HasPrefix(c.Endpoint.Network, "cmd")
 			if command {
 				requireNetcat(t)
