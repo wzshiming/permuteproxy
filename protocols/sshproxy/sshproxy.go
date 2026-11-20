@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/shlex"
@@ -71,7 +72,7 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	return &permuteproxy.ClientFuncs{
 		Dial:   c.dial,
 		Derive: map[string]string{"udp": "dgram+cmd:" + udp},
-		Close:  dialer.Close,
+		Close:  c.close,
 	}, nil
 }
 
@@ -79,11 +80,16 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 type client struct {
 	dialer *sshproxy.Dialer
 	once   sync.Once
+	closed atomic.Bool
 }
 
 func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
 	c.once.Do(func() {
 		c.dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// The dialer reconnects whenever it has no connection, so a closed client refuses here.
+			if c.closed.Load() {
+				return nil, net.ErrClosed
+			}
 			return inner.Dial(ctx, permuteproxy.Stream)
 		}
 	})
@@ -91,6 +97,11 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 		return c.exec(ctx, address)
 	}
 	return c.dialer.DialContext(ctx, network, address)
+}
+
+func (c *client) close() error {
+	c.closed.Store(true)
+	return c.dialer.Close()
 }
 
 // exec runs address, split as a shell would, on a new session of the shared connection.

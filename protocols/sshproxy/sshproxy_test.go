@@ -191,3 +191,28 @@ func TestFuncsTunnelOverInnerToUpstream(t *testing.T) {
 		t.Fatalf("upstream dial = %q, want %q", got, want)
 	}
 }
+
+func TestClosedClientRefusesWithoutReconnecting(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+	ctx, target := timeout(t), echoTarget(t)
+	conn, err := n.DialContext(ctx, "tcp", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if err := n.(io.Closer).Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []struct{ network, address string }{{"tcp", target}, {"cmd", "relay x"}, {"udp", "198.51.100.7:53"}} {
+		if conn, err := n.DialContext(ctx, d.network, d.address); !errors.Is(err, net.ErrClosed) {
+			if conn != nil {
+				conn.Close()
+			}
+			t.Errorf("dial %s after Close = %v, want net.ErrClosed", d.network, err)
+		}
+	}
+	if got := base.dials.Load(); got != 1 {
+		t.Fatalf("client dials = %d, want only the first: no reconnect after Close", got)
+	}
+}
