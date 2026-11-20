@@ -37,6 +37,9 @@ const (
 
 	// maxName bounds a target's host or socket path: no DNS name nor sun_path is longer.
 	maxName = 255
+
+	// maxLine bounds a quoted command line by what fits a packet of 256 KiB, x/crypto's limit, beside 18 bytes of exec request and up to 20 of padding.
+	maxLine = 256<<10 - 20 - 18
 )
 
 var options = []string{
@@ -174,7 +177,7 @@ func (c *client) connect(ctx context.Context) (*link, error) {
 	return c.next, nil
 }
 
-// release forgets l, reporting whether a newer connection had not replaced it already; connect and drop hold mu.
+// release forgets l and ends its probe, reporting false if the client no longer held it; callers hold mu.
 func (c *client) release(l *link) bool {
 	if l == nil || !c.held.CompareAndSwap(l, nil) {
 		return false
@@ -274,6 +277,10 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	line := cmdutils.Quote(argv)
+	if len(line) > maxLine {
+		return nil, fmt.Errorf("ssh: cmd: command line of %d bytes is longer than an exec request carries", len(line))
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -284,7 +291,7 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	}
 	results := make(chan result)
 	go func() {
-		conn, err := c.start(ctx, address, argv)
+		conn, err := c.start(ctx, address, line)
 		select {
 		case results <- result{conn, err}:
 		case <-ctx.Done():
@@ -302,8 +309,8 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 	}
 }
 
-// start runs argv on a new session of the shared connection, opening none once ctx has ended.
-func (c *client) start(ctx context.Context, address string, argv []string) (net.Conn, error) {
+// start runs line on a new session of the shared connection, opening none once ctx has ended.
+func (c *client) start(ctx context.Context, address, line string) (net.Conn, error) {
 	l, err := c.connect(ctx)
 	if err != nil {
 		return nil, err
@@ -326,7 +333,7 @@ func (c *client) start(ctx context.Context, address string, argv []string) (net.
 	// The pipes fail only once set or started.
 	stdin, _ := sess.StdinPipe()
 	stdout, _ := sess.StdoutPipe()
-	if err := sess.Start(cmdutils.Quote(argv)); err != nil {
+	if err := sess.Start(line); err != nil {
 		sess.Close()
 		return nil, err
 	}

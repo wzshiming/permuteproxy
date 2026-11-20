@@ -534,6 +534,42 @@ func TestCmdRefusesLineWithoutCommand(t *testing.T) {
 	}
 }
 
+func TestCmdLineLongerThanAnExecRequestCarriesIsRefused(t *testing.T) {
+	up, base := newUpstream(), &clientBase{}
+	n := dialServer(t, base, serveExec(t, up), withCredentials())
+	ctx := timeout(t)
+	conn, err := n.DialContext(ctx, "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	recv(t, up.commands, "the first command")
+	// A packet holds 256 KiB, less 20 bytes of padding and its length, and an exec request adds 18 bytes to its line.
+	const longest = 256<<10 - 20 - 18
+	line := func(size int) string { return "sleep " + strings.Repeat("a", size-len("sleep ")) }
+	for _, size := range []int{longest + 1, 300 << 10} {
+		if c, err := n.DialContext(ctx, "cmd", line(size)); err == nil || errors.Is(err, permuteproxy.ErrUnsupported) {
+			if c != nil {
+				c.Close()
+			}
+			t.Errorf("cmd dial of a %d-byte line = %.200v, want it refused", size, err)
+		}
+	}
+	if up.dials.Load() != 1 || base.dials.Load() != 1 {
+		t.Fatalf("server commands %d, client dials %d; want the lines refused before any I/O", up.dials.Load(), base.dials.Load())
+	}
+	roundTrip(t, conn, "ping", "relay x|ping")
+	long, err := n.DialContext(ctx, "cmd", line(longest))
+	if err != nil {
+		t.Fatalf("cmd dial of a %d-byte line = %.200v", longest, err)
+	}
+	defer long.Close()
+	if got := recv(t, up.commands, "the longest command").line; len(got) != longest {
+		t.Fatalf("server ran a %d-byte line, want all %d", len(got), longest)
+	}
+	roundTrip(t, conn, "ping", "relay x|ping")
+}
+
 func TestCmdDialWithCanceledCtxStartsNothing(t *testing.T) {
 	up, base := newUpstream(), &clientBase{}
 	n := dialServer(t, base, serveExec(t, up), withCredentials())
