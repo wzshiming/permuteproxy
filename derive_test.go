@@ -104,6 +104,7 @@ var underived = map[string]struct {
 	"test-derive-unlisted":      {relayNetworks, map[string]string{"udp": "dgram+test-cmd:relay %h %p"}},
 	"test-derive-stream-udp":    {relayNetworks, map[string]string{"udp": "cmd:relay %h %p"}},
 	"test-derive-packet-unix":   {relayNetworks, map[string]string{"unix": "dgram+cmd:relay -U %h"}},
+	"test-derive-quoted":        {relayNetworks, map[string]string{"unix": "cmd:sh -c 'relay -U %h'"}},
 }
 
 func init() {

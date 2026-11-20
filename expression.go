@@ -42,18 +42,37 @@ func isCTL(r rune) bool {
 // placeholders lists per AddressKind the letters a template may put after '%', besides the '%' that "%%" writes.
 var placeholders = map[AddressKind]string{AddressHost: "hp", AddressPath: "h", AddressOpaque: "a"}
 
-// check refuses a placeholder of x's template that is unknown or that an address of kind does not fill.
+// check refuses a placeholder of x's template that is unknown, unfit for kind, or quoted or escaped for a shell.
 func (x expression) check(kind AddressKind) error {
-	for rest := x.template; ; {
-		i := strings.IndexByte(rest, '%')
-		if i < 0 {
-			return nil
+	t := x.template
+	var quote byte // the quote a POSIX shell reading t is inside
+	for i := 0; i < len(t); i++ {
+		switch c := t[i]; {
+		case c == '%':
+			p := t[i:min(i+2, len(t))]
+			switch {
+			case p == "%%":
+			case len(p) < 2 || strings.IndexByte(placeholders[kind], p[1]) < 0:
+				return fmt.Errorf("placeholder %q is unknown or does not fit the address", p)
+			case quote != 0:
+				return fmt.Errorf("placeholder %q is inside quotes", p)
+			case i > 0 && t[i-1] == '\\':
+				return fmt.Errorf("placeholder %q follows a backslash", p)
+			}
+			i++
+		case quote == '\'':
+			if c == '\'' {
+				quote = 0
+			}
+		case c == '\\' && i+1 < len(t) && t[i+1] != '%':
+			i++
+		case c == quote:
+			quote = 0
+		case quote == 0 && (c == '\'' || c == '"'):
+			quote = c
 		}
-		if i+1 == len(rest) || rest[i+1] != '%' && strings.IndexByte(placeholders[kind], rest[i+1]) < 0 {
-			return fmt.Errorf("placeholder %q is unknown or does not fit the address", rest[i:min(i+2, len(rest))])
-		}
-		rest = rest[i+2:]
 	}
+	return nil
 }
 
 // over is the chain of x's layers over its network at address.

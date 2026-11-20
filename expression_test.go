@@ -93,6 +93,9 @@ func TestRegisterNetworkRejectsExpressions(t *testing.T) {
 		{"%h for an opaque address", NetworkSpec{AddressKind: AddressOpaque, Dial: "cmd:%h"}, `placeholder "%h"`},
 		{"unknown placeholder", host("cmd:nc %h %x", ""), `placeholder "%x"`},
 		{"lone percent", host("cmd:nc %h %p %", ""), `placeholder "%"`},
+		{"placeholder in single quotes", host("cmd:sh -c 'exec nc %h %p'", ""), `placeholder "%h" is inside quotes`},
+		{"placeholder in double quotes", host(`cmd:sh -c "exec nc %h %p"`, ""), `placeholder "%h" is inside quotes`},
+		{"path placeholder in quotes", NetworkSpec{AddressKind: AddressPath, Dial: `cmd:sh -c 'printf "<%%s>" %h'`}, `placeholder "%h" is inside quotes`},
 		{"layer requiring a plane the network lacks", host("test-quic+cmd:nc %h %p", ""), `"test-quic" requires`},
 		{"packet required over lossy datagrams", host("test-dtls+dgram+cmd:nc %h %p", ""), "datagram boundaries"},
 		{"plane with dial", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Dial: "cmd:nc %h %p"}, "Plane set with Dial"},
@@ -112,6 +115,24 @@ func TestRegisterNetworkRejectsExpressions(t *testing.T) {
 				t.Fatalf("rejected network %q was registered", name)
 			}
 		})
+	}
+}
+
+func TestExpressionRefusesPlaceholdersAShellReadsQuoted(t *testing.T) {
+	for template, refused := range map[string]bool{
+		`cmd:sh -c 'exec nc "$0" "$1"' %h %p`: false,
+		`cmd:printf '%%s' \' "it's" %h %p`:    false,
+		`cmd:printf 'a\' %h %p`:               false,
+		`cmd:printf "a\\" %h %p`:              false,
+		`cmd:nc %h %p \`:                      false,
+		`cmd:printf "a\" %h" %p`:              true,
+		`cmd:printf "\%h" %p`:                 true,
+		`cmd:nc '%h' %p`:                      true,
+		`cmd:nc \%h %p`:                       true,
+	} {
+		if _, err := checkExpression(template, AddressHost); (err != nil) != refused {
+			t.Fatalf("checkExpression(%q) = %v, want refused: %v", template, err, refused)
+		}
 	}
 }
 
