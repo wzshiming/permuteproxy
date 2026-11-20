@@ -26,12 +26,12 @@ type Chain struct {
 	Endpoint Endpoint `json:"endpoint"`         // what the innermost layer reaches
 }
 
-// resolved holds the looked-up specs of the chain, its endpoint's network expression expanded below its layers; planes[i] is what it exposes above layer i.
+// resolved is a looked-up chain whose endpoint expression is expanded below its own layers.
 type resolved struct {
 	layers []Layer // the chain's own layers, then its endpoint expression's
 	own    int     // how many of layers are the chain's own
 	specs  []Spec
-	planes []Plane
+	planes []Plane // what the chain exposes above each layer, to the next layer out or to its user
 	stream string
 	packet string
 	dial   string    // the address the innermost layer dials: the endpoint's, or its expression's expansion
@@ -143,6 +143,9 @@ func (r *resolved) offer(avail Plane) error {
 		}
 		lossy = avail & spec.Lossy
 		r.planes[i] = avail
+		if i > 0 {
+			r.planes[i] &^= lossy
+		}
 	}
 	return nil
 }
