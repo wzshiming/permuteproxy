@@ -34,12 +34,14 @@ func isLossy(n Network, network string) bool {
 	return ok && l.Lossy(network)
 }
 
+// NetworkFuncs is a Network of functions, each refusing with ErrUnsupported while it is nil.
 type NetworkFuncs struct {
-	DialContextFunc  func(ctx context.Context, network, address string) (net.Conn, error)
-	ListenFunc       func(ctx context.Context, network, address string) (net.Listener, error)
-	ListenPacketFunc func(ctx context.Context, network, address string) (net.PacketConn, error)
+	DialContextFunc  func(ctx context.Context, network, address string) (net.Conn, error)       // implements DialContext
+	ListenFunc       func(ctx context.Context, network, address string) (net.Listener, error)   // implements Listen
+	ListenPacketFunc func(ctx context.Context, network, address string) (net.PacketConn, error) // implements ListenPacket
 }
 
+// DialContext calls DialContextFunc.
 func (n NetworkFuncs) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if n.DialContextFunc == nil {
 		return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
@@ -47,6 +49,7 @@ func (n NetworkFuncs) DialContext(ctx context.Context, network, address string) 
 	return n.DialContextFunc(ctx, network, address)
 }
 
+// Listen calls ListenFunc.
 func (n NetworkFuncs) Listen(ctx context.Context, network, address string) (net.Listener, error) {
 	if n.ListenFunc == nil {
 		return nil, fmt.Errorf("listen %s: %w", network, ErrUnsupported)
@@ -54,6 +57,7 @@ func (n NetworkFuncs) Listen(ctx context.Context, network, address string) (net.
 	return n.ListenFunc(ctx, network, address)
 }
 
+// ListenPacket calls ListenPacketFunc.
 func (n NetworkFuncs) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
 	if n.ListenPacketFunc == nil {
 		return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
@@ -73,17 +77,20 @@ type Transport interface {
 	ListenPacket(ctx context.Context) (net.PacketConn, error)
 }
 
+// TransportFuncs is a Transport of functions, each refusing with ErrUnsupported while it is nil or its plane is outside Plane.
 type TransportFuncs struct {
-	Plane            Plane
-	DialFunc         func(ctx context.Context, plane Plane) (net.Conn, error)
-	ListenFunc       func(ctx context.Context) (net.Listener, error)
-	ListenPacketFunc func(ctx context.Context) (net.PacketConn, error)
+	Plane            Plane                                                    // the planes it offers
+	DialFunc         func(ctx context.Context, plane Plane) (net.Conn, error) // implements Dial
+	ListenFunc       func(ctx context.Context) (net.Listener, error)          // implements Listen
+	ListenPacketFunc func(ctx context.Context) (net.PacketConn, error)        // implements ListenPacket
 }
 
+// Planes returns Plane.
 func (t TransportFuncs) Planes() Plane {
 	return t.Plane
 }
 
+// Dial calls DialFunc for Stream or Packet within Plane.
 func (t TransportFuncs) Dial(ctx context.Context, plane Plane) (net.Conn, error) {
 	if t.DialFunc == nil || (plane != Stream && plane != Packet) || t.Plane&plane == 0 {
 		return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
@@ -91,6 +98,7 @@ func (t TransportFuncs) Dial(ctx context.Context, plane Plane) (net.Conn, error)
 	return t.DialFunc(ctx, plane)
 }
 
+// Listen calls ListenFunc when Plane has Stream.
 func (t TransportFuncs) Listen(ctx context.Context) (net.Listener, error) {
 	if t.ListenFunc == nil || t.Plane&Stream == 0 {
 		return nil, fmt.Errorf("listen: %w", ErrUnsupported)
@@ -98,6 +106,7 @@ func (t TransportFuncs) Listen(ctx context.Context) (net.Listener, error) {
 	return t.ListenFunc(ctx)
 }
 
+// ListenPacket calls ListenPacketFunc when Plane has Packet.
 func (t TransportFuncs) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	if t.ListenPacketFunc == nil || t.Plane&Packet == 0 {
 		return nil, fmt.Errorf("listen packet: %w", ErrUnsupported)

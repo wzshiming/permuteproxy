@@ -14,6 +14,7 @@ const (
 	Packet                   // datagrams each with its peer, as udp carries
 )
 
+// String names the planes in p joined by '|', or "none".
 func (p Plane) String() string {
 	var names []string
 	if p&Stream != 0 {
@@ -45,8 +46,10 @@ const (
 	AddressOpaque                    // free text after the scheme, as cmd:nc host 1080
 )
 
+// ErrInvalidChain is returned, before any I/O, for a chain or declaration the root package cannot build.
 var ErrInvalidChain = errors.New("invalid chain")
 
+// Options are a layer's option values by name.
 type Options map[string]string
 
 func (o Options) clone() Options {
@@ -59,21 +62,21 @@ func (o Options) clone() Options {
 
 // Spec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
 type Spec struct {
-	Kind           Kind
-	Requires       Plane // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
-	Provides       Plane // planes offered above whatever the carrier has
-	Preserves      Plane // carrier planes also offered above, but only those the carrier has
-	Lossy          Plane // planes the layer provides without datagram boundaries
-	Options        []string
-	UsernameOption string
-	PasswordOption string
-	Adapt          func(inner Transport, opts Options) (Transport, error)
-	NewAdapter     func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build, as the alternative to Adapt
-	Client         func(inner Transport, base Network, opts Options) (Network, error)
-	Networks       []string                                 // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
-	NewClient      func(opts Options) (*ClientFuncs, error) // declares a proxy's client per build, as the alternative to Client
-	Server         func(inner Transport, upstream Network, opts Options) (Server, error)
-	NewServer      func(opts Options) (*ServerFuncs, error) // declares a proxy's server per build, as the alternative to Server
+	Kind           Kind                                                                  // adapter or proxy
+	Requires       Plane                                                                 // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
+	Provides       Plane                                                                 // planes offered above whatever the carrier has
+	Preserves      Plane                                                                 // carrier planes also offered above, but only those the carrier has
+	Lossy          Plane                                                                 // planes the layer provides without datagram boundaries
+	Options        []string                                                              // names of the options the layer accepts
+	UsernameOption string                                                                // optional; the option a URI's username fills
+	PasswordOption string                                                                // optional; the option a URI's password fills, beside UsernameOption
+	Adapt          func(inner Transport, opts Options) (Transport, error)                // builds an adapter over inner
+	NewAdapter     func(opts Options) (*AdapterFuncs, error)                             // declares an adapter's links per build, as the alternative to Adapt
+	Client         func(inner Transport, base Network, opts Options) (Network, error)    // builds a proxy's client over inner, binding its own end through base
+	Networks       []string                                                              // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
+	NewClient      func(opts Options) (*ClientFuncs, error)                              // declares a proxy's client per build, as the alternative to Client
+	Server         func(inner Transport, upstream Network, opts Options) (Server, error) // builds a proxy's server over inner, reaching its targets through upstream
+	NewServer      func(opts Options) (*ServerFuncs, error)                              // declares a proxy's server per build, as the alternative to Server
 }
 
 // Server serves a proxy chain's outermost layer at the chain's endpoint.

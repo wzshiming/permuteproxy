@@ -7,21 +7,23 @@ import (
 	"strings"
 )
 
+// Layer is one layer of a chain: a registered scheme and the options it is built with.
 type Layer struct {
-	Scheme  string  `json:"scheme"`
-	Options Options `json:"options,omitempty"`
+	Scheme  string  `json:"scheme"`            // name of a registered layer
+	Options Options `json:"options,omitempty"` // values of options the layer accepts
 }
 
+// Endpoint is the network and address a chain's innermost layer dials or listens at.
 type Endpoint struct {
-	Network string `json:"network,omitempty"`
-	Address string `json:"address"`
+	Network string `json:"network,omitempty"` // a registered network; empty is resolved from the innermost layer's planes
+	Address string `json:"address"`           // written as the network's AddressKind says
 }
 
 // Chain lists layers outermost-first over an endpoint; an empty Endpoint.Network is resolved
 // from the innermost layer's planes (tcp, udp, or both).
 type Chain struct {
-	Layers   []Layer  `json:"layers,omitempty"`
-	Endpoint Endpoint `json:"endpoint"`
+	Layers   []Layer  `json:"layers,omitempty"` // outermost first
+	Endpoint Endpoint `json:"endpoint"`         // what the innermost layer reaches
 }
 
 // resolved holds the looked-up specs of the chain, its endpoint's network expression expanded below its layers; planes[i] is what it exposes above layer i.
@@ -136,6 +138,7 @@ func (c Chain) resolve() (*resolved, error) {
 	return r, nil
 }
 
+// Validate checks, before any I/O, that c names registered layers and networks whose planes fit, wrapping ErrInvalidChain if not.
 func (c Chain) Validate() error {
 	_, err := c.resolve()
 	return err
@@ -225,6 +228,7 @@ func (l *Layer) set(key, value string) {
 	l.Options[key] = value
 }
 
+// URI writes c as the URI ParseURI reads back, refusing an address no URI carries unchanged.
 func (c Chain) URI() (string, error) {
 	r, err := c.resolve()
 	if err != nil {
