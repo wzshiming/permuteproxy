@@ -94,6 +94,12 @@ func TestClientRefusesPlaneBeforeIO(t *testing.T) {
 	if _, err := dual.DialContext(ctx, "unixgram", "/p"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("DialContext(unixgram) = %v, want ErrUnsupported", err)
 	}
+	if _, err := dual.ListenPacket(ctx, "unixgram", "/p"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("ListenPacket(unixgram) = %v, want ErrUnsupported", err)
+	}
+	if _, err := dual.DialContext(ctx, "unix", "/p"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("DialContext(unix) = %v, want ErrUnsupported", err)
+	}
 	if calls.Load() != 0 {
 		t.Fatalf("base reached %d times for refused planes", calls.Load())
 	}
