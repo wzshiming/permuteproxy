@@ -217,6 +217,27 @@ func TestReadEndsAtEOFOnceTheDialerCloses(t *testing.T) {
 	}
 }
 
+func TestListenerMaySpeakFirst(t *testing.T) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+		ln, tr := pair(t, e)
+		go func() {
+			if c, err := ln.Accept(); err == nil {
+				c.Write([]byte("greeting"))
+			}
+		}()
+		c := dial(t, tr)
+		got := make(chan string, 1)
+		go func() {
+			b := make([]byte, len("greeting"))
+			n, _ := io.ReadFull(c, b)
+			got <- string(b[:n])
+		}()
+		if greeting := recv(t, got, "greeting before the dialer writes"); greeting != "greeting" {
+			t.Fatalf("dialer read %q, want greeting", greeting)
+		}
+	})
+}
+
 func TestDialBuildsItsTLSConfigBeforeTheCarrier(t *testing.T) {
 	base := newRecorder()
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")

@@ -84,6 +84,8 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 		release()
 		return nil, err
 	}
+	// A stream reaches the peer with its first frame, so an empty one opens it for a listener that speaks first.
+	stream.Flush()
 	return newConn(stream, carrier.LocalAddr(), carrier.RemoteAddr(), release), nil
 }
 
