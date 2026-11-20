@@ -150,13 +150,22 @@ func expressionPlane(spec NetworkSpec) (Plane, error) {
 			return 0, errors.New("Listen differs from Dial in its layers or network")
 		}
 	}
-	r, err := dial.over(dial.template).resolve()
+	plane, err := dial.offers()
 	if err != nil {
 		return 0, fmt.Errorf("Dial: %w", err)
+	}
+	return plane, nil
+}
+
+// offers is what x's layers offer over its network, or that network's own plane without layers.
+func (x expression) offers() (Plane, error) {
+	r, err := x.over(x.template).resolve()
+	if err != nil {
+		return 0, err
 	}
 	if len(r.planes) > 0 {
 		return r.planes[0], nil
 	}
-	ns, _ := lookupNetwork(dial.network)
+	ns, _ := lookupNetwork(x.network)
 	return ns.Plane, nil
 }
