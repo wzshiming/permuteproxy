@@ -174,7 +174,7 @@ func apply[C, R any](ctx context.Context, before func() error, obtain func(conte
 	return f(carrier)
 }
 
-// ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists or Derive expresses, and derives udp dials.
+// ClientFuncs declares a proxy's client over the networks Spec.Networks lists or Derive expresses.
 // Its functions receive the same inner Transport on every call for the life of the client.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network

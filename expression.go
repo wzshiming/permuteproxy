@@ -125,7 +125,7 @@ func (x expression) insert(value string) string {
 	return value
 }
 
-// checkExpression parses text and checks it declares registered adapters over a network not itself declared by expression, with placeholders an address of kind fills.
+// checkExpression parses text and checks its layers, its network and its placeholders for kind.
 func checkExpression(text string, kind AddressKind) (expression, error) {
 	x, err := parseExpression(text)
 	if err != nil {
@@ -175,7 +175,7 @@ func expressionPlane(spec NetworkSpec) (Plane, error) {
 	return plane, nil
 }
 
-// offers is what x's layers offer over its network, or that network's own plane without layers, and which of those planes lose datagram boundaries.
+// offers is what x offers over its network and which of those planes lose datagram boundaries.
 func (x expression) offers() (planes, lossy Plane, err error) {
 	r, err := x.over(x.template).resolve()
 	if err != nil {
