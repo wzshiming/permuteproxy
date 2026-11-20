@@ -5,10 +5,9 @@ import (
 )
 
 // Engine builds chains into transports, clients and servers, borrowing Base and Upstream without ever closing them.
-// A nil Base or Upstream resolves each call by its network name: the registered implementation, else the system for tcp, udp, unix and unixgram, else ErrUnsupported.
 type Engine struct {
-	Base     Network // reaches the endpoint
-	Upstream Network // what servers reach their targets through
+	Base     Network // reaches the endpoint; nil resolves each call by network name: the registered implementation, else the system for tcp, udp, unix and unixgram, else ErrUnsupported
+	Upstream Network // what servers reach their targets through; nil resolves each call as a nil Base does
 }
 
 func (e Engine) network() Network {

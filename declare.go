@@ -22,8 +22,7 @@ type AdapterFuncs struct {
 	Close        func() error // optional; releases what NewAdapter acquired
 }
 
-// Link derives one plane from a carrier of one plane, through a client and a server form.
-// Each function owns the carrier it is handed, also when it fails.
+// Link derives one plane from a carrier of one plane through a client and a server form, each function owning the carrier it is handed, also when it fails.
 type Link struct {
 	Over           Plane                                                         // carrier plane consumed; zero means the provided plane itself
 	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
@@ -173,8 +172,7 @@ func apply[C, R any](ctx context.Context, before func() error, obtain func(conte
 	return f(carrier)
 }
 
-// ClientFuncs declares a proxy's client over the networks Spec.Networks lists or Derive expresses.
-// Its functions receive the same inner Transport on every call for the life of the client.
+// ClientFuncs declares a proxy's client over the networks Spec.Networks lists or Derive expresses, its functions receiving one inner Transport for the client's life.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local

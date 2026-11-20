@@ -19,8 +19,7 @@ type Endpoint struct {
 	Address string `json:"address"`           // written as the network's AddressKind says
 }
 
-// Chain lists layers outermost-first over an endpoint; an empty Endpoint.Network is resolved
-// from the innermost layer's planes (tcp, udp, or both).
+// Chain lists layers outermost-first over an endpoint, whose empty Network is resolved from the innermost layer's planes as tcp, udp or both.
 type Chain struct {
 	Layers   []Layer  `json:"layers,omitempty"` // outermost first
 	Endpoint Endpoint `json:"endpoint"`         // what the innermost layer reaches
