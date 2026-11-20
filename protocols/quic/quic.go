@@ -22,8 +22,7 @@ const alpn = "permuteproxy"
 
 func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	values := protoutils.Values(opts)
-	// Each side's config is built where it is needed: the CA file only by dialers, key material
-	// only by listeners.
+	// Each side builds only its own config: dialers read the CA file, listeners the key material.
 	clientConfig := sync.OnceValues(func() (*quic.Config, error) {
 		config, err := tlsutils.NewClient(values)
 		if err != nil {
