@@ -77,21 +77,33 @@ func (p *closeProbe) ListenPacket(ctx context.Context, network, address string) 
 	return countingPacket{pc, &p.closedPackets, p.packetClosed}, nil
 }
 
-// serve runs a socks5 server on a loopback tcp listener and returns its address.
-func serve(t *testing.T, upstream permuteproxy.Network, opts permuteproxy.Options) string {
+// chain is the socks5 or socks5h layer over tcp at address.
+func chain(scheme, address string, opts permuteproxy.Options) permuteproxy.Chain {
+	return permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: scheme, Options: opts}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: address}}
+}
+
+// server builds a socks5 server over a loopback tcp listener whose address it sends to bound.
+func server(t *testing.T, upstream permuteproxy.Network, opts permuteproxy.Options, bound chan<- net.Addr) permuteproxy.Server {
 	t.Helper()
-	bound := make(chan net.Addr, 1)
-	inner := permuteproxy.TransportFuncs{Plane: permuteproxy.Stream, ListenFunc: func(ctx context.Context) (net.Listener, error) {
-		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+	base := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
+		ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
 	}}
-	srv, err := NewServer(inner, upstream, opts)
+	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(chain("socks5", "127.0.0.1:0", opts))
 	if err != nil {
 		t.Fatal(err)
 	}
+	return srv
+}
+
+// serve runs a socks5 server on a loopback tcp listener and returns its address.
+func serve(t *testing.T, upstream permuteproxy.Network, opts permuteproxy.Options) string {
+	t.Helper()
+	bound := make(chan net.Addr, 1)
+	srv := server(t, upstream, opts, bound)
 	done := make(chan error, 1)
 	go func() { done <- srv.Run(context.Background()) }()
 	t.Cleanup(func() {
@@ -120,10 +132,11 @@ func serve(t *testing.T, upstream permuteproxy.Network, opts permuteproxy.Option
 // picks socks5 (names resolved locally) over socks5h.
 func dialer(t *testing.T, base permuteproxy.Network, address string, opts permuteproxy.Options, resolve bool) permuteproxy.Network {
 	t.Helper()
-	inner := permuteproxy.TransportFuncs{Plane: permuteproxy.Stream, DialFunc: func(ctx context.Context, _ permuteproxy.Plane) (net.Conn, error) {
-		return base.DialContext(ctx, "tcp", address)
-	}}
-	n, err := newClient(inner, base, opts, resolve)
+	scheme := "socks5h"
+	if resolve {
+		scheme = "socks5"
+	}
+	n, err := permuteproxy.Engine{Base: base}.Client(chain(scheme, address, opts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,17 +329,7 @@ func TestServerStopEndsAssociation(t *testing.T) {
 		t.Run(stop, func(t *testing.T) {
 			upstream := newProbe(system)
 			bound := make(chan net.Addr, 1)
-			inner := permuteproxy.TransportFuncs{Plane: permuteproxy.Stream, ListenFunc: func(ctx context.Context) (net.Listener, error) {
-				ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
-				if err == nil {
-					bound <- ln.Addr()
-				}
-				return ln, err
-			}}
-			srv, err := NewServer(inner, upstream, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			srv := server(t, upstream, nil, bound)
 			runCtx, stopRun := context.WithCancel(context.Background())
 			defer stopRun()
 			done := make(chan error, 1)
