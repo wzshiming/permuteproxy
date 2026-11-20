@@ -12,7 +12,7 @@ func init() {
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
 		Client:         NewClient,
-		Server:         NewServer,
+		NewServer:      NewServer,
 	}
 	permuteproxy.RegisterLayer("socks5", spec)
 	spec.Client = NewClientH

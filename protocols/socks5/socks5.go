@@ -13,7 +13,6 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -244,21 +243,21 @@ type readError struct{ error }
 
 func (e readError) Unwrap() error { return e.error }
 
-func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
-	srv := socks5.NewServer()
-	srv.ProxyDial = upstream.DialContext
-	srv.ProxyListenBind = upstream.Listen
-	srv.ProxyListenPacket = listenRelay
-	srv.ProxyOutgoingListenPacket = upstream.ListenPacket
-	srv.PacketForwardAddress = relayAddress
-	srv.BytesPool = pool.Bytes
-	if username := opts[KeyUsername]; username != "" {
-		srv.Authentication = socks5.UserAuth(username, opts[KeyPassword])
-	}
-	return protoutils.NewServer(inner.Listen, func(ctx context.Context, ln net.Listener) error {
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
+	return &permuteproxy.ServerFuncs{Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+		srv := socks5.NewServer()
 		srv.Context = ctx
+		srv.ProxyDial = upstream.DialContext
+		srv.ProxyListenBind = upstream.Listen
+		srv.ProxyListenPacket = listenRelay
+		srv.ProxyOutgoingListenPacket = upstream.ListenPacket
+		srv.PacketForwardAddress = relayAddress
+		srv.BytesPool = pool.Bytes
+		if username := opts[KeyUsername]; username != "" {
+			srv.Authentication = socks5.UserAuth(username, opts[KeyPassword])
+		}
 		return srv.Serve(ln)
-	}), nil
+	}}, nil
 }
 
 // listenRelay binds the client-facing relay socket locally on a free port; the address the
