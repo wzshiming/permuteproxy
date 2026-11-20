@@ -94,8 +94,8 @@ func TestSOCKS5OverQUICBindsAUDPCarrier(t *testing.T) {
 	}
 	select {
 	case network := <-base.networks:
-		if network != "udp" {
-			t.Fatalf("carrier bound on %q, want udp", network)
+		if network != "udp4" {
+			t.Fatalf("carrier bound on %q, want udp4", network)
 		}
 	default:
 		t.Fatal("no carrier was bound")
