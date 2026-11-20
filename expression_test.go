@@ -96,7 +96,9 @@ func TestRegisterNetworkRejectsExpressions(t *testing.T) {
 		{"placeholder in single quotes", host("cmd:sh -c 'exec nc %h %p'", ""), `placeholder "%h" is inside quotes`},
 		{"placeholder in double quotes", host(`cmd:sh -c "exec nc %h %p"`, ""), `placeholder "%h" is inside quotes`},
 		{"path placeholder in quotes", NetworkSpec{AddressKind: AddressPath, Dial: `cmd:sh -c 'printf "<%%s>" %h'`}, `placeholder "%h" is inside quotes`},
-		{"placeholder after command substitution", host(`cmd:sh -c "$(printf "nc %h %p")"`, ""), `placeholder "%h" follows "$("`},
+		{"placeholder after command substitution", host(`cmd:sh -c "$(printf "nc %h %p")"`, ""), `placeholder "%h" follows "$"`},
+		{"placeholder after arithmetic expansion", host("cmd:echo $[ %h ] %p", ""), `placeholder "%h" follows "$"`},
+		{"placeholder next to a redirection", host("cmd:nc %h %p>x", ""), `placeholder "%p" is next to ">"`},
 		{"layer requiring a plane the network lacks", host("test-quic+cmd:nc %h %p", ""), `"test-quic" requires`},
 		{"packet required over lossy datagrams", host("test-dtls+dgram+cmd:nc %h %p", ""), "datagram boundaries"},
 		{"plane with dial", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Dial: "cmd:nc %h %p"}, "Plane set with Dial"},
@@ -136,10 +138,46 @@ func TestExpressionRefusesPlaceholdersAShellReadsQuoted(t *testing.T) {
 		"cmd:printf %%s \"`echo \"a %h\"`\"":  true,
 		`cmd:printf %%s $'it\'s %h'`:          true,
 		`cmd:printf '$(' %h`:                  false,
-		`cmd:printf "$'" %h`:                  false,
+		`cmd:printf "([{" %h`:                 false,
+		`cmd:printf "$'" %h`:                  true,
+		`cmd:printf %%s "$(echo " %h ")"`:     true,
 	} {
 		if _, err := checkExpression(template, AddressHost); (err != nil) != refused {
 			t.Fatalf("checkExpression(%q) = %v, want refused: %v", template, err, refused)
+		}
+	}
+}
+
+func TestExpressionAcceptsCommandPlaceholdersOnlyAmongInertBytes(t *testing.T) {
+	for _, tt := range []struct {
+		template string
+		kind     AddressKind
+		refused  bool
+	}{
+		{"cmd:nc %h %p", AddressHost, false},
+		{"cmd:nc -l %h %p", AddressHost, false},
+		{"cmd:nc -U %h", AddressPath, false},
+		{"cmd:nc -Ul %h", AddressPath, false},
+		{"dgram+cmd:nc -u -w 30 %h %p", AddressHost, false},
+		{"cmd:/usr/bin/nc %h %p #?", AddressHost, false},
+		{"cmd:socat - UDP:%h:%p", AddressHost, false},
+		{"cmd:relay host=%h port=%p", AddressHost, false},
+		{"dgram+cmd:%a", AddressOpaque, false},
+		{"cmd:(%a)", AddressOpaque, false},
+		{"tcp://[%h]:%p", AddressHost, false},
+		{"unix:///tmp/it's/%h", AddressPath, false},
+		{"cmd:echo $[ %h ]", AddressHost, true},
+		{"cmd:(( %h ))", AddressHost, true},
+		{"cmd:echo $%h", AddressPath, true},
+		{"cmd:[[ %h -eq 0 ]]", AddressHost, true},
+		{"cmd:a[%h]=1", AddressHost, true},
+		{"cmd:{ nc %h %p; }", AddressHost, true},
+		{"cmd:printf %%s %h</dev/null", AddressPath, true},
+		{"cmd:printf %%s %h>/dev/null", AddressPath, true},
+		{"cmd:nc ~%h", AddressPath, true},
+	} {
+		if _, err := checkExpression(tt.template, tt.kind); (err != nil) != tt.refused {
+			t.Errorf("checkExpression(%q) = %v, want refused: %v", tt.template, err, tt.refused)
 		}
 	}
 }

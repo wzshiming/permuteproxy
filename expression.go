@@ -42,11 +42,14 @@ func isCTL(r rune) bool {
 // placeholders lists per AddressKind the letters a template may put after '%', besides the '%' that "%%" writes.
 var placeholders = map[AddressKind]string{AddressHost: "hp", AddressPath: "h", AddressOpaque: "a"}
 
-// check refuses a placeholder of x's template that is unknown, unfit for kind, or that a shell may read quoted or escaped.
+// inert are the bytes that may stand next to a quoted value: a blank, or one a shell reads as plain text.
+const inert = " %+,-./0123456789:=@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
+
+// check refuses a placeholder of x's template that is unknown, unfit for kind, or where a shell reads more than its value.
 func (x expression) check(kind AddressKind) error {
 	t := x.template
 	var quote byte    // the quote a POSIX shell reading t is inside
-	var opener string // the last "$(", "${", "`" or "$'" read, past which quoting is not followed
+	var opener string // the first byte read that a shell expands or groups by, past which quoting is not followed
 	for i := 0; i < len(t); i++ {
 		switch c := t[i]; {
 		case c == '%':
@@ -55,12 +58,16 @@ func (x expression) check(kind AddressKind) error {
 			case p == "%%":
 			case len(p) < 2 || strings.IndexByte(placeholders[kind], p[1]) < 0:
 				return fmt.Errorf("placeholder %q is unknown or does not fit the address", p)
+			case !x.opaque || p == "%a":
+				// a value insert leaves verbatim has no quoting to keep
 			case quote != 0:
 				return fmt.Errorf("placeholder %q is inside quotes", p)
-			case i > 0 && t[i-1] == '\\':
-				return fmt.Errorf("placeholder %q follows a backslash", p)
 			case opener != "":
 				return fmt.Errorf("placeholder %q follows %q", p, opener)
+			case i > 0 && strings.IndexByte(inert, t[i-1]) < 0:
+				return fmt.Errorf("placeholder %q is next to %q", p, t[i-1:i])
+			case i+2 < len(t) && strings.IndexByte(inert, t[i+2]) < 0:
+				return fmt.Errorf("placeholder %q is next to %q", p, t[i+2:i+3])
 			}
 			i++
 		case quote == '\'':
@@ -69,10 +76,9 @@ func (x expression) check(kind AddressKind) error {
 			}
 		case c == '\\' && i+1 < len(t) && t[i+1] != '%':
 			i++
-		case c == '`':
-			opener = "`"
-		case c == '$' && i+1 < len(t) && (t[i+1] == '(' || t[i+1] == '{' || t[i+1] == '\'' && quote == 0):
-			opener = t[i : i+2]
+		// '$' and '`' keep their meaning inside double quotes.
+		case opener == "" && (c == '$' || c == '`' || quote == 0 && strings.IndexByte("([{", c) >= 0):
+			opener = t[i : i+1]
 		case c == quote:
 			quote = 0
 		case quote == 0 && (c == '\'' || c == '"'):

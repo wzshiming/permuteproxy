@@ -106,6 +106,8 @@ var underived = map[string]struct {
 	"test-derive-packet-unix":   {relayNetworks, map[string]string{"unix": "dgram+cmd:relay -U %h"}},
 	"test-derive-quoted":        {relayNetworks, map[string]string{"unix": "cmd:sh -c 'relay -U %h'"}},
 	"test-derive-substituted":   {relayNetworks, map[string]string{"unix": `cmd:sh -c "$(printf "relay -U %h")"`}},
+	"test-derive-arithmetic":    {relayNetworks, map[string]string{"unix": "cmd:relay -U $[ %h ]"}},
+	"test-derive-redirected":    {relayNetworks, map[string]string{"udp": "dgram+cmd:relay %h %p</dev/null"}},
 	"test-derive-unixgram":      {relayNetworks, map[string]string{"unixgram": "dgram+cmd:relay -U %h"}},
 	"test-derive-over-udp":      {[]string{"udp"}, map[string]string{"tcp": "test-quic+udp://%h:%p"}},
 }
