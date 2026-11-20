@@ -75,8 +75,9 @@ var programs = map[string]func(c *command, argv []string) error{
 		c.far.Write([]byte("bye"))
 		return nil
 	},
-	"sleep": drain,
-	"stall": drain, // its exec request waits for the reply until upstream.released closes
+	"sleep":  drain,
+	"linger": drain,
+	"stall":  drain, // its exec request waits for the reply until upstream.released closes
 	"record": func(c *command, _ []string) error {
 		for {
 			buf := make([]byte, 64<<10)
@@ -147,7 +148,7 @@ func (u *upstream) DialContext(ctx context.Context, network, address string) (ne
 		close(c.done)
 	}()
 	u.commands <- c
-	if argv[0] == "plain" {
+	if argv[0] == "plain" || argv[0] == "linger" {
 		// A conn that is not a netutils.Process, whose exit nobody can tell.
 		return struct{ net.Conn }{c}, nil
 	}
@@ -655,6 +656,22 @@ func TestCmdKillEndsFarCommand(t *testing.T) {
 	recv(t, cmd.killed, "the server to kill the command")
 	recv(t, cmd.done, "the killed command to end")
 	recv(t, p.Done(), "the client to see the command end")
+}
+
+func TestCmdKillClosesTheSession(t *testing.T) {
+	up := newUpstream()
+	n := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
+	conn, err := n.DialContext(timeout(t), "cmd", "linger")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	cmd := recv(t, up.commands, "the command")
+	if err := process(t, conn).Kill(); err != nil {
+		t.Fatal(err)
+	}
+	// The server cannot signal a conn without a process, so only the session's close ends it.
+	recv(t, cmd.closed, "the server to close the command")
 }
 
 func TestCmdDiscardsRemoteStderr(t *testing.T) {
