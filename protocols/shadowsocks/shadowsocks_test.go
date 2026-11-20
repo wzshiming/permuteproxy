@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 type countingPacket struct {
@@ -56,28 +55,47 @@ func TestSessionsCloseOwnedSockets(t *testing.T) {
 	}
 }
 
+func chain(t *testing.T, uri string) permuteproxy.Chain {
+	t.Helper()
+	c, err := permuteproxy.ParseURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestClientRefusesPlaneBeforeIO(t *testing.T) {
-	var dials atomic.Int32
-	inner := permuteproxy.TransportFuncs{Plane: permuteproxy.Stream, DialFunc: func(context.Context, permuteproxy.Plane) (net.Conn, error) {
-		dials.Add(1)
-		return nil, errors.New("dialed")
-	}}
-	n, err := NewClient(inner, nil, nil)
+	var calls atomic.Int32
+	base := permuteproxy.NetworkFuncs{
+		DialContextFunc: func(context.Context, string, string) (net.Conn, error) {
+			calls.Add(1)
+			return nil, errors.New("dialed")
+		},
+		ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) {
+			calls.Add(1)
+			return nil, errors.New("bound")
+		},
+	}
+	stream, err := permuteproxy.Engine{Base: base}.Client(chain(t, "ss+tcp://127.0.0.1:1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dual, err := permuteproxy.Engine{Base: base}.Client(chain(t, "ss://127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := n.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+	if _, err := stream.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("DialContext(udp) over a stream carrier = %v, want ErrUnsupported", err)
 	}
-	if _, err := n.ListenPacket(ctx, "udp", ":0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+	if _, err := stream.ListenPacket(ctx, "udp", ":0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("ListenPacket over a stream carrier = %v, want ErrUnsupported", err)
 	}
-	if _, err := n.DialContext(ctx, "unixgram", "/p"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+	if _, err := dual.DialContext(ctx, "unixgram", "/p"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("DialContext(unixgram) = %v, want ErrUnsupported", err)
 	}
-	if dials.Load() != 0 {
-		t.Fatalf("carrier dialed %d times for refused planes", dials.Load())
+	if calls.Load() != 0 {
+		t.Fatalf("base reached %d times for refused planes", calls.Load())
 	}
 }
 
@@ -175,10 +193,7 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			defer srv.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			dial := permuteproxy.TransportFuncs{Plane: permuteproxy.Packet, DialFunc: func(ctx context.Context, _ permuteproxy.Plane) (net.Conn, error) {
-				return netutils.DialPacket(ctx, "udp", raw.LocalAddr().String(), system.ListenPacket)
-			}}
-			n, err := NewClient(dial, nil, opts)
+			n, err := permuteproxy.Engine{Base: system}.Client(chain(t, "ss+udp://aes-256-gcm:p@"+raw.LocalAddr().String()))
 			if err != nil {
 				t.Fatal(err)
 			}
