@@ -69,6 +69,13 @@ type closableNet struct{ fakeNet }
 
 func (n *closableNet) Close() error { record("%s.close", n.name); return nil }
 
+type counted struct{ Transport }
+
+func (c counted) Close() error {
+	record("test-counted.close")
+	return closeIf(c.Transport)
+}
+
 // lossyNet is a fakeNet whose listed networks lose datagram boundaries.
 type lossyNet struct {
 	fakeNet
@@ -413,6 +420,10 @@ func init() {
 	RegisterLayer("test-reject-adapter", declared(Stream, Stream, &AdapterFuncs{Close: func() error { record("test-reject-adapter.close"); return nil }}, nil))
 	RegisterLayer("test-reject-client", declaredProxy(Stream, 0, &ClientFuncs{Close: func() error { record("test-reject-client.close"); return nil }}, nil))
 	RegisterLayer("test-reject-server", declaredServer(Stream, 0, &ServerFuncs{Close: func() error { record("test-reject-server.close"); return nil }}, nil))
+	RegisterLayer("test-reject-client-packet", declaredProxy(Packet, 0, &ClientFuncs{Close: func() error { record("test-reject-client-packet.close"); return nil }}, nil))
+	RegisterLayer("test-reject-server-packet", declaredServer(Stream, Packet, &ServerFuncs{Serve: failServe, Close: func() error { record("test-reject-server-packet.close"); return nil }}, nil))
+	// test-counted is an Adapt-style layer passing its carrier through, whose Close records every call.
+	RegisterLayer("test-counted", Spec{Kind: KindAdapter, Preserves: Stream | Packet, Adapt: func(inner Transport, _ Options) (Transport, error) { return counted{inner}, nil }})
 	// test-packet-server binds only a Packet carrier, so a Stream one leaves it nothing to serve.
 	RegisterLayer("test-packet-server", Spec{Kind: KindProxy, Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-packet-server.newserver")

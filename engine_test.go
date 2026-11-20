@@ -592,16 +592,18 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 		chain Chain
 		want  []string
 	}{
-		{"failing NewAdapter", transport, mk("tcp", "test-broken", "closable"), []string{"closable.close"}},
-		{"nil Adapt", transport, mk("tcp", "test-nil-adapt", "closable"), []string{"closable.close"}},
-		{"rejected AdapterFuncs", transport, mk("tcp", "test-reject-adapter", "closable"), []string{"test-reject-adapter.close", "closable.close"}},
-		{"failing layer over two", transport, mk("tcp", "test-tls", "test-broken", "closable", "closable"), []string{"closable.close", "closable.close"}},
-		{"failing NewClient", client, mk("tcp", "test-client-broken", "closable"), []string{"closable.close"}},
-		{"nil Client", client, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
-		{"rejected ClientFuncs", client, mk("tcp", "test-reject-client", "closable"), []string{"test-reject-client.close", "closable.close"}},
-		{"failing NewServer", server, mk("tcp", "test-server-broken", "closable"), []string{"closable.close"}},
-		{"nil Server", server, mk("tcp", "test-nil-legacy", "closable"), []string{"closable.close"}},
-		{"rejected ServerFuncs", server, mk("tcp", "test-reject-server", "closable"), []string{"test-reject-server.close", "closable.close"}},
+		{"failing NewAdapter", transport, mk("tcp", "test-broken", "test-counted"), []string{"test-counted.close"}},
+		{"nil Adapt", transport, mk("tcp", "test-nil-adapt", "test-counted"), []string{"test-counted.close"}},
+		{"rejected AdapterFuncs", transport, mk("tcp", "test-reject-adapter", "test-counted"), []string{"test-reject-adapter.close", "test-counted.close"}},
+		{"failing layer over two", transport, mk("tcp", "test-tls", "test-broken", "test-counted", "test-counted"), []string{"test-counted.close", "test-counted.close"}},
+		{"failing NewClient", client, mk("tcp", "test-client-broken", "test-counted"), []string{"test-counted.close"}},
+		{"nil Client", client, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
+		{"rejected ClientFuncs", client, mk("tcp", "test-reject-client", "test-counted"), []string{"test-reject-client.close", "test-counted.close"}},
+		{"rejected ClientFuncs without ListenPacket", client, mk("tcp", "test-reject-client-packet", "test-counted"), []string{"test-reject-client-packet.close", "test-counted.close"}},
+		{"failing NewServer", server, mk("tcp", "test-server-broken", "test-counted"), []string{"test-counted.close"}},
+		{"nil Server", server, mk("tcp", "test-nil-legacy", "test-counted"), []string{"test-counted.close"}},
+		{"rejected ServerFuncs", server, mk("tcp", "test-reject-server", "test-counted"), []string{"test-reject-server.close", "test-counted.close"}},
+		{"rejected ServerFuncs without ServePacket", server, mk("tcp", "test-reject-server-packet", "test-counted"), []string{"test-reject-server-packet.close", "test-counted.close"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
