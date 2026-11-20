@@ -140,6 +140,18 @@ func TestNetcatNetworksListenOnTheBase(t *testing.T) {
 	}
 }
 
+func TestNetcatUnixListensWithoutABase(t *testing.T) {
+	tr, err := permuteproxy.Engine{}.Transport(chain("cmd-nc-unix", socketPath(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tr.Listen(context.Background())
+	if err != nil {
+		t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
+	}
+	ln.Close()
+}
+
 func TestCommandNetworksRefuseInvalidValues(t *testing.T) {
 	for _, tt := range []struct {
 		network, address string
