@@ -105,7 +105,7 @@ func relay(c *command, _ []string) error {
 	}
 }
 
-// upstream is the fake Upstream of the servers under test: tcp reaches the system, cmd runs one of programs in process.
+// upstream is the servers' fake Upstream: tcp reaches the system, cmd runs a program in process.
 type upstream struct {
 	permuteproxy.NetworkFuncs
 	dials    atomic.Int32
@@ -145,7 +145,7 @@ func chain(opts permuteproxy.Options, address string) permuteproxy.Chain {
 	return permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh", Options: opts}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: address}}
 }
 
-// withCredentials is the username and password the servers and clients under test share, plus the option pairs kv.
+// withCredentials is the username and password every test server and client shares, plus pairs kv.
 func withCredentials(kv ...string) permuteproxy.Options {
 	opts := permuteproxy.Options{"username": "u", "password": "p"}
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -154,7 +154,7 @@ func withCredentials(kv ...string) permuteproxy.Options {
 	return opts
 }
 
-// serve runs this layer's server with opts through the Engine at a loopback address and returns that address.
+// serve runs this layer's server with opts through the Engine on loopback and returns its address.
 func serve(t *testing.T, opts permuteproxy.Options, up permuteproxy.Network) string {
 	t.Helper()
 	bound := make(chan string, 1)
@@ -199,7 +199,7 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase is what the clients under test reach their server through; it counts their dials and can hold back what servers send or drop the conns.
+// clientBase carries test clients to their server, counting dials; it can hold or drop the conns.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
 	dials atomic.Int32
@@ -258,7 +258,7 @@ func (c heldConn) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// dialServer builds this layer's client with opts of the server at addr through the Engine over base.
+// dialServer builds this layer's client with opts of the server at addr through the Engine.
 func dialServer(t *testing.T, base permuteproxy.Network, addr string, opts permuteproxy.Options) permuteproxy.Network {
 	t.Helper()
 	n, err := permuteproxy.Engine{Base: base}.Client(chain(opts, addr))
@@ -296,7 +296,7 @@ func readAll(t *testing.T, conn net.Conn) string {
 	return string(recv(t, read, "the output to end"))
 }
 
-// rawExecServer serves SSH with x/crypto alone and hands each exec's channel to run, for what this layer's server never sends.
+// rawExecServer hands run each exec's channel, for the stderr this layer's server never sends.
 func rawExecServer(t *testing.T, run func(ch ssh.Channel)) string {
 	t.Helper()
 	signer, err := ssh.ParsePrivateKey(hostKeyPEM)

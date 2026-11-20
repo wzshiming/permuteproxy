@@ -219,14 +219,14 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	}, nil
 }
 
-// permissions grant the users of this layer's servers everything but a session, which needs allow_exec.
+// permissions grant this layer's server users everything but a session, which needs allow_exec.
 type permissions struct{ exec bool }
 
 func (p permissions) Allow(req, _ string) bool {
 	return req != "session" || p.exec
 }
 
-// serveSession runs the command line of an exec request as network cmd through the server's upstream.
+// serveSession runs an exec request's command line as network cmd on the server's upstream.
 func serveSession(ctx context.Context, newChan ssh.NewChannel, conn *sshd.ServerConn) {
 	// Any sshd server in the process reaches this handler, so only this layer's are served.
 	if p, ok := conn.Permissions.(permissions); !ok || !p.Allow("session", "") {
@@ -272,7 +272,7 @@ func start(ctx context.Context, conn *sshd.ServerConn, ch ssh.Channel, req *ssh.
 	return cmd
 }
 
-// pipe copies both ways between ch and cmd until the command's output ends, then reports its exit and closes ch.
+// pipe joins ch and cmd until the command's output ends, then reports its exit and closes ch.
 func pipe(ch ssh.Channel, cmd net.Conn) {
 	go io.Copy(cmd, ch)
 	io.Copy(ch, cmd)

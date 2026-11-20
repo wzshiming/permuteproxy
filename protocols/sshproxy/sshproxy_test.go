@@ -77,7 +77,7 @@ func recv[T any](t *testing.T, ch <-chan T, what string) T {
 	return zero
 }
 
-// roundTrip writes msg to conn and expects want back; ssh conns refuse deadlines, so the read runs aside.
+// roundTrip writes msg and expects want back, reading aside since ssh conns refuse deadlines.
 func roundTrip(t *testing.T, conn net.Conn, msg, want string) {
 	t.Helper()
 	if _, err := conn.Write([]byte(msg)); err != nil {
