@@ -8,6 +8,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/serverutils"
@@ -242,12 +243,14 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 type assembledNetwork struct {
 	NetworkFuncs
 	close   func() error
+	closed  atomic.Bool
 	spec    Spec
 	derived map[string]derivation
 }
 
-// Close releases the client and then its inner Transport, once.
+// Close releases the client and then its inner Transport, once; its derived networks refuse from then on.
 func (a *assembledNetwork) Close() error {
+	a.closed.Store(true)
 	return a.close()
 }
 
@@ -325,39 +328,49 @@ func (s Spec) derive(exprs map[string]string) (map[string]derivation, error) {
 }
 
 // dialContext dials a derived stream network at once, a derived datagram network on the first Write to address.
-func (d derivation) dialContext(ctx context.Context, hop Network, address string) (net.Conn, error) {
+func (d derivation) dialContext(ctx context.Context, a *assembledNetwork, address string) (net.Conn, error) {
 	if d.plane == Stream {
-		return d.dial(ctx, hop, address)
+		return d.dial(ctx, a, address)
 	}
 	if _, err := d.x.expand(d.kind, address); err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
 	}
-	return netutils.WrapPacket(d.sessions(hop), netutils.NewNetAddr(d.network, address)), nil
+	pc, err := d.sessions(a)
+	if err != nil {
+		return nil, err
+	}
+	return netutils.WrapPacket(pc, netutils.NewNetAddr(d.network, address)), nil
 }
 
 // listenPacket binds a derived datagram network, which has no local end of its own to bind at a chosen address.
-func (d derivation) listenPacket(hop Network, address string) (net.PacketConn, error) {
+func (d derivation) listenPacket(a *assembledNetwork, address string) (net.PacketConn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil || port != "0" || host != "" && !net.ParseIP(host).IsUnspecified() {
 		return nil, fmt.Errorf("listen packet %s %s: binds only an unspecified host with port 0: %w", d.network, address, ErrUnsupported)
 	}
-	return d.sessions(hop), nil
+	return d.sessions(a)
 }
 
 // sessions reaches each peer over a dial of its own.
-func (d derivation) sessions(hop Network) net.PacketConn {
+func (d derivation) sessions(a *assembledNetwork) (net.PacketConn, error) {
+	if a.closed.Load() {
+		return nil, fmt.Errorf("%s: %w", d.network, net.ErrClosed)
+	}
 	return netutils.NewSessions(func(ctx context.Context, peer net.Addr) (net.Conn, error) {
-		return d.dial(ctx, hop, peer.String())
-	}, netutils.SessionOptions{})
+		return d.dial(ctx, a, peer.String())
+	}, netutils.SessionOptions{}), nil
 }
 
-// dial builds d's expression for address over hop and dials the derived plane; the conn's Close releases what it built.
-func (d derivation) dial(ctx context.Context, hop Network, address string) (net.Conn, error) {
+// dial builds d's expression for address over a and dials the derived plane; the conn's Close releases what it built.
+func (d derivation) dial(ctx context.Context, a *assembledNetwork, address string) (net.Conn, error) {
+	if a.closed.Load() {
+		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, net.ErrClosed)
+	}
 	text, err := d.x.expand(d.kind, address)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
 	}
-	tr, err := Engine{Base: hop}.Transport(d.x.over(text))
+	tr, err := Engine{Base: a}.Transport(d.x.over(text))
 	if err != nil {
 		return nil, err
 	}

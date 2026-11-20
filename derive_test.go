@@ -302,6 +302,34 @@ func TestFailedDerivedDialReleasesWhatItBuilt(t *testing.T) {
 	assertCalls(t, "test-held.close")
 }
 
+func TestDerivedNetworksRefuseAfterClientClose(t *testing.T) {
+	ctx := context.Background()
+	n := derivingClient(t, mk("", "test-derive"))
+	pc, err := n.ListenPacket(ctx, "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	if err := n.(io.Closer).Close(); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	for name, op := range map[string]func() error{
+		"dial udp":          func() error { _, err := n.DialContext(ctx, "udp", "peer.invalid:1"); return err },
+		"dial unix":         func() error { _, err := n.DialContext(ctx, "unix", "/tmp/x.sock"); return err },
+		"listen packet udp": func() error { _, err := n.ListenPacket(ctx, "udp", ":0"); return err },
+		"earlier socket's new session": func() error {
+			_, err := pc.WriteTo([]byte("hi"), netutils.NewNetAddr("udp", "peer.invalid:1"))
+			return err
+		},
+	} {
+		if err := op(); !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("%s after the client's Close = %v, want net.ErrClosed", name, err)
+		}
+	}
+	assertCalls(t)
+}
+
 func TestDerivedNetworksRefuseInvalidAddresses(t *testing.T) {
 	ctx := context.Background()
 	n := derivingClient(t, mk("", "test-derive"))
