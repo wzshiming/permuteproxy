@@ -104,7 +104,13 @@ func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
 		sess.Close()
 		return nil, err
 	}
-	conn := &execConn{sess: sess, stdin: stdin, stdout: stdout, remote: netutils.NewNetAddr("cmd", address), done: make(chan struct{})}
+	// A channel's Close only asks the server to close, so reads go through a pipe Close can end here.
+	r, w := io.Pipe()
+	go func() {
+		_, err := io.Copy(w, stdout)
+		w.CloseWithError(err)
+	}()
+	conn := &execConn{sess: sess, stdin: stdin, stdout: r, feed: w, remote: netutils.NewNetAddr("cmd", address), done: make(chan struct{})}
 	go func() {
 		conn.err = sess.Wait()
 		close(conn.done)
@@ -121,15 +127,21 @@ var (
 type execConn struct {
 	sess   *ssh.Session
 	stdin  io.Writer
-	stdout io.Reader
+	stdout *io.PipeReader
+	feed   *io.PipeWriter // what the channel's stdout is copied into
 	remote net.Addr
 	done   chan struct{}
 	err    error
 }
 
-func (c *execConn) Read(b []byte) (int, error)       { return c.stdout.Read(b) }
-func (c *execConn) Write(b []byte) (int, error)      { return c.stdin.Write(b) }
-func (c *execConn) Close() error                     { return c.sess.Close() }
+func (c *execConn) Read(b []byte) (int, error)  { return c.stdout.Read(b) }
+func (c *execConn) Write(b []byte) (int, error) { return c.stdin.Write(b) }
+
+func (c *execConn) Close() error {
+	c.feed.CloseWithError(net.ErrClosed)
+	return c.sess.Close()
+}
+
 func (c *execConn) LocalAddr() net.Addr              { return localAddr }
 func (c *execConn) RemoteAddr() net.Addr             { return c.remote }
 func (c *execConn) SetDeadline(time.Time) error      { return errNoDeadline }

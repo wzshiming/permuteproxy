@@ -188,15 +188,50 @@ func serveExec(t *testing.T, up permuteproxy.Network) string {
 	return serve(t, withCredentials("allow_exec", "true", "hostkey_data", hostKey), up)
 }
 
-// clientBase is what the clients under test reach their server through; it counts their dials.
+// clientBase is what the clients under test reach their server through; it counts their dials and can hold back what servers send.
 type clientBase struct {
 	permuteproxy.NetworkFuncs
 	dials atomic.Int32
+	mu    sync.Mutex
+	held  chan struct{} // while set, reads wait for it to close
 }
 
 func (b *clientBase) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	b.dials.Add(1)
-	return (&net.Dialer{}).DialContext(ctx, network, address)
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	return heldConn{conn, b}, nil
+}
+
+// hold keeps what servers send from the clients until the test ends.
+func (b *clientBase) hold(t *testing.T) {
+	held := make(chan struct{})
+	b.mu.Lock()
+	b.held = held
+	b.mu.Unlock()
+	t.Cleanup(func() { close(held) })
+}
+
+func (b *clientBase) wait() {
+	b.mu.Lock()
+	held := b.held
+	b.mu.Unlock()
+	if held != nil {
+		<-held
+	}
+}
+
+type heldConn struct {
+	net.Conn
+	base *clientBase
+}
+
+func (c heldConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.base.wait()
+	return n, err
 }
 
 // dialServer builds this layer's client with opts of the server at addr through the Engine over base.
@@ -332,6 +367,30 @@ func TestClosingCmdClosesServerCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	recv(t, cmd.closed, "the server to close the command")
+}
+
+func TestCmdCloseUnblocksReadAtOnce(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+	conn, err := n.DialContext(timeout(t), "cmd", "sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		read <- err
+	}()
+	// Nothing the server sends arrives any more, its answer to the close included.
+	base.hold(t)
+	closed := make(chan error, 1)
+	go func() { closed <- conn.Close() }()
+	if err := recv(t, closed, "Close to return"); err != nil {
+		t.Fatalf("Close = %v", err)
+	}
+	if err := recv(t, read, "the pending Read to end"); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("pending Read = %v, want net.ErrClosed", err)
+	}
 }
 
 func TestCmdReportsExitStatus(t *testing.T) {
