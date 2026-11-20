@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"path/filepath"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // hostKeyPEM is the host key of the servers under test, so that none generates an RSA key.
@@ -189,6 +191,62 @@ func TestFuncsTunnelOverInnerToUpstream(t *testing.T) {
 	roundTrip(t, conn, "ping", "ping")
 	if got, want := recv(t, dials, "the upstream dial"), "tcp "+target; got != want {
 		t.Fatalf("upstream dial = %q, want %q", got, want)
+	}
+}
+
+func TestFailedTargetsKeepTheConnection(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+	ctx := timeout(t)
+	conn, err := n.DialContext(ctx, "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	pc, err := n.ListenPacket(ctx, "udp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	peer := netutils.NewNetAddr("udp", "198.51.100.7:53")
+	exchange := func(msg string) {
+		t.Helper()
+		if _, err := pc.WriteTo([]byte(msg), peer); err != nil {
+			t.Fatal(err)
+		}
+		pc.SetReadDeadline(time.Now().Add(10 * time.Second))
+		buf := make([]byte, 256)
+		got, _, err := pc.ReadFrom(buf)
+		if want := "nc -u -w 30 198.51.100.7 53|" + msg; err != nil || string(buf[:got]) != want {
+			t.Fatalf("udp reply %q, %v; want %q", buf[:got], err, want)
+		}
+	}
+	exchange("hi")
+	ln := listen(t)
+	refused := ln.Addr().String()
+	ln.Close()
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	// An unreachable target, a malformed address or an ended ctx is no failure of the connection.
+	for _, d := range []struct {
+		ctx              context.Context
+		network, address string
+	}{
+		{ctx, "tcp", refused},
+		{ctx, "unix", filepath.Join(t.TempDir(), "absent.sock")},
+		{ctx, "tcp", "no-port"},
+		{ctx, "tcp", "127.0.0.1:x"},
+		{canceled, "tcp", echoTarget(t)},
+	} {
+		if c, err := n.DialContext(d.ctx, d.network, d.address); err == nil {
+			c.Close()
+			t.Fatalf("dial %s %s succeeded", d.network, d.address)
+		}
+	}
+	roundTrip(t, conn, "ping", "relay x|ping")
+	exchange("again")
+	if got := base.dials.Load(); got != 1 {
+		t.Fatalf("client dials = %d, want the first connection kept", got)
 	}
 }
 

@@ -99,7 +99,23 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 	if network == "cmd" {
 		return c.exec(ctx, address)
 	}
-	return c.dialer.DialContext(ctx, network, address)
+	cli, err := c.dialer.SSHClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := cli.DialContext(ctx, network, address)
+	if err != nil && ctx.Err() == nil && dead(err) {
+		c.dialer.Close()
+	}
+	return conn, err
+}
+
+// dead reports whether err may come from the connection itself, not a refusal or a bad address.
+func dead(err error) bool {
+	var refused *ssh.OpenChannelError
+	var host *net.AddrError
+	var port *strconv.NumError
+	return !errors.As(err, &refused) && !errors.As(err, &host) && !errors.As(err, &port)
 }
 
 func (c *client) close() error {
@@ -160,9 +176,8 @@ func (c *client) start(ctx context.Context, address string, argv []string) (net.
 	}
 	sess, err := cli.NewSession()
 	if err != nil {
-		// Like the dialer's tcp path, drop a dead connection for the next dial; a refusal proves it alive.
-		var refused *ssh.OpenChannelError
-		if !errors.As(err, &refused) {
+		// Drop a dead connection, so that the next dial connects again.
+		if dead(err) {
 			c.dialer.Close()
 		}
 		return nil, err
