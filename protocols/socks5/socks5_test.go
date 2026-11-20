@@ -330,6 +330,53 @@ func TestAssociationSurvivesLaterCancel(t *testing.T) {
 	}
 }
 
+func TestAssociationBindsItsSocketInTheControlConnFamily(t *testing.T) {
+	for host, want := range map[string]string{"127.0.0.1": "udp4 :0", "::1": "udp6 :0"} {
+		t.Run(host, func(t *testing.T) {
+			ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+			if err != nil {
+				t.Skipf("%s unavailable: %v", host, err)
+			}
+			funcs, err := NewServer(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- funcs.Serve(context.Background(), ln, system) }()
+			defer func() {
+				ln.Close()
+				wait(t, done, "Serve")
+			}()
+			var bound []string
+			base := permuteproxy.NetworkFuncs{
+				DialContextFunc: system.DialContext,
+				ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
+					bound = append(bound, network+" "+address)
+					return system.ListenPacket(ctx, network, address)
+				},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, err := dialer(t, base, ln.Addr().String(), nil, true).DialContext(ctx, "udp", echo(t).LocalAddr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if len(bound) != 1 || bound[0] != want {
+				t.Fatalf("association socket bound as %q, want %q", bound, want)
+			}
+			if _, err := conn.Write([]byte("ping")); err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 16)
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if n, err := conn.Read(buf); err != nil || string(buf[:n]) != "ping" {
+				t.Fatalf("Read = %q, %v", buf[:n], err)
+			}
+		})
+	}
+}
+
 func TestServerStopEndsAssociation(t *testing.T) {
 	for _, stop := range []string{"close", "cancel"} {
 		t.Run(stop, func(t *testing.T) {

@@ -83,7 +83,8 @@ func (c *client) peer(ctx context.Context, _, address string) (net.Addr, error) 
 	return netutils.NewNetAddr("udp", address), nil
 }
 
-// associate performs the UDP ASSOCIATE handshake with its socket bound through local at address; WriteTo reaches any target.
+// associate performs the UDP ASSOCIATE handshake with its socket bound through local at address in the
+// control conn's family; WriteTo reaches any target.
 func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, local permuteproxy.Network, network, address string) (net.PacketConn, error) {
 	a := &association{}
 	d := c.dialer
@@ -98,7 +99,7 @@ func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, lo
 		return conn, nil
 	}
 	d.ProxyPacketDial = func(ctx context.Context, _, _ string) (net.PacketConn, error) {
-		pc, err := local.ListenPacket(ctx, network, address)
+		pc, err := local.ListenPacket(ctx, udpFamily(a.control.RemoteAddr(), network), address)
 		if err != nil {
 			return nil, err
 		}
@@ -120,6 +121,18 @@ func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, lo
 	}
 	a.udp = conn.(*socks5.UDPConn)
 	return a, nil
+}
+
+// udpFamily is udp4 or udp6 after a tcp address's IP, the family of a relay advertised at it, else network.
+func udpFamily(addr net.Addr, network string) string {
+	tcp, ok := addr.(*net.TCPAddr)
+	switch {
+	case !ok || tcp.IP == nil:
+		return network
+	case tcp.IP.To4() != nil:
+		return "udp4"
+	}
+	return "udp6"
 }
 
 // association is one UDP association: the control conn keeps it open on the proxy, the socket
