@@ -153,9 +153,10 @@ func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	}
 }
 
-func TestSOCKS5TwoHopPacket(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+// socks5TwoHops chains a client through a socks5 server and on through a second one with credentials,
+// returning the second hop's client with the probes of the client's base and of each hop's upstream.
+func socks5TwoHops(t *testing.T) (hop2 permuteproxy.Network, clientBase, firstUpstream, secondUpstream *probe) {
+	t.Helper()
 	first := parse(t, "socks5://127.0.0.1:0")
 	firstBase, firstUpstream := newProbe(system), newProbe(system)
 	_, done := start(t, permuteproxy.Engine{Base: firstBase, Upstream: firstUpstream}, first)
@@ -164,17 +165,24 @@ func TestSOCKS5TwoHopPacket(t *testing.T) {
 	secondBase, secondUpstream := newProbe(system), newProbe(system)
 	_, done = start(t, permuteproxy.Engine{Base: secondBase, Upstream: secondUpstream}, second)
 	second.Endpoint.Address = waitBound(t, secondBase, done).String()
-	clientBase := newProbe(system)
+	clientBase = newProbe(system)
 	hop1, err := permuteproxy.Engine{Base: clientBase}.Client(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeIf(hop1)
-	hop2, err := permuteproxy.Engine{Base: hop1}.Client(second)
+	t.Cleanup(func() { closeIf(hop1) })
+	hop2, err = permuteproxy.Engine{Base: hop1}.Client(second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer closeIf(hop2)
+	t.Cleanup(func() { closeIf(hop2) })
+	return hop2, clientBase, firstUpstream, secondUpstream
+}
+
+func TestSOCKS5TwoHopPacket(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	hop2, clientBase, firstUpstream, secondUpstream := socks5TwoHops(t)
 	conn := dialPacket(t, ctx, hop2, udpEcho(t).String())
 	for _, msg := range packetMessages {
 		roundTrip(t, conn, msg)
