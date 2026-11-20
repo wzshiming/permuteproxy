@@ -9,24 +9,15 @@ import (
 	"github.com/wzshiming/permuteproxy"
 )
 
-func Adapt(inner permuteproxy.Transport, _ permuteproxy.Options) (permuteproxy.Transport, error) {
-	return permuteproxy.TransportFuncs{
-		Plane: permuteproxy.Stream,
-		DialFunc: func(ctx context.Context, _ permuteproxy.Plane) (net.Conn, error) {
-			conn, err := inner.Dial(ctx, permuteproxy.Stream)
-			if err != nil {
-				return nil, err
-			}
-			return newConn(conn), nil
+func NewAdapter(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
+	return &permuteproxy.AdapterFuncs{Stream: &permuteproxy.Link{
+		Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
+			return newConn(carrier), nil
 		},
-		ListenFunc: func(ctx context.Context) (net.Listener, error) {
-			ln, err := inner.Listen(ctx)
-			if err != nil {
-				return nil, err
-			}
+		Listener: func(ln net.Listener) (net.Listener, error) {
 			return listener{ln}, nil
 		},
-	}, nil
+	}}, nil
 }
 
 func newConn(c net.Conn) net.Conn {
