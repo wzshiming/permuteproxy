@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"slices"
 	"sync"
@@ -136,10 +137,13 @@ func closeOnce(release func() error, inner Transport) func() error {
 	})
 }
 
-// reject calls release, when set, for a declaration the root package refuses, and marks err as an invalid chain.
+// reject calls release, when set, for a declaration the root package refuses, and marks err as an invalid chain unless it is one.
 func reject(release func() error, err error) error {
 	if release != nil {
 		release()
+	}
+	if errors.Is(err, ErrInvalidChain) {
+		return err
 	}
 	return fmt.Errorf("%w: %w", err, ErrInvalidChain)
 }
@@ -169,12 +173,13 @@ func apply[C, R any](ctx context.Context, before func() error, obtain func(conte
 	return f(carrier)
 }
 
-// ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists and derives udp dials.
+// ClientFuncs declares a proxy's client; the root package admits the networks Spec.Networks lists or Derive expresses, and derives udp dials.
 // Its functions receive the same inner Transport on every call for the life of the client.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
 	Peer         func(ctx context.Context, network, address string) (net.Addr, error)                                       // optional; a udp dial's default peer, else its address carried unresolved
+	Derive       map[string]string                                                                                          // optional; base network -> expression over the client's own networks
 	Close        func() error                                                                                               // optional; releases what NewClient acquired
 }
 
@@ -186,27 +191,46 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
 	case funcs == nil:
 		return nil, fmt.Errorf("NewClient returned nil: %w", ErrInvalidChain)
+	}
+	derived, err := s.derive(funcs.Derive)
+	if err != nil {
+		return nil, reject(funcs.Close, err)
+	}
+	var derivedPlanes Plane
+	for _, d := range derived {
+		derivedPlanes |= d.plane
+	}
+	switch {
 	case funcs.Dial == nil && (s.Provides|s.Preserves)&Stream != 0:
 		return nil, reject(funcs.Close, fmt.Errorf("no Dial for %v", Stream))
-	case funcs.ListenPacket == nil && (s.Provides|s.Preserves)&Packet != 0:
-		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket for %v", Packet))
+	case funcs.ListenPacket == nil && derivedPlanes&Packet == 0 && (s.Provides|s.Preserves)&Packet != 0:
+		return nil, reject(funcs.Close, fmt.Errorf("no ListenPacket or derived datagram network for %v", Packet))
 	}
-	a := &assembledNetwork{close: closeOnce(funcs.Close, inner), spec: s}
+	a := &assembledNetwork{close: closeOnce(funcs.Close, inner), spec: s, derived: derived}
 	a.NetworkFuncs = NetworkFuncs{
 		DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
-			switch base, plane := a.admit(network); {
-			case plane == Stream:
+			base, plane := a.admit(network)
+			d, ok := derived[base]
+			switch {
+			case ok:
+				return d.dialContext(ctx, a, address)
+			case plane == Stream && funcs.Dial != nil:
 				return funcs.Dial(ctx, inner, network, address)
-			case base == "udp" && !isLossy(local, network):
+			case base == "udp" && funcs.ListenPacket != nil && !isLossy(local, network):
 				return funcs.dialUDP(ctx, inner, local, network, address)
 			}
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
-			if _, plane := a.admit(network); plane != Packet || isLossy(local, network) {
-				return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
+			base, plane := a.admit(network)
+			d, ok := derived[base]
+			switch {
+			case plane == Packet && ok:
+				return d.listenPacket(a, address)
+			case plane == Packet && funcs.ListenPacket != nil && !isLossy(local, network):
+				return funcs.ListenPacket(ctx, inner, local, network, address)
 			}
-			return funcs.ListenPacket(ctx, inner, local, network, address)
+			return nil, fmt.Errorf("listen packet %s: %w", network, ErrUnsupported)
 		},
 	}
 	return a, nil
@@ -215,8 +239,9 @@ func (s Spec) client(inner Transport, local Network, opts Options) (Network, err
 // assembledNetwork is a declared client's Network; the engine built its inner Transport, so Close releases it too.
 type assembledNetwork struct {
 	NetworkFuncs
-	close func() error
-	spec  Spec
+	close   func() error
+	spec    Spec
+	derived map[string]derivation
 }
 
 // Close releases the client and then its inner Transport, once.
@@ -230,10 +255,10 @@ func (a *assembledNetwork) Lossy(network string) bool {
 	return plane&a.spec.Lossy != 0
 }
 
-// admit maps a network its layer lists to its base name and plane, and any other network to no plane.
+// admit maps a network its client lists or derives to its base name and plane, and any other network to no plane.
 func (a *assembledNetwork) admit(network string) (string, Plane) {
 	base, plane, _ := lookupBase(network)
-	if !slices.Contains(a.spec.Networks, base) {
+	if _, derived := a.derived[base]; !derived && !slices.Contains(a.spec.Networks, base) {
 		return "", 0
 	}
 	return base, plane
@@ -253,6 +278,92 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 		return nil, err
 	}
 	return netutils.WrapPacket(pc, peer), nil
+}
+
+// derivable are the base networks a client may derive, those the root package declares.
+var derivable = []string{"tcp", "udp", "unix", "unixgram", "cmd"}
+
+// derivation is a base network a client derives by expression from the networks it lists.
+type derivation struct {
+	network string
+	kind    AddressKind
+	plane   Plane
+	x       expression
+}
+
+// derive checks each network exprs derives for a client of s.
+func (s Spec) derive(exprs map[string]string) (map[string]derivation, error) {
+	derived := map[string]derivation{}
+	for _, network := range slices.Sorted(maps.Keys(exprs)) {
+		switch {
+		case !slices.Contains(derivable, network):
+			return nil, fmt.Errorf("Derive %q: not one of the base networks %q", network, derivable)
+		case slices.Contains(s.Networks, network):
+			return nil, fmt.Errorf("Derive %q: also listed in Networks", network)
+		}
+		ns, _ := lookupNetwork(network)
+		x, err := checkExpression(exprs[network], ns.AddressKind)
+		if err != nil {
+			return nil, fmt.Errorf("Derive %q: %w", network, err)
+		}
+		if !slices.Contains(s.Networks, x.network) {
+			return nil, fmt.Errorf("Derive %q: %q is not listed in Networks", network, x.network)
+		}
+		planes, err := x.offers()
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("Derive %q: %w", network, err)
+		case planes&ns.Plane == 0:
+			return nil, fmt.Errorf("Derive %q: the expression offers %v, not %v", network, planes, ns.Plane)
+		}
+		derived[network] = derivation{network: network, kind: ns.AddressKind, plane: ns.Plane, x: x}
+	}
+	return derived, nil
+}
+
+// dialContext dials a derived stream network at once, a derived datagram network on the first Write to address.
+func (d derivation) dialContext(ctx context.Context, hop Network, address string) (net.Conn, error) {
+	if d.plane == Stream {
+		return d.dial(ctx, hop, address)
+	}
+	if _, err := d.x.expand(d.kind, address); err != nil {
+		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
+	}
+	return netutils.WrapPacket(d.sessions(hop), netutils.NewNetAddr(d.network, address)), nil
+}
+
+// listenPacket binds a derived datagram network, which has no local end of its own to bind at a chosen address.
+func (d derivation) listenPacket(hop Network, address string) (net.PacketConn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || port != "0" || host != "" && !net.ParseIP(host).IsUnspecified() {
+		return nil, fmt.Errorf("listen packet %s %s: binds only an unspecified host with port 0: %w", d.network, address, ErrUnsupported)
+	}
+	return d.sessions(hop), nil
+}
+
+// sessions reaches each peer over a dial of its own.
+func (d derivation) sessions(hop Network) net.PacketConn {
+	return netutils.NewSessions(func(ctx context.Context, peer net.Addr) (net.Conn, error) {
+		return d.dial(ctx, hop, peer.String())
+	}, netutils.SessionOptions{})
+}
+
+// dial builds d's expression for address over hop and dials the derived plane; the conn's Close releases what it built.
+func (d derivation) dial(ctx context.Context, hop Network, address string) (net.Conn, error) {
+	text, err := d.x.expand(d.kind, address)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
+	}
+	tr, err := Engine{Base: hop}.Transport(d.x.over(text))
+	if err != nil {
+		return nil, err
+	}
+	conn, err := tr.Dial(ctx, d.plane)
+	if err != nil {
+		closeIf(tr)
+		return nil, err
+	}
+	return netutils.ConnWithCloser(conn, sync.OnceValue(func() error { return errors.Join(conn.Close(), closeIf(tr)) })), nil
 }
 
 // ServerFuncs declares a proxy's server; the root package binds the carriers it serves and runs them.
