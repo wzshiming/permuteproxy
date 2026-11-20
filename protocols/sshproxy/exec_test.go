@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -246,6 +247,30 @@ func (b *clientBase) drop() {
 	}
 }
 
+// mute swallows what the conns dialed so far send from now on, as a link gone silent.
+func (b *clientBase) mute() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, c := range b.conns {
+		c.muted.Store(true)
+	}
+}
+
+// freeze fails the writes of the conns dialed so far and defers their Close to thaw.
+func (b *clientBase) freeze() (thaw func()) {
+	b.mu.Lock()
+	conns := slices.Clone(b.conns)
+	b.mu.Unlock()
+	for _, c := range conns {
+		c.frozen.Store(true)
+	}
+	return func() {
+		for _, c := range conns {
+			c.Conn.Close()
+		}
+	}
+}
+
 // hold keeps what servers send from the clients until the test ends.
 func (b *clientBase) hold(t *testing.T) { b.block(t, &b.held) }
 
@@ -271,9 +296,12 @@ func (b *clientBase) wait(gate *chan struct{}) {
 	}
 }
 
+// baseConn is a conn of clientBase; muted, its writes vanish; frozen, they fail and Close keeps it.
 type baseConn struct {
 	net.Conn
-	base *clientBase
+	base   *clientBase
+	muted  atomic.Bool
+	frozen atomic.Bool
 }
 
 func (c *baseConn) Read(p []byte) (int, error) {
@@ -284,7 +312,20 @@ func (c *baseConn) Read(p []byte) (int, error) {
 
 func (c *baseConn) Write(p []byte) (int, error) {
 	c.base.wait(&c.base.stalled)
+	switch {
+	case c.frozen.Load():
+		return 0, io.ErrClosedPipe
+	case c.muted.Load():
+		return len(p), nil
+	}
 	return c.Conn.Write(p)
+}
+
+func (c *baseConn) Close() error {
+	if c.frozen.Load() {
+		return nil
+	}
+	return c.Conn.Close()
 }
 
 // dialServer builds this layer's client with opts of the server at addr through the Engine.
@@ -585,6 +626,54 @@ func TestCmdDialEndsWithCtxWhileExecWaits(t *testing.T) {
 	close(up.released)
 	cmd := recv(t, up.commands, "the late command")
 	recv(t, cmd.closed, "the late command to close")
+}
+
+func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
+	target := echoTarget(t)
+	warm, err := n.DialContext(timeout(t), "tcp", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm.Close()
+	base.mute()
+	short, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if conn, err := n.DialContext(short, "cmd", "relay x"); !errors.Is(err, context.DeadlineExceeded) {
+		if conn != nil {
+			conn.Close()
+		}
+		t.Fatalf("cmd dial over the silent connection = %v, want context.DeadlineExceeded", err)
+	}
+	// The client gives up the old connection, which ends only once thawed.
+	thaw := base.freeze()
+	for try := 0; base.dials.Load() < 2; try++ {
+		if try == 10 {
+			t.Fatal("the client did not connect again")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		if conn, err := n.DialContext(ctx, "tcp", target); err == nil {
+			conn.Close()
+		}
+		cancel()
+	}
+	conn, err := n.DialContext(timeout(t), "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Its end fails the abandoned dial's session open now.
+	thaw()
+	select {
+	case <-process(t, conn).Done():
+		t.Fatal("a cmd conn of the new connection ended with the old one")
+	case <-time.After(300 * time.Millisecond):
+	}
+	roundTrip(t, conn, "ping", "relay x|ping")
+	if got := base.dials.Load(); got != 2 {
+		t.Fatalf("client dials = %d, want one reconnect", got)
+	}
 }
 
 func TestClosingCmdClosesServerCommand(t *testing.T) {
