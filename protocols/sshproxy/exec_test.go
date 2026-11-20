@@ -791,6 +791,71 @@ func TestProbeEndsOnceItsConnectionIsGivenUp(t *testing.T) {
 	untilProbes(t, 0, keepAliveTimeout/2, "the probe of the given-up connection to end before its bound")
 }
 
+func TestConnectionIsProbedAgainAfterAnAnsweredProbe(t *testing.T) {
+	keepAlives := make(chan *ssh.Request, 16)
+	addr := rawServer(t, func(ssh.NewChannel) {}, func(reqs <-chan *ssh.Request) {
+		for req := range reqs {
+			keepAlives <- req
+		}
+	})
+	n := dialServer(t, &clientBase{}, addr, nil)
+	timesOut(t, n)
+	recv(t, keepAlives, "the first probe").Reply(true, nil)
+	// The answer ends the first probe long before the next dial times out.
+	timesOut(t, n)
+	recv(t, keepAlives, "a probe after the first was answered").Reply(true, nil)
+}
+
+func TestDialFailingOverAGivenUpConnectionKeepsItsReplacement(t *testing.T) {
+	waiting := make(chan struct{}, 1)
+	up := newUpstream()
+	slow := permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "slow.invalid:1" {
+			waiting <- struct{}{}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return up.DialContext(ctx, network, address)
+	}}
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, slow), withCredentials())
+	target := echoTarget(t)
+	warm, err := n.DialContext(timeout(t), "tcp", target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm.Close()
+	pending := dialAside(timeout(t), n, "tcp", "slow.invalid:1")
+	recv(t, waiting, "the server to dial the slow target")
+	// The client gives up the first connection, which ends only once thawed.
+	thaw := base.freeze()
+	t.Cleanup(thaw)
+	for try := 0; base.dials.Load() < 2; try++ {
+		if try == 10 {
+			t.Fatal("the client did not connect again")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		if conn, err := n.DialContext(ctx, "tcp", target); err == nil {
+			conn.Close()
+		}
+		cancel()
+	}
+	conn, err := n.DialContext(timeout(t), "cmd", "relay x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Its end fails the pending dial with a live ctx, which drops the connection it dialed over, not the new one.
+	thaw()
+	if err := recv(t, pending, "the pending dial to fail"); err == nil {
+		t.Fatal("the dial over the given-up connection succeeded")
+	}
+	roundTrip(t, conn, "ping", "relay x|ping")
+	if got := base.dials.Load(); got != 2 {
+		t.Fatalf("client dials = %d, want one reconnect", got)
+	}
+}
+
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
