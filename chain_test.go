@@ -681,6 +681,13 @@ func TestChainValidate(t *testing.T) {
 	}
 }
 
+func TestChainValidateNamesTheInnermostFailure(t *testing.T) {
+	// test-tls fails over udp, which leaves test-ss nothing to preserve.
+	if err := mk("udp", "test-ss", "test-tls").Validate(); !errors.Is(err, ErrInvalidChain) || !strings.Contains(err.Error(), `"test-tls"`) {
+		t.Fatalf("Validate() = %v, want it to name test-tls", err)
+	}
+}
+
 func TestChainValidateLossy(t *testing.T) {
 	tests := []struct {
 		name  string
