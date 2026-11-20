@@ -153,7 +153,7 @@ func TestListenerRequiresItsALPN(t *testing.T) {
 }
 
 func TestListenerCloseAbortsItsConnections(t *testing.T) {
-	noGoroutinesLeft(t)
+	before := quicGoroutines()
 	mem := newMemNet()
 	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
 	c, srv := connected(t, ln, tr)
@@ -181,11 +181,11 @@ func TestListenerCloseAbortsItsConnections(t *testing.T) {
 		t.Fatalf("dialed Read = %v, want the error of the aborted connection", err)
 	}
 	c.Close()
-	noGoroutinesLeft(t)
+	noGoroutinesLeft(t, before, time.Second)
 }
 
 func TestListenerReportsAFailingCarrier(t *testing.T) {
-	noGoroutinesLeft(t)
+	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failRead = errors.New("carrier failed")
 	ln, _ := listenQUIC(t, permuteproxy.Engine{Base: mem})
@@ -199,11 +199,11 @@ func TestListenerReportsAFailingCarrier(t *testing.T) {
 	}
 	ln.Close()
 	released(t, mem.socket(t, 0), "listened")
-	noGoroutinesLeft(t)
+	noGoroutinesLeft(t, before, time.Second)
 }
 
 func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
-	noGoroutinesLeft(t)
+	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failWrite = errors.New("carrier failed")
 	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
@@ -215,5 +215,5 @@ func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
 		}
 	})
 	released(t, mem.socket(t, 0), "dialed")
-	noGoroutinesLeft(t)
+	noGoroutinesLeft(t, before, time.Second)
 }

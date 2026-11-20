@@ -13,8 +13,8 @@ import (
 	"golang.org/x/net/quic"
 )
 
-// linger bounds how long the Close of a dialed conn waits for the peer to acknowledge what was written.
-const linger = 5 * time.Second
+// linger bounds how long a closed dialed conn keeps its connection for the peer to end its side.
+var linger = 30 * time.Second
 
 // conn is a net.Conn over one QUIC stream; release, when set, frees the connection a Dial opened for it.
 type conn struct {
@@ -81,26 +81,24 @@ func (c *conn) Close() error {
 		// Stopping the deadlines ends a blocked Read or Write, so the stream is closed under their locks.
 		c.rd.stop()
 		c.wd.stop()
-		c.readMu.Lock()
-		c.stream.CloseRead()
-		c.readMu.Unlock()
 		c.writeMu.Lock()
+		c.stream.CloseWrite()
+		c.writeMu.Unlock()
+		c.readMu.Lock()
+		defer c.readMu.Unlock()
 		if c.release == nil {
-			c.stream.CloseWrite()
-			c.writeMu.Unlock()
+			c.stream.CloseRead()
 			return
 		}
-		until := time.Now().Add(linger)
-		if at := c.wd.time(); !at.IsZero() && at.Before(until) {
-			until = at
-		}
-		ctx, cancel := context.WithDeadline(context.Background(), until)
-		defer cancel()
-		c.stream.SetWriteContext(ctx)
-		// Closing the connection discards what the peer has not acknowledged, so the stream's Close waits for that first.
-		c.stream.Close()
-		c.writeMu.Unlock()
-		c.release()
+		// Closing the connection drops what the peer has not taken, so the release waits for the peer to end its side.
+		ctx, cancel := context.WithTimeout(context.Background(), linger)
+		c.stream.SetReadContext(ctx)
+		go func() {
+			defer cancel()
+			// No Read after Close reaches the stream, so this one has it alone.
+			io.Copy(io.Discard, c.stream)
+			c.release()
+		}()
 	})
 	return nil
 }
@@ -158,7 +156,6 @@ func expired(done <-chan struct{}) bool {
 // deadline closes its channel once its time passes, as net.Pipe's does; a later time renews it, until stop.
 type deadline struct {
 	mu      sync.Mutex
-	at      time.Time
 	timer   *time.Timer
 	done    chan struct{}
 	stopped bool
@@ -174,7 +171,6 @@ func (d *deadline) set(t time.Time) {
 	if d.stopped {
 		return
 	}
-	d.at = t
 	d.stopTimer()
 	passed := expired(d.done)
 	if t.IsZero() {
@@ -218,10 +214,4 @@ func (d *deadline) wait() <-chan struct{} {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.done
-}
-
-func (d *deadline) time() time.Time {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.at
 }

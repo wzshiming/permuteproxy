@@ -11,3 +11,10 @@ func SetIdleTimeout(t testing.TB, d time.Duration) {
 	maxIdle = d
 	t.Cleanup(func() { maxIdle = old })
 }
+
+// SetLinger bounds by d how long the dialed conns closed during t keep their connections.
+func SetLinger(t testing.TB, d time.Duration) {
+	old := linger
+	linger = d
+	t.Cleanup(func() { linger = old })
+}
