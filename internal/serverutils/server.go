@@ -36,17 +36,6 @@ func newServer[R io.Closer](bind func(ctx context.Context) (R, error), serve fun
 	}
 }
 
-// NewServer serves one listener, whose accepted connections are closed along with it.
-func NewServer(listen func(ctx context.Context) (net.Listener, error), serve func(ctx context.Context, ln net.Listener) error) *Server {
-	return newServer(func(ctx context.Context) (*listener, error) {
-		raw, err := listen(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return newListener(raw), nil
-	}, func(ctx context.Context, ln *listener) error { return serve(ctx, ln) })
-}
-
 // NewPlaneServer binds each of listen and listenPacket that is set, all or none, then serves them until the first serve returns.
 func NewPlaneServer(listen func(ctx context.Context) (net.Listener, error), listenPacket func(ctx context.Context) (net.PacketConn, error), serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
 	return newServer(func(ctx context.Context) (*resources, error) {

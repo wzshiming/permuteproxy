@@ -55,17 +55,17 @@ func TestServerCloseStopsRun(t *testing.T) {
 	bound := make(chan net.Addr, 1)
 	started := make(chan struct{})
 	var served atomic.Int32
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
-	}, func(ctx context.Context, ln net.Listener) error {
+	}, nil, func(ctx context.Context, ln net.Listener) error {
 		served.Add(1)
 		close(started)
 		return acceptLoop(ctx, ln)
-	})
+	}, nil)
 	done := run(s, context.Background())
 	addr := <-bound
 	<-started
@@ -87,16 +87,16 @@ func TestServerCloseStopsRun(t *testing.T) {
 func TestServerCancelStopsRun(t *testing.T) {
 	bound := make(chan net.Addr, 1)
 	serveCtx := make(chan context.Context, 1)
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
-	}, func(ctx context.Context, ln net.Listener) error {
+	}, nil, func(ctx context.Context, ln net.Listener) error {
 		serveCtx <- ctx
 		return acceptLoop(ctx, ln)
-	})
+	}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := run(s, ctx)
 	addr := <-bound
@@ -113,10 +113,10 @@ func TestServerCancelStopsRun(t *testing.T) {
 
 func TestServerCloseCancelsServeContext(t *testing.T) {
 	serveCtx := make(chan context.Context, 1)
-	s := NewServer(listenLoopback, func(ctx context.Context, ln net.Listener) error {
+	s := NewPlaneServer(listenLoopback, nil, func(ctx context.Context, ln net.Listener) error {
 		serveCtx <- ctx
 		return acceptLoop(ctx, ln)
-	})
+	}, nil)
 	done := run(s, context.Background())
 	inner := <-serveCtx
 	s.Close()
@@ -128,10 +128,10 @@ func TestServerCloseCancelsServeContext(t *testing.T) {
 
 func TestServerCloseBeforeRun(t *testing.T) {
 	var listens atomic.Int32
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		return listenLoopback(ctx)
-	}, acceptLoop)
+	}, nil, acceptLoop, nil)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -145,20 +145,20 @@ func TestServerCloseBeforeRun(t *testing.T) {
 
 func TestServerReportsErrors(t *testing.T) {
 	bindErr := errors.New("bind failed")
-	s := NewServer(func(context.Context) (net.Listener, error) { return nil, bindErr }, acceptLoop)
+	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return nil, bindErr }, nil, acceptLoop, nil)
 	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
 		t.Fatalf("Run = %v, want bind error", err)
 	}
 
 	serveErr := errors.New("serve failed")
 	bound := make(chan net.Addr, 1)
-	s = NewServer(func(ctx context.Context) (net.Listener, error) {
+	s = NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
-	}, func(context.Context, net.Listener) error { return serveErr })
+	}, nil, func(context.Context, net.Listener) error { return serveErr }, nil)
 	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want serve error", err)
 	}
@@ -228,13 +228,13 @@ func TestServerStopReleasesAcceptedConns(t *testing.T) {
 			bound := make(chan net.Addr, 1)
 			accepted := make(chan struct{}, 1)
 			reads := make(chan error, 1)
-			s := NewServer(func(ctx context.Context) (net.Listener, error) {
+			s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 				ln, err := listenLoopback(ctx)
 				if err == nil {
 					bound <- ln.Addr()
 				}
 				return ln, err
-			}, handshakeLoop(accepted, reads))
+			}, nil, handshakeLoop(accepted, reads), nil)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := run(s, ctx)
@@ -273,13 +273,13 @@ func TestServerServeExitClosesConns(t *testing.T) {
 	accepted := make(chan struct{}, 1)
 	reads := make(chan error, 1)
 	release := make(chan struct{})
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
-	}, func(_ context.Context, ln net.Listener) error {
+	}, nil, func(_ context.Context, ln net.Listener) error {
 		conn, err := ln.Accept()
 		if err != nil {
 			return err
@@ -291,7 +291,7 @@ func TestServerServeExitClosesConns(t *testing.T) {
 		}()
 		<-release
 		return serveErr
-	})
+	}, nil)
 	done := run(s, context.Background())
 	client, err := net.Dial("tcp", recv(t, bound, "bind").String())
 	if err != nil {
@@ -350,13 +350,13 @@ func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
 	fake := &fakeListener{conns: make(chan net.Conn)}
 	entered := make(chan struct{}, 1)
 	accepted := make(chan error, 1)
-	s := NewServer(func(context.Context) (net.Listener, error) { return fake, nil },
+	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
 		func(_ context.Context, ln net.Listener) error {
 			entered <- struct{}{}
 			_, err := ln.Accept()
 			accepted <- err
 			return err
-		})
+		}, nil)
 	done := run(s, context.Background())
 	recv(t, entered, "serve")
 	if err := s.Close(); err != nil {
@@ -384,7 +384,7 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 	fake.conns <- first
 	fake.conns <- second
 	result := make(chan error, 1)
-	s := NewServer(func(context.Context) (net.Listener, error) { return fake, nil },
+	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
 		func(_ context.Context, ln net.Listener) error {
 			c1, err := ln.Accept()
 			if err != nil {
@@ -401,7 +401,7 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 			}
 			result <- nil
 			return nil
-		})
+		}, nil)
 	if err := wait(t, run(s, context.Background())); err != nil {
 		t.Fatalf("Run = %v", err)
 	}
@@ -413,10 +413,10 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 
 func TestServerCanceledContextDoesNotBind(t *testing.T) {
 	var listens atomic.Int32
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		return listenLoopback(ctx)
-	}, acceptLoop)
+	}, nil, acceptLoop, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := wait(t, run(s, ctx)); err != nil {
@@ -435,11 +435,11 @@ func TestServerBindFailingOnStopReturnsNil(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			entered := make(chan struct{}, 1)
-			s := NewServer(func(ctx context.Context) (net.Listener, error) {
+			s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 				entered <- struct{}{}
 				<-ctx.Done()
 				return nil, fmt.Errorf("bind: %w", ctx.Err())
-			}, acceptLoop)
+			}, nil, acceptLoop, nil)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := run(s, ctx)
@@ -467,14 +467,14 @@ func TestServerStopDuringBind(t *testing.T) {
 			entered := make(chan struct{}, 1)
 			fake := &fakeListener{conns: make(chan net.Conn)}
 			var served atomic.Int32
-			s := NewServer(func(context.Context) (net.Listener, error) {
+			s := NewPlaneServer(func(context.Context) (net.Listener, error) {
 				entered <- struct{}{}
 				<-release
 				return fake, nil
-			}, func(context.Context, net.Listener) error {
+			}, nil, func(context.Context, net.Listener) error {
 				served.Add(1)
 				return nil
-			})
+			}, nil)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := run(s, ctx)
@@ -501,14 +501,14 @@ func TestServerStopDuringBind(t *testing.T) {
 func TestServerRunIsExclusive(t *testing.T) {
 	bound := make(chan net.Addr, 2)
 	var listens atomic.Int32
-	s := NewServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
-	}, acceptLoop)
+	}, nil, acceptLoop, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	first := run(s, ctx)
