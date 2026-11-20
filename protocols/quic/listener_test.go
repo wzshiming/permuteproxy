@@ -168,7 +168,7 @@ func TestListenerCloseAbortsItsConnections(t *testing.T) {
 		accepted <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
-	within(t, 0, 2*time.Second, "Close", func() { ln.Close() })
+	within(t, 2*time.Second, "Close", func() { ln.Close() })
 	released(t, mem.socket(t, 0), "listened")
 	if err := recv(t, accepted, "Accept"); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("Accept blocked at Close = %v, want net.ErrClosed", err)
@@ -226,7 +226,7 @@ func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
 	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	within(t, 0, 2*time.Second, "Dial", func() {
+	within(t, 2*time.Second, "Dial", func() {
 		if _, err := tr.Dial(ctx, permuteproxy.Stream); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("Dial over a failing carrier = %v, want its context's deadline", err)
 		}

@@ -40,13 +40,13 @@ func setDeadline(t *testing.T, set func(time.Time) error, at time.Time) {
 	}
 }
 
-// within fails unless f returns in [min, max).
-func within(t *testing.T, min, max time.Duration, what string, f func()) {
+// within fails unless f returns before max has passed.
+func within(t *testing.T, max time.Duration, what string, f func()) {
 	t.Helper()
 	start := time.Now()
 	f()
-	if d := time.Since(start); d < min || d >= max {
-		t.Fatalf("%s took %v, want [%v, %v)", what, d, min, max)
+	if d := time.Since(start); d >= max {
+		t.Fatalf("%s took %v, want under %v", what, d, max)
 	}
 }
 
@@ -67,7 +67,7 @@ func TestReadDeadline(t *testing.T) {
 			b := make([]byte, 1)
 
 			setDeadline(t, c.SetReadDeadline, time.Now().Add(-time.Second))
-			within(t, 0, time.Second, side+" Read past its deadline", func() {
+			within(t, time.Second, side+" Read past its deadline", func() {
 				_, err := c.Read(b)
 				assertTimeout(t, err, side+" Read past its deadline")
 			})
@@ -411,7 +411,7 @@ func TestDialedCloseReturnsAtOnceWhenThePeerNeverReads(t *testing.T) {
 	if _, err := c.Write(make([]byte, 2<<20)); err != nil {
 		t.Fatal(err)
 	}
-	within(t, 0, time.Second, "Close", func() { c.Close() })
+	within(t, time.Second, "Close", func() { c.Close() })
 }
 
 func TestAnExpiredWriteDeadlineLosesNothingAtClose(t *testing.T) {
@@ -460,7 +460,7 @@ func TestDialedCloseReleasesByTheLingerBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed := time.Now()
-	within(t, 0, time.Second, "Close", func() { c.Close() })
+	within(t, time.Second, "Close", func() { c.Close() })
 	eventuallyReleased(t, mem.socket(t, 1), 3*time.Second, "dialed")
 	if d := time.Since(closed); d < time.Second || d >= 2*time.Second {
 		t.Fatalf("dialed carrier released %v after Close, want at the linger of 1s", d)
