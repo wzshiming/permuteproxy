@@ -632,6 +632,34 @@ func TestCmdDialEndsWithCtxWhileExecWaits(t *testing.T) {
 	recv(t, cmd.closed, "the late command to close")
 }
 
+func TestOneProbeRunsAtATime(t *testing.T) {
+	keepAlives := make(chan *ssh.Request, 16)
+	addr := rawServer(t, func(ssh.NewChannel) {}, func(reqs <-chan *ssh.Request) {
+		for req := range reqs {
+			keepAlives <- req
+		}
+	})
+	n := dialServer(t, &clientBase{}, addr, nil)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			n.DialContext(ctx, "cmd", "anything")
+		}()
+	}
+	wg.Wait()
+	// Every dial timed out while the first probe waited for its answer.
+	recv(t, keepAlives, "the probe").Reply(true, nil)
+	select {
+	case <-keepAlives:
+		t.Fatal("a second probe ran beside the first")
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())

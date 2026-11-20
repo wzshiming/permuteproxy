@@ -87,11 +87,12 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 
 // client dials over one SSH connection, made on first use over the stream inner dials.
 type client struct {
-	dialer *sshproxy.Dialer
-	once   sync.Once
-	closed atomic.Bool
-	mu     sync.Mutex                 // orders the dialer's connects and drops
-	cli    atomic.Pointer[ssh.Client] // the connection the dialer holds, if any
+	dialer  *sshproxy.Dialer
+	once    sync.Once
+	closed  atomic.Bool
+	mu      sync.Mutex                 // orders the dialer's connects and drops
+	cli     atomic.Pointer[ssh.Client] // the connection the dialer holds, if any
+	probing atomic.Bool
 }
 
 func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
@@ -143,13 +144,14 @@ func (c *client) drop(cli *ssh.Client) {
 	}
 }
 
-// probe drops the shared connection unless it answers a keep-alive in time.
+// probe drops the shared connection unless it answers a keep-alive in time, one probe at a time.
 func (c *client) probe() {
 	cli := c.cli.Load()
-	if cli == nil {
+	if cli == nil || !c.probing.CompareAndSwap(false, true) {
 		return
 	}
 	go func() {
+		defer c.probing.Store(false)
 		answered := make(chan error, 1)
 		go func() {
 			_, _, err := cli.SendRequest("keepalive@openssh.com", true, nil)
