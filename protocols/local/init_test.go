@@ -31,7 +31,7 @@ func init() {
 
 var errHop = errors.New("hop: not listening")
 
-// hop records what an Engine asks of it and answers each dial with a pipe named after the dialed address.
+// hop records what an Engine asks of it; each dial gets a pipe named after the dialed address.
 type hop struct {
 	calls []string
 	peers []net.Conn

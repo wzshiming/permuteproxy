@@ -75,7 +75,7 @@ func fakeNetcat(args []string) int {
 	return 0
 }
 
-// fakeSocat relays as socat - UDP:host:port does, one datagram per read of stdin, until stdin ends.
+// fakeSocat relays like socat - UDP:host:port, one datagram per read of stdin, until stdin ends.
 func fakeSocat(args []string) int {
 	if len(args) != 3 || args[0] != "socat" || args[1] != "-" || !strings.HasPrefix(args[2], "UDP:") {
 		fmt.Fprintln(os.Stderr, "fake socat: want socat - UDP:host:port")
