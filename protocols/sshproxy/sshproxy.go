@@ -34,6 +34,9 @@ const (
 
 	keyUDPCommand = "udp_command"
 	keyAllowExec  = "allow_exec"
+
+	// maxName bounds a target's host or socket path: no DNS name nor sun_path is longer.
+	maxName = 255
 )
 
 var options = []string{
@@ -99,6 +102,9 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 	if network == "cmd" {
 		return c.exec(ctx, address)
 	}
+	if err := checkName(network, address); err != nil {
+		return nil, err
+	}
 	cli, err := c.dialer.SSHClient(ctx)
 	if err != nil {
 		return nil, err
@@ -116,6 +122,18 @@ func dead(err error) bool {
 	var host *net.AddrError
 	var port *strconv.NumError
 	return !errors.As(err, &refused) && !errors.As(err, &host) && !errors.As(err, &port)
+}
+
+// checkName refuses a target whose host or socket path is too long to be one, before any I/O.
+func checkName(network, address string) error {
+	name := address
+	if network != "unix" {
+		name, _, _ = net.SplitHostPort(address)
+	}
+	if len(name) > maxName {
+		return fmt.Errorf("ssh: %s target name of %d bytes is too long", network, len(name))
+	}
+	return nil
 }
 
 func (c *client) close() error {

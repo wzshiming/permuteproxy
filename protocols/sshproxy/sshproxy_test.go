@@ -11,6 +11,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,6 +248,37 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 	exchange("again")
 	if got := base.dials.Load(); got != 1 {
 		t.Fatalf("client dials = %d, want the first connection kept", got)
+	}
+}
+
+func TestOversizedTargetsAreRefusedBeforeAnyIO(t *testing.T) {
+	refuse := permuteproxy.NetworkFuncs{DialContextFunc: func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("refused")
+	}}
+	base := &clientBase{}
+	n := dialServer(t, base, serveExec(t, refuse), withCredentials())
+	ctx := timeout(t)
+	long, huge := strings.Repeat("a", 256), strings.Repeat("a", 300<<10)
+	for _, d := range []struct{ network, address string }{
+		{"tcp", long + ":80"},
+		{"tcp", huge + ":80"},
+		{"unix", "/" + long},
+		{"unix", "/" + huge},
+	} {
+		if conn, err := n.DialContext(ctx, d.network, d.address); err == nil || errors.Is(err, permuteproxy.ErrUnsupported) {
+			if conn != nil {
+				conn.Close()
+			}
+			t.Errorf("dial %s to a %d-byte target = %.200v, want it refused", d.network, len(d.address), err)
+		}
+	}
+	if got := base.dials.Load(); got != 0 {
+		t.Fatalf("client dials = %d, want the targets refused before any I/O", got)
+	}
+	// A host of 255 bytes may be a name, so the server gets to refuse it.
+	var refused *ssh.OpenChannelError
+	if _, err := n.DialContext(ctx, "tcp", long[1:]+":80"); !errors.As(err, &refused) {
+		t.Fatalf("dial tcp to a 255-byte host = %.200v, want the server to refuse it", err)
 	}
 }
 
