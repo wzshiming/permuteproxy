@@ -184,6 +184,23 @@ func TestListenerCloseAbortsItsConnections(t *testing.T) {
 	noGoroutinesLeft(t, before, time.Second)
 }
 
+func TestListenerKeepsNothingOfClientsThatClosed(t *testing.T) {
+	ln, tr := pair(t, permuteproxy.Engine{Base: newMemNet()})
+	before := quicGoroutines()
+	for range 10 {
+		c, srv := connected(t, ln, tr)
+		if _, err := c.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadFull(srv, make([]byte, 1)); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
+		srv.Close()
+	}
+	noGoroutinesLeft(t, before, 5*time.Second)
+}
+
 func TestListenerReportsAFailingCarrier(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
