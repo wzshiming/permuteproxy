@@ -548,6 +548,49 @@ func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 	eventuallyReleased(t, mem.socket(t, 1), 5*time.Second, "dialed")
 }
 
+func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
+	k := issue(t)
+	ep := rawListen(t, k)
+	data := random(t, 300<<10)
+	arrived := make(chan error, 1)
+	go func() {
+		arrived <- func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			qc, err := ep.Accept(ctx)
+			if err != nil {
+				return err
+			}
+			s, err := qc.AcceptStream(ctx)
+			if err != nil {
+				return err
+			}
+			s.CloseWrite()
+			s.SetReadContext(ctx)
+			got, err := io.ReadAll(s)
+			switch {
+			case err != nil:
+				return fmt.Errorf("%d bytes arrived, then %w", len(got), err)
+			case !bytes.Equal(got, data):
+				return fmt.Errorf("%d bytes arrived, not the %d written", len(got), len(data))
+			}
+			return nil
+		}()
+	}()
+	c := dial(t, build(t, permuteproxy.Engine{}, quicChain(ep.LocalAddr().String(), k.client)))
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if got, err := io.ReadAll(c); err != nil || len(got) != 0 {
+		t.Fatalf("dialer read %q, %v; want the peer's end of stream", got, err)
+	}
+	if _, err := c.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if err := recv(t, arrived, "the peer's read"); err != nil {
+		t.Fatalf("a peer that ended its side before reading: %v", err)
+	}
+}
+
 func TestDialedCloseReleasesByTheLingerBound(t *testing.T) {
 	quic.SetCloseWait(t, 200*time.Millisecond)
 	quic.SetLinger(t, time.Second)

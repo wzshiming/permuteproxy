@@ -115,6 +115,26 @@ func rawDial(t *testing.T, addr, caFile string, alpns ...string) (*xquic.Conn, e
 	return ep.Dial(ctx, "udp", addr, &xquic.Config{TLSConfig: &tls.Config{ServerName: "proxy.test", RootCAs: roots, NextProtos: alpns, MinVersion: tls.VersionTLS13}})
 }
 
+// rawListen listens with x/net/quic itself on the key material of k, offering the ALPN of permuteproxy.
+func rawListen(t *testing.T, k keys) *xquic.Endpoint {
+	t.Helper()
+	cert, err := tls.LoadX509KeyPair(k.server["tls_cert_file"], k.server["tls_key_file"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep, err := xquic.Listen("udp", "127.0.0.1:0", &xquic.Config{TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"permuteproxy"}, MinVersion: tls.VersionTLS13}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		ep.Close(ctx)
+		ep.Close(context.Background())
+	})
+	return ep
+}
+
 func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
 	ln, k := listenQUIC(t, permuteproxy.Engine{})
 	serveEcho(ln)

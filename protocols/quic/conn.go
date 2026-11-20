@@ -98,11 +98,15 @@ func (c *conn) Close() error {
 		c.stream.SetReadContext(ctx)
 		c.readMu.Unlock()
 		released := make(chan struct{})
+		// No Read or Write after Close reaches the stream, so this goroutine has it alone.
 		go func() {
 			defer close(released)
 			defer cancel()
-			// No Read after Close reaches the stream, so this one has it alone.
-			io.Copy(io.Discard, c.stream)
+			if _, err := io.Copy(io.Discard, c.stream); err == nil {
+				// Closing the stream waits until the peer has acknowledged all we wrote.
+				c.stream.SetWriteContext(ctx)
+				c.stream.Close()
+			}
 			c.release()
 		}()
 		// What is not delivered yet is lost if the process exits once Close returns.
