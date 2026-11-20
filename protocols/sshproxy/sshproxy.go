@@ -203,8 +203,12 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	if err != nil {
 		return nil, err
 	}
-	if allowExec && simple.ServerConfig.NoClientAuth {
+	switch {
+	case !allowExec:
+	case simple.ServerConfig.NoClientAuth:
 		return nil, fmt.Errorf("%s without a password or authorized keys", keyAllowExec)
+	case simple.ServerConfig.PasswordCallback != nil && simple.Password == "":
+		return nil, fmt.Errorf("%s with an empty password", keyAllowExec)
 	}
 	return &permuteproxy.ServerFuncs{
 		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {

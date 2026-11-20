@@ -625,9 +625,11 @@ var authorizedKey = func() string {
 
 func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 	for name, opts := range map[string]permuteproxy.Options{
-		"no credentials": {"allow_exec": "true", "hostkey_data": hostKey},
-		"username alone": {"allow_exec": "true", "hostkey_data": hostKey, "username": "u"},
-		"malformed":      withCredentials("allow_exec", "maybe", "hostkey_data", hostKey),
+		"no credentials":             {"allow_exec": "true", "hostkey_data": hostKey},
+		"username alone":             {"allow_exec": "true", "hostkey_data": hostKey, "username": "u"},
+		"empty password":             {"allow_exec": "true", "hostkey_data": hostKey, "username": "u", "password": ""},
+		"empty password beside keys": {"allow_exec": "true", "hostkey_data": hostKey, "username": "u", "password": "", "authorized_data": authorizedKey},
+		"malformed":                  withCredentials("allow_exec", "maybe", "hostkey_data", hostKey),
 	} {
 		t.Run(name, func(t *testing.T) {
 			base := &countingNetwork{}
