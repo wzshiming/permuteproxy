@@ -14,7 +14,6 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -93,20 +92,20 @@ func (c *client) listenPacket(ctx context.Context, inner permuteproxy.Transport,
 	return wrapped, nil
 }
 
-func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts permuteproxy.Options) (permuteproxy.Server, error) {
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	connCipher, err := cipher(opts)
 	if err != nil {
 		return nil, err
 	}
-	srv := shadowsocks.NewServer()
-	srv.ConnCipher = connCipher
-	srv.ProxyDial = upstream.DialContext
-	srv.BytesPool = pool.Bytes
-	serveStream := func(ctx context.Context, ln net.Listener) error {
+	serveStream := func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+		srv := shadowsocks.NewServer()
 		srv.Context = ctx
+		srv.ConnCipher = connCipher
+		srv.ProxyDial = upstream.DialContext
+		srv.BytesPool = pool.Bytes
 		return srv.Serve(ln)
 	}
-	servePacket := func(ctx context.Context, pc net.PacketConn) error {
+	servePacket := func(ctx context.Context, pc net.PacketConn, upstream permuteproxy.Network) error {
 		owned := &sessions{listen: upstream.ListenPacket}
 		defer owned.Close()
 		psrv := shadowsocks.NewPacketServer()
@@ -124,7 +123,7 @@ func NewServer(inner permuteproxy.Transport, upstream permuteproxy.Network, opts
 			// A datagram that fails to decrypt or parse ends ServePacket; the socket is still good.
 		}
 	}
-	return protoutils.NewPlaneServer(inner, serveStream, servePacket), nil
+	return &permuteproxy.ServerFuncs{Serve: serveStream, ServePacket: servePacket}, nil
 }
 
 // carrier records whether its ReadFrom failed, since the library returns that error raw, like a

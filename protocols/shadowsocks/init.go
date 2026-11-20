@@ -12,7 +12,7 @@ func init() {
 		UsernameOption: KeyUsername,
 		PasswordOption: KeyPassword,
 		NewClient:      NewClient,
-		Server:         NewServer,
+		NewServer:      NewServer,
 	}
 	permuteproxy.RegisterLayer("ss", spec)
 	permuteproxy.RegisterLayer("shadowsocks", spec)

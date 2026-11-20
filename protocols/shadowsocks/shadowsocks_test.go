@@ -180,19 +180,17 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer raw.Close()
 			carrier := &faultyCarrier{PacketConn: raw, err: tt.err}
 			upstream := &upstreamProbe{Network: system}
-			opts := permuteproxy.Options{KeyUsername: "aes-256-gcm", KeyPassword: "p"}
-			inner := permuteproxy.TransportFuncs{Plane: permuteproxy.Packet, ListenPacketFunc: func(context.Context) (net.PacketConn, error) { return carrier, nil }}
-			srv, err := NewServer(inner, upstream, opts)
+			funcs, err := NewServer(permuteproxy.Options{KeyUsername: "aes-256-gcm", KeyPassword: "p"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			done := make(chan error, 1)
-			go func() { done <- srv.Run(context.Background()) }()
-			defer srv.Close()
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- funcs.ServePacket(ctx, carrier, upstream) }()
 			n, err := permuteproxy.Engine{Base: system}.Client(chain(t, "ss+udp://aes-256-gcm:p@"+raw.LocalAddr().String()))
 			if err != nil {
 				t.Fatal(err)
@@ -218,10 +216,10 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			select {
 			case err := <-done:
 				if !errors.Is(err, tt.err) {
-					t.Fatalf("Run = %v, want the carrier error %v", err, tt.err)
+					t.Fatalf("ServePacket = %v, want the carrier error %v", err, tt.err)
 				}
 			case <-time.After(5 * time.Second):
-				t.Fatalf("Run kept serving after the carrier failed; %d reads so far", carrier.reads.Load())
+				t.Fatalf("ServePacket kept serving after the carrier failed; %d reads so far", carrier.reads.Load())
 			}
 			if got := carrier.reads.Load() - before; got > 1 {
 				t.Fatalf("carrier read %d times after failing, want at most 1", got)
