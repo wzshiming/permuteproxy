@@ -563,6 +563,35 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 	}
 }
 
+func TestShadowsocksPacketServerSurvivesAnUnresolvableTarget(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c := parse(t, "ss://aes-256-gcm:p@"+reservePort(t))
+	base, upstream := newProbe(system), newProbe(system)
+	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	waitBound(t, base, done)
+	waitBoundPacket(t, base, done)
+	n, err := permuteproxy.Engine{}.Client(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeIf(n)
+	// The server looks the name up, which a NUL fails without DNS; the next datagram on the socket follows it.
+	conn := dialPacket(t, ctx, n, "un\x00resolvable:9")
+	if _, err := conn.Write([]byte("unresolvable")); err != nil {
+		t.Fatal(err)
+	}
+	otherPeer(t, conn)
+	if upstream.packets.Load() != 1 {
+		t.Fatalf("upstream sockets = %d, want only the echo's", upstream.packets.Load())
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("server stopped after a datagram to an unresolvable name: %v", err)
+	default:
+	}
+}
+
 // streamPayload is random bytes enough for many datagrams of a stream carried over them.
 var streamPayload = func() []byte {
 	b := make([]byte, 64<<10)

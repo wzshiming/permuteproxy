@@ -120,7 +120,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			if c.failed.Load() || ctx.Err() != nil {
 				return err
 			}
-			// A datagram that fails to decrypt or parse ends ServePacket; the socket is still good.
+			// A datagram that fails to decrypt, to parse or to resolve its target name ends ServePacket; the socket is still good.
 		}
 	}
 	return &permuteproxy.ServerFuncs{Serve: serveStream, ServePacket: servePacket}, nil
