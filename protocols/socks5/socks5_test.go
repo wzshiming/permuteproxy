@@ -342,7 +342,8 @@ func TestAssociationBindsItsSocketInTheControlConnFamily(t *testing.T) {
 				t.Fatal(err)
 			}
 			done := make(chan error, 1)
-			go func() { done <- funcs.Serve(context.Background(), ln, system) }()
+			upstream := newProbe(system)
+			go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
 			defer func() {
 				ln.Close()
 				wait(t, done, "Serve")
@@ -373,6 +374,9 @@ func TestAssociationBindsItsSocketInTheControlConnFamily(t *testing.T) {
 			if n, err := conn.Read(buf); err != nil || string(buf[:n]) != "ping" {
 				t.Fatalf("Read = %q, %v", buf[:n], err)
 			}
+			// Serve returns before its associations end, and a later test swaps net.DefaultResolver.
+			conn.Close()
+			wait(t, upstream.packetClosed, "the end of the association on the server")
 		})
 	}
 }
