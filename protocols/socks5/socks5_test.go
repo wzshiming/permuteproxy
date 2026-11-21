@@ -844,6 +844,36 @@ func TestRelayAddress(t *testing.T) {
 	}
 }
 
+func TestRelayBindsInTheControlConnFamily(t *testing.T) {
+	for _, tt := range []struct {
+		control net.Addr
+		want    string
+	}{
+		{&net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1080}, "udp4 :0"},
+		{&net.TCPAddr{IP: net.IPv6loopback, Port: 1080}, "udp6 :0"},
+		{&net.UnixAddr{Name: "/tmp/s", Net: "unix"}, "udp :0"},
+	} {
+		var got string
+		bind := bindRelay(func(_ context.Context, network, address string) (net.PacketConn, error) {
+			got = network + " " + address
+			return nil, errors.New("recorded")
+		})
+		pc, err := listenRelay(context.Background(), "udp", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := bind(context.Background(), "", pc, addrOnly{local: tt.control}); err == nil {
+			t.Fatal("bindRelay succeeded through a failing listen")
+		}
+		if err := pc.Close(); err != nil {
+			t.Fatalf("Close of an unbound relay = %v", err)
+		}
+		if got != tt.want {
+			t.Errorf("relay of a %v control conn bound as %q, want %q", tt.control, got, tt.want)
+		}
+	}
+}
+
 func wait[T any](t *testing.T, ch <-chan T, what string) T {
 	t.Helper()
 	select {

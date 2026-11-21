@@ -263,7 +263,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 		srv.ProxyListenBind = owned.Listen
 		srv.ProxyListenPacket = listenRelay
 		srv.ProxyOutgoingListenPacket = upstream.ListenPacket
-		srv.PacketForwardAddress = relayAddress
+		srv.PacketForwardAddress = bindRelay((&net.ListenConfig{}).ListenPacket)
 		srv.BytesPool = pool.Bytes
 		if username := opts[KeyUsername]; username != "" {
 			srv.Authentication = socks5.UserAuth(username, opts[KeyPassword])
@@ -305,10 +305,32 @@ func (l *listeners) Close() {
 	l.lns = nil
 }
 
-// listenRelay binds the client-facing relay socket locally on a free port; the address the
-// library passes is the client's DST.ADDR, which is not a bind request.
-func listenRelay(ctx context.Context, network, _ string) (net.PacketConn, error) {
-	return (&net.ListenConfig{}).ListenPacket(ctx, network, ":0")
+// listenRelay hands the library a relay that bindRelay binds once the control conn is known; the
+// address the library passes is the client's DST.ADDR, which is not a bind request.
+func listenRelay(context.Context, string, string) (net.PacketConn, error) {
+	return &relaySocket{}, nil
+}
+
+// relaySocket is the client-facing relay, nil until bindRelay binds it.
+type relaySocket struct{ net.PacketConn }
+
+func (r *relaySocket) Close() error {
+	if r.PacketConn == nil {
+		return nil
+	}
+	return r.PacketConn.Close()
+}
+
+// bindRelay binds the relay through listen on a free port in the control conn's family and advertises it.
+func bindRelay(listen netutils.ListenPacket) func(ctx context.Context, destination string, pc net.PacketConn, control net.Conn) (net.IP, int, error) {
+	return func(ctx context.Context, destination string, pc net.PacketConn, control net.Conn) (net.IP, int, error) {
+		r := pc.(*relaySocket)
+		var err error
+		if r.PacketConn, err = listen(ctx, udpFamily(control.LocalAddr(), "udp"), ":0"); err != nil {
+			return nil, 0, err
+		}
+		return relayAddress(ctx, destination, r, control)
+	}
 }
 
 // relayAddress advertises the relay port at the IP the client reached the control conn on; a
