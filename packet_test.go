@@ -599,24 +599,35 @@ var streamPayload = func() []byte {
 	return b
 }()
 
-// echoed writes payload to conn and wants it back whole, reading aside since a cmd conn over ssh has no deadlines.
+// echoed writes payload to conn and wants it back whole, writing and reading aside since a cmd conn over ssh has no deadlines.
 func echoed(t *testing.T, conn net.Conn, payload []byte) {
 	t.Helper()
 	got := make([]byte, len(payload))
-	read := make(chan error, 1)
+	wrote, read := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := conn.Write(payload)
+		wrote <- err
+	}()
 	go func() {
 		_, err := io.ReadFull(conn, got)
 		read <- err
 	}()
-	if _, err := conn.Write(payload); err != nil {
-		t.Fatal(err)
+	timeout := time.After(20 * time.Second)
+	select {
+	case err := <-wrote:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-timeout:
+		conn.Close()
+		t.Fatalf("writing the %d bytes did not end", len(payload))
 	}
 	select {
 	case err := <-read:
 		if err != nil || !bytes.Equal(got, payload) {
 			t.Fatalf("reading back the %d bytes written: %v, intact %v", len(payload), err, bytes.Equal(got, payload))
 		}
-	case <-time.After(20 * time.Second):
+	case <-timeout:
 		conn.Close()
 		t.Fatalf("the %d bytes written did not come back", len(payload))
 	}
