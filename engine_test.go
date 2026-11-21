@@ -6,10 +6,12 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -398,6 +400,7 @@ func exchange(t *testing.T, conn net.Conn, target net.PacketConn) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		step.peer.SetReadDeadline(time.Now().Add(5 * time.Second))
 		n, from, err := step.peer.ReadFrom(buf)
 		if err != nil || string(buf[:n]) != "ping" {
 			t.Fatalf("peer read %q, %v", buf[:n], err)
@@ -405,9 +408,56 @@ func exchange(t *testing.T, conn net.Conn, target net.PacketConn) {
 		if _, err := step.peer.WriteTo([]byte("pong"), from); err != nil {
 			t.Fatal(err)
 		}
+		pc.SetReadDeadline(time.Now().Add(5 * time.Second))
 		n, from, err = pc.ReadFrom(buf)
 		if err != nil || string(buf[:n]) != "pong" || from.String() != step.peer.LocalAddr().String() {
 			t.Fatalf("ReadFrom = %q from %v, %v; want \"pong\" from %v", buf[:n], from, err, step.peer.LocalAddr())
+		}
+	}
+}
+
+// hasty is a udp socket whose read deadline falls due as soon as one is set.
+type hasty struct{ *net.UDPConn }
+
+func (h hasty) SetReadDeadline(time.Time) error { return h.UDPConn.SetReadDeadline(time.Now()) }
+
+// misdirected is a hasty conn to remote whose datagrams leave through out, or nowhere without one.
+type misdirected struct {
+	hasty
+	out    net.PacketConn
+	remote net.Addr
+}
+
+func (m misdirected) RemoteAddr() net.Addr { return m.remote }
+
+func (m misdirected) Write(b []byte) (int, error) { return m.WriteTo(b, m.remote) }
+
+func (m misdirected) WriteTo(b []byte, addr net.Addr) (int, error) {
+	if m.out == nil {
+		return len(b), nil
+	}
+	return m.out.WriteTo(b, addr)
+}
+
+func TestExchangeFailsOnALostDatagram(t *testing.T) {
+	if lost := os.Getenv("PERMUTEPROXY_LOST_DATAGRAM"); lost != "" {
+		// The child: exchange over a conn whose ping or pong never arrives.
+		target := datagramPeer(t, "udp").(*net.UDPConn)
+		conn := misdirected{hasty: hasty{datagramPeer(t, "udp").(*net.UDPConn)}, remote: target.LocalAddr()}
+		var peer net.PacketConn = hasty{target}
+		if lost == "pong" {
+			conn.out, peer = datagramPeer(t, "udp"), target
+		}
+		exchange(t, conn, peer)
+		return
+	}
+	for _, lost := range []string{"ping", "pong"} {
+		child := exec.Command(os.Args[0], "-test.run=^TestExchangeFailsOnALostDatagram$", "-test.timeout=10s")
+		// The race detector would otherwise sleep a second before the child exits.
+		child.Env = append(os.Environ(), "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0", "PERMUTEPROXY_LOST_DATAGRAM="+lost)
+		out, err := child.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "i/o timeout") {
+			t.Errorf("exchange over a lost %s ended with %v, want its test failed on a read timeout:\n%s", lost, err, out)
 		}
 	}
 }
