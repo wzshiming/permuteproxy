@@ -453,8 +453,7 @@ func TestExchangeFailsOnALostDatagram(t *testing.T) {
 	}
 	for _, lost := range []string{"ping", "pong"} {
 		child := exec.Command(os.Args[0], "-test.run=^TestExchangeFailsOnALostDatagram$", "-test.timeout=10s")
-		// The race detector would otherwise sleep a second before the child exits.
-		child.Env = append(os.Environ(), "GORACE="+os.Getenv("GORACE")+" atexit_sleep_ms=0", "PERMUTEPROXY_LOST_DATAGRAM="+lost)
+		child.Env = append(os.Environ(), "PERMUTEPROXY_LOST_DATAGRAM="+lost)
 		out, err := child.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "i/o timeout") {
 			t.Errorf("exchange over a lost %s ended with %v, want its test failed on a read timeout:\n%s", lost, err, out)
