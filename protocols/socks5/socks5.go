@@ -83,8 +83,7 @@ func (c *client) peer(ctx context.Context, _, address string) (net.Addr, error) 
 	return netutils.NewNetAddr("udp", address), nil
 }
 
-// associate performs the UDP ASSOCIATE handshake with its socket bound through local at address in the
-// control conn's family; WriteTo reaches any target.
+// associate performs the UDP ASSOCIATE handshake with its socket bound through local at address; WriteTo reaches any target.
 func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, local permuteproxy.Network, network, address string) (net.PacketConn, error) {
 	a := &association{}
 	d := c.dialer
@@ -99,7 +98,7 @@ func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, lo
 		return conn, nil
 	}
 	d.ProxyPacketDial = func(ctx context.Context, _, _ string) (net.PacketConn, error) {
-		pc, err := local.ListenPacket(ctx, udpFamily(a.control.RemoteAddr(), network), address)
+		pc, err := local.ListenPacket(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
@@ -121,18 +120,6 @@ func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, lo
 	}
 	a.udp = conn.(*socks5.UDPConn)
 	return a, nil
-}
-
-// udpFamily is udp4 or udp6 after a tcp address's IP, the family of a relay advertised at it, else network.
-func udpFamily(addr net.Addr, network string) string {
-	tcp, ok := addr.(*net.TCPAddr)
-	switch {
-	case !ok || tcp.IP == nil:
-		return network
-	case tcp.IP.To4() != nil:
-		return "udp4"
-	}
-	return "udp6"
 }
 
 // association is one UDP association: the control conn keeps it open on the proxy, the socket
@@ -263,7 +250,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 		srv.ProxyListenBind = owned.Listen
 		srv.ProxyListenPacket = listenRelay
 		srv.ProxyOutgoingListenPacket = upstream.ListenPacket
-		srv.PacketForwardAddress = bindRelay((&net.ListenConfig{}).ListenPacket)
+		srv.PacketForwardAddress = relayAddress
 		srv.BytesPool = pool.Bytes
 		if username := opts[KeyUsername]; username != "" {
 			srv.Authentication = socks5.UserAuth(username, opts[KeyPassword])
@@ -305,32 +292,10 @@ func (l *listeners) Close() {
 	l.lns = nil
 }
 
-// listenRelay hands the library a relay that bindRelay binds once the control conn is known; the
-// address the library passes is the client's DST.ADDR, which is not a bind request.
-func listenRelay(context.Context, string, string) (net.PacketConn, error) {
-	return &relaySocket{}, nil
-}
-
-// relaySocket is the client-facing relay, nil until bindRelay binds it.
-type relaySocket struct{ net.PacketConn }
-
-func (r *relaySocket) Close() error {
-	if r.PacketConn == nil {
-		return nil
-	}
-	return r.PacketConn.Close()
-}
-
-// bindRelay binds the relay through listen on a free port in the control conn's family and advertises it.
-func bindRelay(listen netutils.ListenPacket) func(ctx context.Context, destination string, pc net.PacketConn, control net.Conn) (net.IP, int, error) {
-	return func(ctx context.Context, destination string, pc net.PacketConn, control net.Conn) (net.IP, int, error) {
-		r := pc.(*relaySocket)
-		var err error
-		if r.PacketConn, err = listen(ctx, udpFamily(control.LocalAddr(), "udp"), ":0"); err != nil {
-			return nil, 0, err
-		}
-		return relayAddress(ctx, destination, r, control)
-	}
+// listenRelay binds the client-facing relay socket locally on a free port; the address the
+// library passes is the client's DST.ADDR, which is not a bind request.
+func listenRelay(ctx context.Context, network, _ string) (net.PacketConn, error) {
+	return (&net.ListenConfig{}).ListenPacket(ctx, network, ":0")
 }
 
 // relayAddress advertises the relay port at the IP the client reached the control conn on; a
