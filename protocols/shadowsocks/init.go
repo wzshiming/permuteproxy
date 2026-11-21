@@ -2,22 +2,18 @@ package shadowsocks
 
 import (
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/protocols"
 )
 
 func init() {
-	define := permuteproxy.Define{
-		SchemeInfo: protocols.SchemeInfo{
-			Kind:          protocols.KindProxy,
-			Base:          protocols.KindStream,
-			UsernameField: KeyUsername,
-			PasswordField: KeyPassword,
-		},
-		Handler: permuteproxy.Handler{
-			DialerWrapper: permuteproxy.DialerWrapperFunc(NewShadowsocksDialer),
-			NewRunner:     permuteproxy.NewRunnerFunc(NewShadowsocksRunner),
-		},
+	spec := permuteproxy.Spec{
+		Kind:           permuteproxy.KindProxy,
+		Preserves:      permuteproxy.Stream | permuteproxy.Packet,
+		Networks:       []string{"tcp", "udp"},
+		UsernameOption: KeyUsername,
+		PasswordOption: KeyPassword,
+		NewClient:      NewClient,
+		NewServer:      NewServer,
 	}
-	permuteproxy.Register("shadowsocks", define)
-	permuteproxy.Register("ss", define)
+	permuteproxy.RegisterLayer("ss", spec)
+	permuteproxy.RegisterLayer("shadowsocks", spec)
 }

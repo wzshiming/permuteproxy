@@ -2,211 +2,692 @@ package permuteproxy_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/local"
-	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"
-	_ "github.com/wzshiming/permuteproxy/protocols/snappy"
-	_ "github.com/wzshiming/permuteproxy/protocols/socks4"
-	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
-	_ "github.com/wzshiming/permuteproxy/protocols/sshproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/tls"
-
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/netutils"
+	_ "github.com/wzshiming/permuteproxy/protocols/all"
+	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
-var proxy = permuteproxy.Proxy{}
+var system permuteproxy.Network = permuteproxy.NetworkFuncs{
+	DialContextFunc:  (&net.Dialer{}).DialContext,
+	ListenFunc:       (&net.ListenConfig{}).Listen,
+	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
+}
 
-func TestTCPListenAndDial(t *testing.T) {
-	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
-	uri := "tcp://127.0.0.1:45678"
-	listenConn, err := proxy.NewListenConn(uri)
+// probe counts the operations a chain performs on an injected network, reports bound addresses and
+// accepted connections, signals closes of the sockets it handed out, and counts the Close calls a
+// borrowed network must never see.
+type probe struct {
+	permuteproxy.Network
+	dials        atomic.Int32
+	listens      atomic.Int32
+	packets      atomic.Int32
+	closes       atomic.Int32
+	bound        chan net.Addr
+	boundPacket  chan net.Addr
+	accepted     chan struct{}
+	packetClosed chan struct{}
+}
+
+func newProbe(n permuteproxy.Network) *probe {
+	return &probe{Network: n, bound: make(chan net.Addr, 1), boundPacket: make(chan net.Addr, 1), accepted: make(chan struct{}, 64), packetClosed: make(chan struct{}, 64)}
+}
+
+func (p *probe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	p.dials.Add(1)
+	return p.Network.DialContext(ctx, network, address)
+}
+
+func (p *probe) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	ln, err := p.Network.Listen(ctx, network, address)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
+	p.listens.Add(1)
+	select {
+	case p.bound <- ln.Addr():
+	default:
+	}
+	return acceptProbe{ln, p.accepted}, nil
+}
 
-	listener, err := listenConn.Listen(ctx)
+func (p *probe) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	pc, err := p.Network.ListenPacket(ctx, network, address)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	defer listener.Close()
+	p.packets.Add(1)
+	select {
+	case p.boundPacket <- pc.LocalAddr():
+	default:
+	}
+	return closeSignal{pc, p.packetClosed}, nil
+}
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				break
-			}
-			go io.Copy(conn, conn)
+func (p *probe) Close() error {
+	p.closes.Add(1)
+	return nil
+}
+
+type closeSignal struct {
+	net.PacketConn
+	closed chan struct{}
+}
+
+func (c closeSignal) Close() error {
+	err := c.PacketConn.Close()
+	select {
+	case c.closed <- struct{}{}:
+	default:
+	}
+	return err
+}
+
+type acceptProbe struct {
+	net.Listener
+	accepted chan struct{}
+}
+
+func (l acceptProbe) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		select {
+		case l.accepted <- struct{}{}:
+		default:
 		}
-	}()
-
-	dialConn, err := proxy.NewDialConn(uri)
-	if err != nil {
-		t.Fatal(err)
 	}
-	conn, err := dialConn.Dial(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	return conn, err
+}
 
-	testMsg := []byte("hello")
-	reply := make([]byte, 1024)
-	_, err = conn.Write(testMsg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	n, err := conn.Read(reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if string(reply[:n]) != string(testMsg) {
-		t.Fatal("reply not match")
-	}
-
-	if err := ctx.Err(); err != nil {
-		t.Fatal(err)
+func closeIf(v any) {
+	if c, ok := v.(io.Closer); ok {
+		c.Close()
 	}
 }
 
-func TestProxy(t *testing.T) {
-	testdata := []string{
-		"socks5+cmd-nc://127.0.0.1:45670",
-		"socks5+cmd-nc://u:p@127.0.0.1:45671",
-		"socks5+cmd-nc-unix://./test1.socks",
-		"socks5+cmd-nc-unix://u:p@./test2.socks",
-		"any://127.0.0.1:45678",
-		"any://u:p@127.0.0.1:45678",
-		"any+unix://./test.socks",
-		"any+unix://u:p@./test.socks",
-		"http://127.0.0.1:45678",
-		"http://u:p@127.0.0.1:45678",
-		"http+unix://./test.socks",
-		"http+unix://u:p@./test.socks",
-		"socks5://127.0.0.1:45678",
-		"socks5://u:p@127.0.0.1:45678",
-		"socks5+unix://./test.socks",
-		"socks5+unix://u:p@./test.socks",
-		"socks4://127.0.0.1:45678",
-		"socks4://u:p@127.0.0.1:45678",
-		"socks4+unix://./test.socks",
-		"socks4+unix://u:p@./test.socks",
-		"ssh://127.0.0.1:45678",
-		"ssh://u:p@127.0.0.1:45678",
-		"ssh+unix://./test.socks",
-		"ssh+unix://u:p@./test.socks",
-		"ss://127.0.0.1:45678",
-		"ss://aes-256-gcm:p@127.0.0.1:45678",
-		"ss+unix://./test.socks",
-		"ss+unix://aes-256-gcm:p@./test.socks",
-		"any+snappy://127.0.0.1:45678",
-		"any+snappy://u:p@127.0.0.1:45678",
-		"http+snappy://127.0.0.1:45678",
-		"http+snappy://u:p@127.0.0.1:45678",
-		"http+snappy+unix://./test.socks",
-		"http+snappy+unix://u:p@./test.socks",
-		"socks5+snappy://127.0.0.1:45678",
-		"socks5+snappy://u:p@127.0.0.1:45678",
-		"socks5+snappy+unix://./test.socks",
-		"socks5+snappy+unix://u:p@./test.socks",
-		"socks4+snappy://127.0.0.1:45678",
-		"socks4+snappy://u:p@127.0.0.1:45678",
-		"socks4+snappy+unix://./test.socks",
-		"socks4+snappy+unix://u:p@./test.socks",
-		"ssh+snappy://127.0.0.1:45678",
-		"ssh+snappy://u:p@127.0.0.1:45678",
-		"ssh+snappy+unix://./test.socks",
-		"ssh+snappy+unix://u:p@./test.socks",
-		"ss+snappy://127.0.0.1:45678",
-		"ss+snappy://aes-256-gcm:p@127.0.0.1:45678",
-		"ss+snappy+unix://./test.socks",
-		"ss+snappy+unix://aes-256-gcm:p@./test.socks",
-		"https://127.0.0.1:45678?tls_skip_verify=true&tls_self_signed=true",
-		"https://u:p@127.0.0.1:45678?tls_skip_verify=true&tls_self_signed=true",
-		"http+tls://127.0.0.1:45678?tls_skip_verify=true&tls_self_signed=true",
-		"http+tls://u:p@127.0.0.1:45678?tls_skip_verify=true&tls_self_signed=true",
+// start runs the server in the background; the returned channel yields Run's result once.
+func start(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) (permuteproxy.Server, <-chan error) {
+	t.Helper()
+	srv, err := e.Server(c)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, uri := range testdata {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		srv.Close()
+		cancel()
+	})
+	return srv, done
+}
+
+func waitBound(t *testing.T, base *probe, done <-chan error) net.Addr {
+	t.Helper()
+	select {
+	case addr := <-base.bound:
+		return addr
+	case err := <-done:
+		t.Fatalf("server exited before binding: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("server did not bind")
+	}
+	return nil
+}
+
+func waitBoundPacket(t *testing.T, base *probe, done <-chan error) net.Addr {
+	t.Helper()
+	select {
+	case addr := <-base.boundPacket:
+		return addr
+	case err := <-done:
+		t.Fatalf("server exited before binding a socket: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("server did not bind a socket")
+	}
+	return nil
+}
+
+func waitDone(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after Close")
+	}
+}
+
+func fetch(ctx context.Context, n permuteproxy.Network, url string) (string, error) {
+	tr := &http.Transport{DialContext: n.DialContext, DisableKeepAlives: true}
+	defer tr.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	return string(body), err
+}
+
+// reservePort returns a 127.0.0.1 address whose port was free for tcp and udp alike, as an ss server binds both.
+func reservePort(t *testing.T) string {
+	t.Helper()
+	for range 100 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		pc, err := net.ListenPacket("udp", addr)
+		ln.Close()
+		if err == nil {
+			pc.Close()
+			return addr
+		}
+	}
+	t.Fatal("no 127.0.0.1 port was free for both tcp and udp in 100 tries")
+	return ""
+}
+
+func TestReservePortSkipsHeldUDPPorts(t *testing.T) {
+	sink, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sink.Close() })
+	held := map[string]bool{}
+	// Connected to sink, the held sockets keep their ports without taking datagrams meant for other sockets.
+	for range 256 {
+		conn, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		held[conn.LocalAddr().String()] = true
+	}
+	// 256 held of about 16k ephemeral ports meet some 15 of 1000 tcp picks.
+	for range 1000 {
+		if addr := reservePort(t); held[addr] {
+			t.Fatalf("reservePort returned %s, whose udp port is held", addr)
+		}
+	}
+}
+
+func parse(t *testing.T, uri string) permuteproxy.Chain {
+	t.Helper()
+	c, err := permuteproxy.ParseURI(uri)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func requireNetcat(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("cmd-nc rows need a POSIX nc listener")
+	}
+	if _, err := exec.LookPath("nc"); err != nil {
+		t.Skipf("nc executable unavailable: %v", err)
+	}
+}
+
+// proxyRows is the stream URI matrix; port 0 and ./test.socks are rewritten per row.
+var proxyRows = []string{
+	"socks5+cmd-nc://127.0.0.1:0",
+	"socks5+cmd-nc://u:p@127.0.0.1:0",
+	"socks5+cmd-nc-unix://./test1.socks",
+	"socks5+cmd-nc-unix://u:p@./test2.socks",
+	"any://127.0.0.1:0",
+	"any://u:p@127.0.0.1:0",
+	"any+unix://./test.socks",
+	"any+unix://u:p@./test.socks",
+	"http://127.0.0.1:0",
+	"http://u:p@127.0.0.1:0",
+	"http+unix://./test.socks",
+	"http+unix://u:p@./test.socks",
+	"socks5://127.0.0.1:0",
+	"socks5://u:p@127.0.0.1:0",
+	"socks5+unix://./test.socks",
+	"socks5+unix://u:p@./test.socks",
+	"socks4://127.0.0.1:0",
+	"socks4://u:p@127.0.0.1:0",
+	"socks4+unix://./test.socks",
+	"socks4+unix://u:p@./test.socks",
+	"ssh://127.0.0.1:0",
+	"ssh://u:p@127.0.0.1:0",
+	"ssh+unix://./test.socks",
+	"ssh+unix://u:p@./test.socks",
+	"ss://127.0.0.1:0",
+	"ss://aes-256-gcm:p@127.0.0.1:0",
+	"ss+unix://./test.socks",
+	"ss+unix://aes-256-gcm:p@./test.socks",
+	"any+snappy://127.0.0.1:0",
+	"any+snappy://u:p@127.0.0.1:0",
+	"http+snappy://127.0.0.1:0",
+	"http+snappy://u:p@127.0.0.1:0",
+	"http+snappy+unix://./test.socks",
+	"http+snappy+unix://u:p@./test.socks",
+	"socks5+snappy://127.0.0.1:0",
+	"socks5+snappy://u:p@127.0.0.1:0",
+	"socks5+snappy+unix://./test.socks",
+	"socks5+snappy+unix://u:p@./test.socks",
+	"socks4+snappy://127.0.0.1:0",
+	"socks4+snappy://u:p@127.0.0.1:0",
+	"socks4+snappy+unix://./test.socks",
+	"socks4+snappy+unix://u:p@./test.socks",
+	"ssh+snappy://127.0.0.1:0",
+	"ssh+snappy://u:p@127.0.0.1:0",
+	"ssh+snappy+unix://./test.socks",
+	"ssh+snappy+unix://u:p@./test.socks",
+	"ss+snappy://127.0.0.1:0",
+	"ss+snappy://aes-256-gcm:p@127.0.0.1:0",
+	"ss+snappy+unix://./test.socks",
+	"ss+snappy+unix://aes-256-gcm:p@./test.socks",
+	"https://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"https://u:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"http+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"http+tls://u:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks5+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"http+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks4+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"ssh+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"any+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"ss+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	"socks5+snappy+quic://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+}
+
+// selfSigned has a tls or quic server sign its own certificate and a client skip verifying it.
+var selfSigned = permuteproxy.Options{"tls_self_signed": "true", "tls_skip_verify": "true"}
+
+// proxyChains are matrix rows no URI writes, as a URI hands tls_* keys only to the outer of tls and quic.
+var proxyChains = []matrixRow{
+	{"socks5+tls+quic://127.0.0.1:0", permuteproxy.Chain{
+		Layers:   []permuteproxy.Layer{{Scheme: "socks5"}, {Scheme: "tls", Options: selfSigned}, {Scheme: "quic", Options: selfSigned}},
+		Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:0"},
+	}},
+}
+
+var anyClients = []string{"http", "socks4", "socks5", "ssh"}
+
+// matrixRow is a chain of the stream matrix and the name its subtest runs under.
+type matrixRow struct {
+	name  string
+	chain permuteproxy.Chain
+}
+
+func TestProxy(t *testing.T) {
+	want := "OK"
+	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Write([]byte(want))
+	}))
+	t.Cleanup(target.Close)
+	dir := t.TempDir()
+	rows := make([]matrixRow, 0, len(proxyRows)+len(proxyChains))
+	for _, uri := range proxyRows {
+		rows = append(rows, matrixRow{uri, parse(t, uri)})
+	}
+	rows = append(rows, proxyChains...)
+	for i, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			c := row.chain
+			command := strings.HasPrefix(c.Endpoint.Network, "cmd")
+			if command {
+				requireNetcat(t)
+			}
+			switch c.Endpoint.Network {
+			case "unix", "cmd-nc-unix":
+				c.Endpoint.Address = filepath.Join(dir, fmt.Sprintf("%d.sock", i))
+			case "cmd-nc":
+				c.Endpoint.Address = reservePort(t)
+			}
+			// A quic row's server binds a udp socket at port 0, not a listener.
+			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
+			base, upstream := newProbe(local.Network), newProbe(system)
+			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+			bound := waitBound
+			if overUDP {
+				bound = waitBoundPacket
+			}
+			addr := bound(t, base, done)
+			if c.Endpoint.Network == "" {
+				c.Endpoint.Address = addr.String()
+			}
+			clients := []string{c.Layers[0].Scheme}
+			if clients[0] == "any" {
+				clients = anyClients
+			}
+			for _, scheme := range clients {
+				t.Run(scheme, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					cc := c
+					cc.Layers = append([]permuteproxy.Layer{{Scheme: scheme, Options: c.Layers[0].Options}}, c.Layers[1:]...)
+					clientBase := newProbe(local.Network)
+					n, err := permuteproxy.Engine{Base: clientBase}.Client(cc)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer closeIf(n)
+					before := upstream.dials.Load()
+					body, err := fetch(ctx, n, target.URL)
+					// nc listeners bind only inside Accept, so command rows poll until the first request lands.
+					for err != nil && command && ctx.Err() == nil {
+						time.Sleep(20 * time.Millisecond)
+						body, err = fetch(ctx, n, target.URL)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if body != want {
+						t.Fatalf("got %q, want %q", body, want)
+					}
+					if got := upstream.dials.Load() - before; got != 1 {
+						t.Fatalf("upstream dials = %d, want 1", got)
+					}
+					if overUDP {
+						if got := clientBase.packets.Load(); got != 1 || clientBase.dials.Load() != 0 {
+							t.Fatalf("client base packets = %d, dials = %d; want one socket", got, clientBase.dials.Load())
+						}
+					} else if got := clientBase.dials.Load(); got < 1 || (!command && got != 1) {
+						t.Fatalf("client base dials = %d", got)
+					}
+				})
+			}
+			if overUDP {
+				if got := base.packets.Load(); got != 1 || base.listens.Load() != 0 {
+					t.Fatalf("base packets = %d, listens = %d; want one socket", got, base.listens.Load())
+				}
+			} else if got := base.listens.Load(); got != 1 {
+				t.Fatalf("base listens = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestServerLifecycle(t *testing.T) {
+	for _, uri := range []string{"http://127.0.0.1:0", "socks5://127.0.0.1:0", "ss://127.0.0.1:0", "any://127.0.0.1:0"} {
 		t.Run(uri, func(t *testing.T) {
+			c := parse(t, uri)
+			t.Run("cancel", func(t *testing.T) {
+				base := newProbe(system)
+				srv, err := permuteproxy.Engine{Base: base}.Server(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				done := make(chan error, 1)
+				go func() { done <- srv.Run(ctx) }()
+				waitBound(t, base, done)
+				cancel()
+				waitDone(t, done)
+			})
+			t.Run("close", func(t *testing.T) {
+				base := newProbe(system)
+				srv, done := start(t, permuteproxy.Engine{Base: base}, c)
+				addr := waitBound(t, base, done)
+				if err := srv.Close(); err != nil {
+					t.Fatal(err)
+				}
+				waitDone(t, done)
+				if err := srv.Close(); err != nil {
+					t.Fatalf("second Close = %v", err)
+				}
+				if conn, err := net.DialTimeout("tcp", addr.String(), time.Second); err == nil {
+					conn.Close()
+					t.Fatal("listener still accepting after Close")
+				}
+			})
+			t.Run("close before run", func(t *testing.T) {
+				base := newProbe(system)
+				srv, err := permuteproxy.Engine{Base: base}.Server(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := srv.Close(); err != nil {
+					t.Fatal(err)
+				}
+				done := make(chan error, 1)
+				go func() { done <- srv.Run(context.Background()) }()
+				waitDone(t, done)
+				if got := base.listens.Load(); got != 0 {
+					t.Fatalf("base listens = %d after Close, want 0", got)
+				}
+			})
+		})
+	}
+}
+
+// greetings are the leading handshake bytes a client sends before stalling, per proxy scheme.
+var greetings = map[string]string{"http": "GET ", "socks4": "\x04", "socks5": "\x05", "ss": "\x01", "ssh": "SSH-", "any": "\x05"}
+
+// readErr drains conn and reports the error that ends it, failing if none arrives.
+func readErr(t *testing.T, conn net.Conn) error {
+	t.Helper()
+	got := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				got <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-got:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection survived the server stop")
+		return nil
+	}
+}
+
+// holdingTarget accepts connections and keeps them silent until the test ends.
+func holdingTarget(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conns []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, conn)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, conn := range conns {
+			conn.Close()
+		}
+	})
+	return ln.Addr().String()
+}
+
+// connect opens a client connection to the proxy at c in the given state: idle sends nothing,
+// partial sends a truncated greeting, tunnel completes the proxy handshake towards target.
+func connect(t *testing.T, ctx context.Context, c permuteproxy.Chain, state, target string) net.Conn {
+	t.Helper()
+	scheme := c.Layers[0].Scheme
+	if state == "tunnel" {
+		if scheme == "any" {
+			c.Layers = append([]permuteproxy.Layer{{Scheme: "socks5", Options: c.Layers[0].Options}}, c.Layers[1:]...)
+		}
+		n, err := permuteproxy.Engine{}.Client(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { closeIf(n) })
+		conn, err := n.DialContext(ctx, "tcp", target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return conn
+	}
+	c.Layers = c.Layers[1:]
+	if c.Endpoint.Network == "" {
+		c.Endpoint.Network = "tcp"
+	}
+	tr, err := permuteproxy.Engine{}.Transport(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := tr.Dial(ctx, permuteproxy.Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == "partial" {
+		if _, err := conn.Write([]byte(greetings[scheme])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return conn
+}
+
+func TestServerStopReleasesConns(t *testing.T) {
+	target := holdingTarget(t)
+	rows := []string{
+		"http://127.0.0.1:0",
+		"socks4://127.0.0.1:0",
+		"socks5://127.0.0.1:0",
+		"ss://127.0.0.1:0",
+		"ss://aes-256-gcm:p@127.0.0.1:0",
+		"ssh://127.0.0.1:0",
+		"any://127.0.0.1:0",
+		"any+snappy://127.0.0.1:0",
+		"socks5+snappy://127.0.0.1:0",
+		"socks5+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true",
+	}
+	for _, uri := range rows {
+		c := parse(t, uri)
+		for _, state := range []string{"idle", "partial", "tunnel"} {
+			for _, stop := range []string{"close", "cancel"} {
+				t.Run(uri+"/"+state+"/"+stop, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					base, upstream := newProbe(system), newProbe(system)
+					srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+					if err != nil {
+						t.Fatal(err)
+					}
+					runCtx, stopRun := context.WithCancel(ctx)
+					done := make(chan error, 1)
+					go func() { done <- srv.Run(runCtx) }()
+					t.Cleanup(func() {
+						srv.Close()
+						stopRun()
+					})
+					cc := c
+					cc.Endpoint.Address = waitBound(t, base, done).String()
+					conn := connect(t, ctx, cc, state, target)
+					defer conn.Close()
+					select {
+					case <-base.accepted:
+					case <-time.After(5 * time.Second):
+						t.Fatal("server did not accept the connection")
+					}
+					if stop == "close" {
+						if err := srv.Close(); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						stopRun()
+					}
+					waitDone(t, done)
+					if err := readErr(t, conn); err == nil {
+						t.Fatal("client read succeeded after the server stopped")
+					}
+					if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
+						t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProxyRejectsBadCredentials(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Write([]byte("OK"))
+	}))
+	t.Cleanup(target.Close)
+	tests := []struct {
+		server string
+		client permuteproxy.Options
+	}{
+		{"http://u:p@127.0.0.1:0", permuteproxy.Options{"username": "u", "password": "x"}},
+		{"http://u:p@127.0.0.1:0", nil},
+		{"socks5://u:p@127.0.0.1:0", permuteproxy.Options{"username": "u", "password": "x"}},
+		{"socks5://u:p@127.0.0.1:0", nil},
+		{"socks4://u@127.0.0.1:0", permuteproxy.Options{"username": "x"}},
+		{"ssh://u:p@127.0.0.1:0", permuteproxy.Options{"username": "u", "password": "x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.server+"/"+tt.client["username"], func(t *testing.T) {
+			c := parse(t, tt.server)
+			base := newProbe(system)
+			_, done := start(t, permuteproxy.Engine{Base: base}, c)
+			c.Endpoint.Address = waitBound(t, base, done).String()
+			c.Layers[0].Options = tt.client
+			n, err := permuteproxy.Engine{}.Client(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeIf(n)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			t.Cleanup(cancel)
-			runner, err := proxy.NewRunner(uri)
+			defer cancel()
+			if body, err := fetch(ctx, n, target.URL); err == nil {
+				t.Fatalf("request with bad credentials succeeded: %q", body)
+			}
+		})
+	}
+}
+
+func TestClientRefusesPacket(t *testing.T) {
+	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1"} {
+		t.Run(uri, func(t *testing.T) {
+			base := newProbe(system)
+			n, err := permuteproxy.Engine{Base: base}.Client(parse(t, uri))
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			done := make(chan struct{})
-			go func() {
-				err := runner.Run(ctx)
-				if err != nil && !netutils.IsClosedConnError(err) {
-					t.Fatal("runner.Run: ", err)
-				}
-				done <- struct{}{}
-			}()
-			t.Cleanup(func() {
-				runner.Close()
-			})
-			time.Sleep(1 * time.Second)
-
-			cliURI := uri
-			if strings.HasPrefix(cliURI, "any") {
-				protos := []string{
-					"socks5",
-					"socks4",
-					"ssh",
-					"http",
-				}
-				cliURI = protos[rand.Intn(len(protos))] + uri[3:]
+			defer closeIf(n)
+			if _, err := n.DialContext(context.Background(), "udp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+				t.Fatalf("DialContext(udp) = %v, want ErrUnsupported", err)
 			}
-			dialer, err := proxy.NewDialer(cliURI)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			want := "OK"
-			testserver := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-				rw.Write([]byte(want))
-			}))
-			t.Cleanup(func() {
-				testserver.Close()
-			})
-			cli := testserver.Client()
-			cli.Transport = &http.Transport{
-				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					return dialer.DialContext(ctx, network, addr)
-				},
-			}
-
-			resp, err := cli.Get(testserver.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				resp.Body.Close()
-			})
-			body, _ := io.ReadAll(resp.Body)
-			if want != string(body) {
-				t.Fatalf("got %q, want %q", body, want)
-			}
-
-			runner.Close()
-			select {
-			case <-done:
-			case <-time.After(2 * time.Second):
-				t.Fatal("expected runner to exit after 10 seconds but it didn't")
+			if got := base.dials.Load(); got != 0 {
+				t.Fatalf("base dials = %d, want 0", got)
 			}
 		})
 	}

@@ -2,49 +2,67 @@ package local
 
 import (
 	"context"
+	"errors"
 	"net"
+	"time"
 
 	"github.com/google/shlex"
 
-	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-type command struct {
-	CommandDialer permuteproxy.CommandDialer
-}
-
 var localAddr = netutils.NewNetAddr("cmd", "")
 
-func (c *command) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	cmd, err := shlex.Split(address)
+func splitCommand(address string) ([]string, error) {
+	args, err := shlex.Split(address)
 	if err != nil {
 		return nil, err
 	}
-	remoteAddr := netutils.NewNetAddr(network, address)
-
-	commandDialer := c.CommandDialer
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if ok && proxy.CommandDialer != nil {
-		commandDialer = proxy.CommandDialer
+	if len(args) == 0 {
+		return nil, errors.New("empty command")
 	}
-
-	return cmdutils.NewCommandListener(ctx, commandDialer, localAddr, remoteAddr, cmd)
+	return args, nil
 }
 
-func (c *command) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	cmd, err := shlex.Split(address)
+func (l *Local) dial() (cmdutils.Dial, error) {
+	if l.WaitDelay < 0 {
+		return nil, errNegativeWaitDelay
+	}
+	if l.Command != nil {
+		return l.Command, nil
+	}
+	return l.command, nil
+}
+
+// waitDelay is WaitDelay with its zero default applied.
+func (l *Local) waitDelay() time.Duration {
+	if l.WaitDelay == 0 {
+		return defaultWaitDelay
+	}
+	return l.WaitDelay
+}
+
+func (l *Local) dialCommand(ctx context.Context, network, address string) (net.Conn, error) {
+	args, err := splitCommand(address)
 	if err != nil {
 		return nil, err
 	}
-	remoteAddr := netutils.NewNetAddr(network, address)
-
-	commandDialer := c.CommandDialer
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if ok && proxy.CommandDialer != nil {
-		commandDialer = proxy.CommandDialer
+	dial, err := l.dial()
+	if err != nil {
+		return nil, err
 	}
+	return cmdutils.DialContext(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args)
+}
 
-	return cmdutils.NewCommandDialContext(ctx, commandDialer, localAddr, remoteAddr, cmd)
+func (l *Local) listenCommand(ctx context.Context, network, address string) (net.Listener, error) {
+	args, err := splitCommand(address)
+	if err != nil {
+		return nil, err
+	}
+	dial, err := l.dial()
+	if err != nil {
+		return nil, err
+	}
+	return cmdutils.Listen(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args, l.waitDelay())
 }
