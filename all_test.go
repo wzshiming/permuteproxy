@@ -216,22 +216,21 @@ func TestReservePortSkipsHeldUDPPorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sink.Close() })
+	held := map[string]bool{}
 	// Connected to sink, the held sockets keep their ports without taking datagrams meant for other sockets.
 	for range 256 {
-		held, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
+		conn, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { held.Close() })
+		t.Cleanup(func() { conn.Close() })
+		held[conn.LocalAddr().String()] = true
 	}
 	// 256 held of about 16k ephemeral ports meet some 15 of 1000 tcp picks.
 	for range 1000 {
-		addr := reservePort(t)
-		pc, err := net.ListenPacket("udp", addr)
-		if err != nil {
-			t.Fatalf("reservePort returned %s, whose udp port is held: %v", addr, err)
+		if addr := reservePort(t); held[addr] {
+			t.Fatalf("reservePort returned %s, whose udp port is held", addr)
 		}
-		pc.Close()
 	}
 }
 
