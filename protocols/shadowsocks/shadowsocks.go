@@ -141,8 +141,8 @@ func (c *carrier) ReadFrom(b []byte) (int, net.Addr, error) {
 	return n, addr, err
 }
 
-// sessions owns the outgoing sockets the packet server opens per client and target, which the
-// library never closes; Close ends them all and closes any opened afterwards at once.
+// sessions owns the outgoing sockets the packet server opens per client and target, of which the library
+// closes only one that lost the race for its pair; Close ends them all and closes any opened afterwards at once.
 type sessions struct {
 	listen func(ctx context.Context, network, address string) (net.PacketConn, error)
 	mu     sync.Mutex
