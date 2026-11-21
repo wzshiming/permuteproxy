@@ -764,6 +764,10 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 }
 
 func TestSSAndQUICRefuseNetcatUDP(t *testing.T) {
+	// Valid alone, so the refusals below are of the compositions and not of an unknown network.
+	if _, err := permuteproxy.ParseURI("cmd-nc-udp://127.0.0.1:53"); err != nil {
+		t.Fatalf("cmd-nc-udp alone = %v, want it valid", err)
+	}
 	for _, layer := range []string{"ss", "quic"} {
 		if _, err := permuteproxy.ParseURI(layer + "+udp://127.0.0.1:53"); err != nil {
 			t.Errorf("%s over udp = %v, want it valid", layer, err)
