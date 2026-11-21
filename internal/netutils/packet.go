@@ -14,8 +14,8 @@ type ListenPacket func(ctx context.Context, network, address string) (net.Packet
 
 // DialPacket opens an unconnected datagram socket through listen with address as its default peer.
 // The conn is also a net.PacketConn: Write sends one datagram to the peer and Read yields the next
-// datagram from anyone, WriteTo and ReadFrom reach and report other peers of the peer's family.
-// Networks are udp4, udp6, udp bound in an IP peer's family, and unixgram at a private path Close removes.
+// datagram from anyone, WriteTo and ReadFrom reach and report other peers. Networks are udp, udp4,
+// udp6 and unixgram; unixgram binds a private socket path that Close removes.
 func DialPacket(ctx context.Context, network, address string, listen ListenPacket) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -29,14 +29,6 @@ func DialPacket(ctx context.Context, network, address string, listen ListenPacke
 			return nil, err
 		}
 		c.remote = remote
-		// A dual-stack wildcard socket may get a port an IPv4 socket holds, which then takes its datagrams.
-		switch {
-		case network != "udp" || remote.IP == nil:
-		case remote.IP.To4() != nil:
-			network = "udp4"
-		default:
-			network = "udp6"
-		}
 	case "unixgram":
 		if address == "" {
 			return nil, fmt.Errorf("dial %s: missing address", network)

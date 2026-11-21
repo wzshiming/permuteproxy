@@ -24,8 +24,8 @@ func TestAdapterPairs(t *testing.T) {
 		listen []string
 	}{
 		{"test-tls", Stream, []string{"base.dial tcp 127.0.0.1:1", "test-tls.client"}, []string{"base.listen tcp 127.0.0.1:1", "test-tls.listener"}},
-		{"test-quic", Stream, []string{"base.listenpacket udp4 :0", "test-quic.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-quic.packetlistener"}},
-		{"test-dtls", Packet, []string{"base.listenpacket udp4 :0", "test-dtls.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-dtls.packetconn"}},
+		{"test-quic", Stream, []string{"base.listenpacket udp :0", "test-quic.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-quic.packetlistener"}},
+		{"test-dtls", Packet, []string{"base.listenpacket udp :0", "test-dtls.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-dtls.packetconn"}},
 		{"test-uot", Packet, []string{"base.dial tcp 127.0.0.1:1", "test-uot.client"}, nil},
 	}
 	for _, tt := range tests {
@@ -189,7 +189,7 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 	if _, err := tr.Dial(ctx, Stream); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "base.listenpacket udp4 :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
+	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1", "base.dial tcp 127.0.0.1:1", "test-keep.client")
 }
 
 func TestAdapterLeavesCarrierToLink(t *testing.T) {
@@ -254,8 +254,8 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 		listen []string
 	}{
 		{"test-hook-ss", nil, []string{"test-hook-ss.beforedial", "base.dial tcp 127.0.0.1:1", "test-hook-ss.client"}, []string{"test-hook-ss.beforelisten", "base.listen tcp 127.0.0.1:1", "test-hook-ss.listener"}},
-		{"test-hook-sp", nil, []string{"test-hook-sp.beforedial", "base.listenpacket udp4 :0", "test-hook-sp.client"}, []string{"test-hook-sp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-sp.packetlistener"}},
-		{"test-hook-pp", nil, []string{"test-hook-pp.beforedial", "base.listenpacket udp4 :0", "test-hook-pp.client"}, []string{"test-hook-pp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-pp.packetconn"}},
+		{"test-hook-sp", nil, []string{"test-hook-sp.beforedial", "base.listenpacket udp :0", "test-hook-sp.client"}, []string{"test-hook-sp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-sp.packetlistener"}},
+		{"test-hook-pp", nil, []string{"test-hook-pp.beforedial", "base.listenpacket udp :0", "test-hook-pp.client"}, []string{"test-hook-pp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-pp.packetconn"}},
 		{"test-hookfail-ss", errHook, []string{"test-hookfail-ss.beforedial"}, []string{"test-hookfail-ss.beforelisten"}},
 		{"test-hookfail-sp", errHook, []string{"test-hookfail-sp.beforedial"}, []string{"test-hookfail-sp.beforelisten"}},
 		{"test-hookfail-pp", errHook, []string{"test-hookfail-pp.beforedial"}, []string{"test-hookfail-pp.beforelisten"}},
@@ -293,7 +293,7 @@ func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
 		plane  Plane // the plane passed through
 		calls  []string
 	}{
-		{"test-hook-keep", Packet, []string{"base.listenpacket udp4 :0", "base.listenpacket udp 127.0.0.1:1"}},
+		{"test-hook-keep", Packet, []string{"base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1"}},
 		{"test-hook-keep-stream", Stream, []string{"base.dial tcp 127.0.0.1:1", "base.listen tcp 127.0.0.1:1"}},
 	}
 	for _, tt := range tests {

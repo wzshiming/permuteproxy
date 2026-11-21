@@ -173,28 +173,6 @@ func TestDialPacketFamilies(t *testing.T) {
 	}
 }
 
-func TestDialPacketBindsInThePeerFamily(t *testing.T) {
-	for _, tt := range []struct{ network, address, want string }{
-		{"udp", "127.0.0.1:1", "udp4 :0"},
-		{"udp", "[::1]:1", "udp6 :0"},
-		{"udp4", "127.0.0.1:1", "udp4 :0"},
-		{"udp6", "[::1]:1", "udp6 :0"},
-		{"udp", ":1", "udp :0"},
-	} {
-		var got string
-		conn, err := DialPacket(context.Background(), tt.network, tt.address, func(_ context.Context, network, address string) (net.PacketConn, error) {
-			got = network + " " + address
-			return nil, errors.New("recorded")
-		})
-		if err == nil {
-			conn.Close()
-		}
-		if got != tt.want {
-			t.Errorf("DialPacket(%s, %s) listened on %q, want %q", tt.network, tt.address, got, tt.want)
-		}
-	}
-}
-
 func TestDialPacketLifecycle(t *testing.T) {
 	for _, network := range packetNetworks {
 		t.Run(network, func(t *testing.T) {

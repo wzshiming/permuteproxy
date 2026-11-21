@@ -347,7 +347,7 @@ func TestBoundDialPacket(t *testing.T) {
 	if _, err := tr.Dial(ctx, Packet); err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "base.listenpacket udp4 :0")
+	assertCalls(t, "base.listenpacket udp :0")
 	if _, err := tr.Dial(ctx, Stream); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Dial(Stream) = %v, want ErrUnsupported", err)
 	}
@@ -772,7 +772,7 @@ func TestLossyNetworkWithoutLayersDialsNormally(t *testing.T) {
 	if _, err := tr.ListenPacket(ctx); err != nil {
 		t.Fatalf("ListenPacket() on a lossy network without layers = %v", err)
 	}
-	assertCalls(t, "base.listenpacket udp4 :0", "base.listenpacket udp 127.0.0.1:1")
+	assertCalls(t, "base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1")
 }
 
 func TestUpstreamNeverCheckedForLossy(t *testing.T) {
