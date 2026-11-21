@@ -190,14 +190,49 @@ func fetch(ctx context.Context, n permuteproxy.Network, url string) (string, err
 	return string(body), err
 }
 
+// reservePort returns a 127.0.0.1 address whose port was free for tcp and udp alike, as an ss server binds both.
 func reservePort(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	for range 100 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		pc, err := net.ListenPacket("udp", addr)
+		ln.Close()
+		if err == nil {
+			pc.Close()
+			return addr
+		}
+	}
+	t.Fatal("no 127.0.0.1 port was free for both tcp and udp in 100 tries")
+	return ""
+}
+
+func TestReservePortSkipsHeldUDPPorts(t *testing.T) {
+	sink, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ln.Close()
-	return ln.Addr().String()
+	t.Cleanup(func() { sink.Close() })
+	// Connected to sink, the held sockets keep their ports without taking datagrams meant for other sockets.
+	for range 256 {
+		held, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { held.Close() })
+	}
+	// 256 held of about 16k ephemeral ports meet some 15 of 1000 tcp picks.
+	for range 1000 {
+		addr := reservePort(t)
+		pc, err := net.ListenPacket("udp", addr)
+		if err != nil {
+			t.Fatalf("reservePort returned %s, whose udp port is held: %v", addr, err)
+		}
+		pc.Close()
+	}
 }
 
 func parse(t *testing.T, uri string) permuteproxy.Chain {
