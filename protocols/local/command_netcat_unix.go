@@ -118,7 +118,7 @@ func (s *socketFile) track(conn net.Conn) net.Conn {
 		<-p.Done()
 		sc.settle()
 	}()
-	return netutils.WithProcess(sc, conn)
+	return netutils.ConnWithProcess(sc, conn)
 }
 
 // before waits for the previous nc to be settled so its socket is gone before the next one binds.

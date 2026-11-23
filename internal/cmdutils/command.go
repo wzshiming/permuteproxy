@@ -222,7 +222,7 @@ func (l *listener) admit(conn net.Conn, first []byte) net.Conn {
 		return nil
 	}
 	l.pending = nil
-	accepted := netutils.WithProcess(cmux.UnreadConn(conn, first), conn)
+	accepted := netutils.ConnWithProcess(cmux.UnreadConn(conn, first), conn)
 	if p, ok := conn.(netutils.Process); ok {
 		l.gate = p.Done()
 		return accepted
