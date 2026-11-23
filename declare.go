@@ -80,7 +80,7 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 	funcs, err := s.NewAdapter(opts)
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+		return nil, invalid(err)
 	case funcs == nil:
 		return nil, fmt.Errorf("NewAdapter returned nil: %w", ErrInvalidChain)
 	}
@@ -137,6 +137,10 @@ func reject(release func() error, err error) error {
 	if errors.Is(err, ErrInvalidChain) {
 		return err
 	}
+	return invalid(err)
+}
+
+func invalid(err error) error {
 	return fmt.Errorf("%w: %w", err, ErrInvalidChain)
 }
 
@@ -179,7 +183,7 @@ func (s LayerSpec) client(inner Transport, local Network, opts Options) (Network
 	funcs, err := s.NewClient(opts)
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+		return nil, invalid(err)
 	case funcs == nil:
 		return nil, fmt.Errorf("NewClient returned nil: %w", ErrInvalidChain)
 	}
@@ -401,7 +405,7 @@ func (s LayerSpec) server(inner Transport, upstream Network, opts Options) (Serv
 	funcs, err := s.NewServer(opts)
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("%w: %w", err, ErrInvalidChain)
+		return nil, invalid(err)
 	case funcs == nil:
 		return nil, fmt.Errorf("NewServer returned nil: %w", ErrInvalidChain)
 	case funcs.Serve == nil && (s.Requires|s.Preserves)&Stream != 0:
