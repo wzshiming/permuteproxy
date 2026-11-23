@@ -37,29 +37,6 @@ func (e Engine) build(r *resolved, from int) (Transport, error) {
 	return r.stack(t, from, r.own)
 }
 
-// bind binds n to address on the networks named per plane, layered when layers sit above it.
-func bind(n Network, stream, packet, address string, layered bool) *bound {
-	b := &bound{network: n, stream: stream, packet: packet, address: address}
-	// A layer is never offered a datagram plane that its network reports lossy.
-	if layered && b.packet != "" && isLossy(b.network, b.packet) {
-		b.packet = ""
-	}
-	return b
-}
-
-// stack builds layers hi-1 out to lo over t, closing what it holds when a layer fails.
-func (r *resolved) stack(t Transport, lo, hi int) (Transport, error) {
-	for i := hi - 1; i >= lo; i-- {
-		next, err := r.specs[i].adapt(t, r.layers[i].Options.clone())
-		if err != nil {
-			closeIf(t)
-			return nil, fmt.Errorf("layer %q: %w", r.layers[i].Scheme, err)
-		}
-		t = pinned{TransportFuncs{Plane: r.planes[i], DialFunc: next.Dial, ListenFunc: next.Listen, ListenPacketFunc: next.ListenPacket}, next}
-	}
-	return t, nil
-}
-
 // Transport builds an adapter chain; with layers, the result's Close forwards to the outermost layer's own result.
 func (e Engine) Transport(c Chain) (Transport, error) {
 	r, err := c.resolve()
