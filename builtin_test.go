@@ -7,9 +7,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
+
+func TestRootDeclaresBaseNetworks(t *testing.T) {
+	want := map[string]NetworkSpec{
+		"tcp":      {Plane: Stream, AddressKind: AddressHost},
+		"udp":      {Plane: Packet, AddressKind: AddressHost},
+		"unix":     {Plane: Stream, AddressKind: AddressPath},
+		"unixgram": {Plane: Packet, AddressKind: AddressPath},
+		"cmd":      {Plane: Stream, AddressKind: AddressOpaque},
+	}
+	if diff := cmp.Diff(want, atRootInit.networks); diff != "" {
+		t.Fatalf("networks without any protocols package (-want +got):\n%s", diff)
+	}
+	wantCmd := Chain{Endpoint: Endpoint{Network: "cmd", Address: "nc host 1"}}
+	if diff := cmp.Diff(wantCmd, atRootInit.cmd); atRootInit.cmdErr != nil || diff != "" {
+		t.Fatalf("ParseURI(\"cmd:nc host 1\") without any protocols package = %v (-want +got):\n%s", atRootInit.cmdErr, diff)
+	}
+}
 
 func TestDgramDeclaration(t *testing.T) {
 	spec, ok := lookupLayer("dgram")
