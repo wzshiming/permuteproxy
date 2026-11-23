@@ -16,7 +16,7 @@ func sorted(keys []string) []string {
 
 func TestOptionKeysWithoutACMEHoldTheNonAcmeKeys(t *testing.T) {
 	if got, want := sorted(OptionKeysWithoutACME()), sorted(otherKeys); !slices.Equal(got, want) {
-		t.Fatalf("OptionKeysWithoutAcme() = %q, want %q", got, want)
+		t.Fatalf("OptionKeysWithoutACME() = %q, want %q", got, want)
 	}
 }
 
