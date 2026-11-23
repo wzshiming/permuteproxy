@@ -83,42 +83,43 @@ func (c Chain) proxy() (*resolved, error) {
 	return r, nil
 }
 
-// Client builds the client of a proxy chain's outermost layer; the result's Close forwards to the layer's own result.
-func (e Engine) Client(c Chain) (Network, error) {
+// below builds the Transport under c's outermost layer, which must be a proxy declaring side.
+func (e Engine) below(c Chain, side string, declares func(LayerSpec) bool) (*resolved, Transport, error) {
 	r, err := c.proxy()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	scheme, spec := c.Layers[0].Scheme, r.specs[0]
-	if spec.NewClient == nil {
-		return nil, fmt.Errorf("layer %q: client: %w", scheme, ErrUnsupported)
+	if !declares(r.specs[0]) {
+		return nil, nil, fmt.Errorf("layer %q: %s: %w", c.Layers[0].Scheme, side, ErrUnsupported)
 	}
 	inner, err := e.build(r, 1)
 	if err != nil {
+		return nil, nil, err
+	}
+	return r, inner, nil
+}
+
+// Client builds the client of a proxy chain's outermost layer; the result's Close forwards to the layer's own result.
+func (e Engine) Client(c Chain) (Network, error) {
+	r, inner, err := e.below(c, "client", func(s LayerSpec) bool { return s.NewClient != nil })
+	if err != nil {
 		return nil, err
 	}
-	n, err := spec.client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
+	n, err := r.specs[0].client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
-		return nil, fmt.Errorf("layer %q: %w", scheme, err)
+		return nil, fmt.Errorf("layer %q: %w", c.Layers[0].Scheme, err)
 	}
 	return restricted{network: n, plane: r.planes[0]}, nil
 }
 
 // Server builds the server of a proxy chain's outermost layer, which reaches its targets through Upstream.
 func (e Engine) Server(c Chain) (Server, error) {
-	r, err := c.proxy()
+	r, inner, err := e.below(c, "server", func(s LayerSpec) bool { return s.NewServer != nil })
 	if err != nil {
 		return nil, err
 	}
 	scheme, spec := c.Layers[0].Scheme, r.specs[0]
-	if spec.NewServer == nil {
-		return nil, fmt.Errorf("layer %q: server: %w", scheme, ErrUnsupported)
-	}
-	inner, err := e.build(r, 1)
-	if err != nil {
-		return nil, err
-	}
 	if p := inner.Planes(); p&(spec.Requires|spec.Preserves) == 0 || p&spec.Requires != spec.Requires {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, p, ErrUnsupported)
