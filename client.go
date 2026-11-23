@@ -128,3 +128,43 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 	}
 	return netutils.WrapPacket(pc, peer), nil
 }
+
+// restricted refuses dials and datagram sockets outside the chain's declared planes before they reach the client, which never listens.
+type restricted struct {
+	network Network
+	plane   Plane
+}
+
+func (n restricted) check(op, network string, want Plane) error {
+	if _, p, ok := lookupBase(network); !ok || p&want&n.plane == 0 {
+		return fmt.Errorf("%s %s: %w", op, network, ErrUnsupported)
+	}
+	return nil
+}
+
+func (n restricted) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if err := n.check("dial", network, Stream|Packet); err != nil {
+		return nil, err
+	}
+	return n.network.DialContext(ctx, network, address)
+}
+
+func (n restricted) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	return n.network.Listen(ctx, network, address)
+}
+
+func (n restricted) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	if err := n.check("listen packet", network, Packet); err != nil {
+		return nil, err
+	}
+	return n.network.ListenPacket(ctx, network, address)
+}
+
+func (n restricted) Close() error {
+	return closeIf(n.network)
+}
+
+// Lossy forwards what the restricted network reports.
+func (n restricted) Lossy(network string) bool {
+	return isLossy(n.network, network)
+}
