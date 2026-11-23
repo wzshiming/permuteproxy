@@ -230,50 +230,63 @@ func TestNativePacketDialOverSOCKS5(t *testing.T) {
 	testutils.Wait(t, upstream.packetClosed, "outgoing socket close")
 }
 
-func TestSOCKS5ServerStopEndsAssociations(t *testing.T) {
-	for _, stop := range []string{"close", "cancel"} {
-		t.Run(stop, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			c := parse(t, "socks5://127.0.0.1:0")
-			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-			srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			runCtx, stopRun := context.WithCancel(ctx)
-			done := make(chan error, 1)
-			go func() { done <- srv.Run(runCtx) }()
-			t.Cleanup(func() {
-				srv.Close()
-				stopRun()
-			})
-			c.Endpoint.Address = waitBound(t, base, done).String()
-			n, err := permuteproxy.Engine{}.Client(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeIf(n)
-			conn := dialPacket(t, ctx, n, testutils.UDPEcho(t).String())
-			testutils.RoundTrip(t, conn, "before", "before")
-			if stop == "close" {
-				if err := srv.Close(); err != nil {
+func TestServerStopEndsDatagramSessions(t *testing.T) {
+	for _, scheme := range []string{"socks5", "ss"} {
+		for _, stop := range []string{"close", "cancel"} {
+			t.Run(scheme+"/"+stop, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				// An ss server binds tcp and udp at the declared address.
+				c := parse(t, scheme+"://"+testutils.ReservePort(t))
+				base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
+				srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+				if err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				stopRun()
-			}
-			waitDone(t, done)
-			testutils.Wait(t, upstream.packetClosed, "outgoing socket close")
-			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			var ne net.Error
-			if _, err := conn.Read(make([]byte, 16)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
-				t.Fatalf("client Read after the server stopped = %v, want the closed association", err)
-			}
-			if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
-				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
-			}
-		})
+				runCtx, stopRun := context.WithCancel(ctx)
+				done := make(chan error, 1)
+				go func() { done <- srv.Run(runCtx) }()
+				t.Cleanup(func() {
+					srv.Close()
+					stopRun()
+				})
+				waitBound(t, base, done)
+				if scheme == "ss" {
+					waitBoundPacket(t, base, done)
+				}
+				n, err := permuteproxy.Engine{}.Client(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer closeIf(n)
+				conn := dialPacket(t, ctx, n, testutils.UDPEcho(t).String())
+				testutils.RoundTrip(t, conn, "before", "before")
+				if stop == "close" {
+					if err := srv.Close(); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					stopRun()
+				}
+				waitDone(t, done)
+				testutils.Wait(t, upstream.packetClosed, "session socket close")
+				if scheme == "ss" {
+					testutils.Wait(t, base.packetClosed, "listening socket close")
+				} else {
+					conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+					var ne net.Error
+					if _, err := conn.Read(make([]byte, 16)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+						t.Fatalf("client Read after the server stopped = %v, want the closed association", err)
+					}
+				}
+				if err := srv.Close(); err != nil {
+					t.Fatalf("Close after stop = %v", err)
+				}
+				if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
+					t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
+				}
+			})
+		}
 	}
 }
 
@@ -319,52 +332,6 @@ func TestShadowsocksPacketEcho(t *testing.T) {
 			// The packet server keeps one outgoing socket per client and target pair.
 			if upstream.dials.Load() != 1 || upstream.packets.Load() != 2 {
 				t.Fatalf("upstream dials %d packets %d, want 1 and 2", upstream.dials.Load(), upstream.packets.Load())
-			}
-		})
-	}
-}
-
-func TestShadowsocksServerStopClosesSessions(t *testing.T) {
-	for _, stop := range []string{"close", "cancel"} {
-		t.Run(stop, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			c := parse(t, "ss://"+testutils.ReservePort(t))
-			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-			srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			runCtx, stopRun := context.WithCancel(ctx)
-			done := make(chan error, 1)
-			go func() { done <- srv.Run(runCtx) }()
-			t.Cleanup(func() {
-				srv.Close()
-				stopRun()
-			})
-			waitBound(t, base, done)
-			waitBoundPacket(t, base, done)
-			n, err := permuteproxy.Engine{}.Client(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeIf(n)
-			testutils.RoundTrip(t, dialPacket(t, ctx, n, testutils.UDPEcho(t).String()), "before", "before")
-			if stop == "close" {
-				if err := srv.Close(); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				stopRun()
-			}
-			waitDone(t, done)
-			testutils.Wait(t, base.packetClosed, "listening socket close")
-			testutils.Wait(t, upstream.packetClosed, "session socket close")
-			if err := srv.Close(); err != nil {
-				t.Fatalf("Close after stop = %v", err)
-			}
-			if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
-				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
 			}
 		})
 	}
