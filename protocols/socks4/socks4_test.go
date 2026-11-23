@@ -7,32 +7,14 @@ import (
 	"net"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wzshiming/socks4"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
-
-// countingNetwork fails every call a chain makes on it and counts them.
-type countingNetwork struct{ calls atomic.Int32 }
-
-func (n *countingNetwork) DialContext(context.Context, string, string) (net.Conn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) Listen(context.Context, string, string) (net.Listener, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
 
 func TestURIKeepsNamesAndKeys(t *testing.T) {
 	for _, scheme := range []string{"socks4", "socks4a"} {
@@ -60,7 +42,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 	for _, scheme := range []string{"socks4", "socks4a"} {
 		for network, address := range map[string]string{"udp": "127.0.0.1:1", "unix": "./test.sock"} {
 			t.Run(scheme+"/"+network, func(t *testing.T) {
-				base := &countingNetwork{}
+				base := &testutils.CountingNetwork{}
 				c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: scheme}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
 				n, err := permuteproxy.Engine{Base: base}.Client(c)
 				if err != nil {
@@ -69,7 +51,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 				if _, err := n.DialContext(context.Background(), network, address); !errors.Is(err, permuteproxy.ErrUnsupported) {
 					t.Fatalf("DialContext(%s) = %v, want ErrUnsupported", network, err)
 				}
-				if got := base.calls.Load(); got != 0 {
+				if got := base.Calls.Load(); got != 0 {
 					t.Fatalf("base calls = %d, want 0", got)
 				}
 			})

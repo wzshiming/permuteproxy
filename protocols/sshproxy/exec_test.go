@@ -23,6 +23,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // exitCode is the error a fake command exits with to report a status.
@@ -1270,11 +1271,11 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 		"malformed":                  withCredentials("allow_exec", "maybe", "hostkey_data", hostKey),
 	} {
 		t.Run(name, func(t *testing.T) {
-			base := &countingNetwork{}
+			base := &testutils.CountingNetwork{}
 			if _, err := (permuteproxy.Engine{Base: base, Upstream: base}).Server(chain(opts, "127.0.0.1:0")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 				t.Fatalf("Server() = %v, want ErrInvalidChain", err)
 			}
-			if got := base.calls.Load(); got != 0 {
+			if got := base.Calls.Load(); got != 0 {
 				t.Fatalf("network calls = %d, want none", got)
 			}
 		})
@@ -1284,7 +1285,7 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 		"authorized keys": {"allow_exec": "true", "hostkey_data": hostKey, "authorized_data": authorizedKey},
 	} {
 		t.Run(name, func(t *testing.T) {
-			srv, err := permuteproxy.Engine{Base: &countingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
+			srv, err := permuteproxy.Engine{Base: &testutils.CountingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
 			if err != nil {
 				t.Fatal(err)
 			}

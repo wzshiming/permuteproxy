@@ -21,6 +21,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // hostKeyPEM is the host key of the servers under test, so that none generates an RSA key.
@@ -127,24 +128,6 @@ func roundTrip(t *testing.T, conn net.Conn, msg, want string) {
 	}
 }
 
-// countingNetwork fails every call a chain makes on it and counts them.
-type countingNetwork struct{ calls atomic.Int32 }
-
-func (n *countingNetwork) DialContext(context.Context, string, string) (net.Conn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) Listen(context.Context, string, string) (net.Listener, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
 func TestURIKeepsNameAndKeys(t *testing.T) {
 	uri := "ssh://u:p@127.0.0.1:1?authorized_data=a&authorized_file=b&hostkey_data=c&hostkey_file=d&identity_data=e&identity_file=f"
 	c, err := permuteproxy.ParseURI(uri)
@@ -168,7 +151,7 @@ func TestURIKeepsNameAndKeys(t *testing.T) {
 
 func TestClientRefusesUnixgramAndListen(t *testing.T) {
 	ctx := context.Background()
-	base := &countingNetwork{}
+	base := &testutils.CountingNetwork{}
 	n, err := permuteproxy.Engine{Base: base}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +164,7 @@ func TestClientRefusesUnixgramAndListen(t *testing.T) {
 			t.Fatalf("Listen(%s) = %v, want ErrUnsupported", network, err)
 		}
 	}
-	if got := base.calls.Load(); got != 0 {
+	if got := base.Calls.Load(); got != 0 {
 		t.Fatalf("base calls = %d, want 0", got)
 	}
 }
