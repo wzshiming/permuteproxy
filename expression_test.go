@@ -405,22 +405,6 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 	}
 }
 
-func TestExpressionLayersRefuseALossyHopsDatagrams(t *testing.T) {
-	ctx := context.Background()
-	tr, err := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}.Transport(chainOver("test-dtls-udp", "127.0.0.1:1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Dial(Packet) of test-dtls over udp the hop reports lossy = %v, want ErrUnsupported", err)
-	}
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() of test-dtls over udp the hop reports lossy = %v, want ErrUnsupported", err)
-	}
-	assertCalls(t)
-}
-
 func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {
 	ctx := context.Background()
 	client, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))

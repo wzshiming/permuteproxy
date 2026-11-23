@@ -675,39 +675,41 @@ func TestViewsForwardLossy(t *testing.T) {
 }
 
 func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
-	calls = nil
 	ctx := context.Background()
 	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
-	for _, scheme := range []string{"test-dtls", "test-quic"} {
-		tr, err := e.Transport(mk("udp", scheme))
-		if err != nil {
-			t.Fatal(err)
-		}
-		calls = nil
-		_, dialErr := tr.Dial(ctx, tr.Planes())
-		var listenErr error
-		if tr.Planes() == Stream {
-			_, listenErr = tr.Listen(ctx)
-		} else {
-			_, listenErr = tr.ListenPacket(ctx)
-		}
-		if !errors.Is(dialErr, ErrUnsupported) || !errors.Is(listenErr, ErrUnsupported) {
-			t.Fatalf("%s over lossy udp: dial = %v, listen = %v; want ErrUnsupported for both", scheme, dialErr, listenErr)
-		}
-		assertCalls(t)
+	listen := func(tr Transport) error { _, err := tr.Listen(ctx); return err }
+	listenPacket := func(tr Transport) error { _, err := tr.ListenPacket(ctx); return err }
+	for _, tt := range []struct {
+		name   string
+		chain  Chain
+		dial   Plane
+		listen func(Transport) error
+	}{
+		{"packet layer", mk("udp", "test-dtls"), Packet, listenPacket},
+		{"stream layer", mk("udp", "test-quic"), Stream, listen},
+		{"preserved packet", mk("", "test-keep"), Packet, listenPacket},
+		{"expression network name", chainOver("test-dtls-udp", "127.0.0.1:1"), Packet, listenPacket},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, err := e.Transport(tt.chain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls = nil
+			if _, err := tr.Dial(ctx, tt.dial); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("Dial(%v) over lossy udp = %v, want ErrUnsupported", tt.dial, err)
+			}
+			if err := tt.listen(tr); !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("listening over lossy udp = %v, want ErrUnsupported", err)
+			}
+			assertCalls(t)
+		})
 	}
 	tr, err := e.Transport(mk("", "test-keep"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	calls = nil
-	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("Dial(Packet) through test-keep over lossy udp = %v, want ErrUnsupported", err)
-	}
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() through test-keep over lossy udp = %v, want ErrUnsupported", err)
-	}
-	assertCalls(t)
 	if _, err := tr.Dial(ctx, Stream); err != nil {
 		t.Fatal(err)
 	}
