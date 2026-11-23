@@ -636,10 +636,15 @@ func TestServerBindFailureReleasesCarriers(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls = nil
-	if err := srv.Run(context.Background()); !errors.Is(err, errLink) {
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(context.Background()) }()
+	if err := testutils.Wait(t, done, "Run to return after the packet bind failed"); !errors.Is(err, errLink) {
 		t.Fatalf("Run() = %v, want the packet bind error", err)
 	}
 	assertCalls(t, "carrier.close")
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close after the failed bind = %v", err)
+	}
 }
 
 func TestServerBindsRequiredOrPreservedPlanes(t *testing.T) {

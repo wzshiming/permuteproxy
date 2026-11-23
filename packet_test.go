@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -420,51 +419,6 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 			t.Fatalf("sockets opened for a stream-only carrier: client %d server %d", clientBase.packets.Load(), base.packets.Load())
 		}
 	})
-}
-
-type closeCountListener struct {
-	net.Listener
-	closes *atomic.Int32
-}
-
-func (l closeCountListener) Close() error {
-	l.closes.Add(1)
-	return l.Listener.Close()
-}
-
-func TestShadowsocksBindFailureReleasesListener(t *testing.T) {
-	bindErr := errors.New("udp bind refused")
-	var closes atomic.Int32
-	base := permuteproxy.NetworkFuncs{
-		ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
-			ln, err := testutils.System{}.Listen(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			return closeCountListener{ln, &closes}, nil
-		},
-		ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, bindErr },
-	}
-	srv, err := permuteproxy.Engine{Base: base}.Server(parse(t, "ss://127.0.0.1:0"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(context.Background()) }()
-	select {
-	case err := <-done:
-		if !errors.Is(err, bindErr) {
-			t.Fatalf("Run = %v, want the udp bind error", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run kept serving with only the listener bound")
-	}
-	if closes.Load() != 1 {
-		t.Fatalf("listener closed %d times after the udp bind failed, want 1", closes.Load())
-	}
-	if err := srv.Close(); err != nil {
-		t.Fatalf("Close after the failed bind = %v", err)
-	}
 }
 
 func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
