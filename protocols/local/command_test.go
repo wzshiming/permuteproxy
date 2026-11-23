@@ -739,7 +739,8 @@ func TestNetcatUnixRemovesOwnedSocket(t *testing.T) {
 	if err := exchange(ctx, Network, "cmd-nc-unix", address, failed); err != nil {
 		t.Fatal(err)
 	}
-	if err := reaped(t, <-conns); err != nil {
+	// Linux netcat-openbsd ignores stdin EOF, so there it ends only through the kill after WaitDelay.
+	if err := reaped(t, <-conns); err != nil && !signaled(err) {
 		t.Fatalf("nc ended with %v", err)
 	}
 	if err := ln.Close(); err != nil {
@@ -951,7 +952,6 @@ func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
 		t.Skip("unix sockets")
 	}
 	address := socketPath(t)
-	bindSocket(t, address)
 	peers := make(chan net.Conn, 1)
 	n := &Local{}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
@@ -965,6 +965,8 @@ func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
 	}
 	res := acceptAsync(ln)
 	peer := <-peers
+	// Bound once the command runs, as nc does: the listener refuses a path already taken.
+	bindSocket(t, address)
 	go peer.Write([]byte("ping"))
 	r := <-res
 	if r.err != nil {
@@ -1025,7 +1027,8 @@ func TestNetcatUnixKeepsReplacedSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	reaped(t, <-conns)
-	os.Remove(address)
+	// Settling trails the exit, and a replacement made before it can reuse the inode it compares on ext4.
+	waitPath(t, address, false)
 	foreign, err := net.Listen("unix", address)
 	if err != nil {
 		t.Fatal(err)

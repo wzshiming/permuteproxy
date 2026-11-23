@@ -33,6 +33,10 @@ func (l *Local) listenNetcatUnix(ctx context.Context, network, address string) (
 	socket := &socketFile{path: address}
 	spawn := func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		socket.before()
+		// Debian's nc unlinks whatever the path holds before it binds, so it only gets a free path.
+		if _, err := os.Lstat(address); err == nil {
+			return nil, &os.PathError{Op: "listen", Path: address, Err: os.ErrExist}
+		}
 		conn, err := dial(ctx, name, args...)
 		if err != nil {
 			return nil, err
