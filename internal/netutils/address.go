@@ -3,7 +3,7 @@ package netutils
 import (
 	"net"
 )
- 
+
 func NewNetAddr(network, address string) net.Addr {
 	return &addr{network: network, address: address}
 }

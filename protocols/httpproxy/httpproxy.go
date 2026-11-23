@@ -2,12 +2,15 @@ package httpproxy
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"time"
 
 	"github.com/wzshiming/httpproxy"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
@@ -15,46 +18,39 @@ const (
 	KeyPassword = "password"
 )
 
-// NewHttpProxyDialer http proxy dialer
-func NewHttpProxyDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
-	}
-
-	u := protocols.EncodeURLWithMetadata("http", "localhost", metadata, KeyUsername, KeyPassword)
-	dialer, err := httpproxy.NewDialer(u)
-	if err != nil {
-		return nil, err
-	}
-
-	dialer.ProxyDial = proxy.Dialer.DialContext
-	return dialer, nil
-}
-
-type runner struct {
-	listener permuteproxy.Listener
-	server   *httpproxy.SimpleServer
-}
-
-func NewHttpProxyRunner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	u := protocols.EncodeURLWithMetadata("http", "localhost", metadata, KeyUsername, KeyPassword)
-	server, err := httpproxy.NewSimpleServer(u)
-	if err != nil {
-		return nil, err
-	}
-	server.BytesPool = pool.Bytes
-	server.Listener = httpproxy.NewListenerCompatibilityReadDeadline(listener)
-	return &runner{
-		server:   server,
-		listener: listener,
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
+	userinfo := protoutils.Userinfo(opts, KeyUsername, KeyPassword)
+	return &permuteproxy.ClientFuncs{
+		Dial: func(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+			dialer := &httpproxy.Dialer{
+				Userinfo: userinfo,
+				Timeout:  time.Minute,
+				ProxyDial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return inner.Dial(ctx, permuteproxy.Stream)
+				},
+			}
+			return dialer.DialContext(ctx, network, address)
+		},
 	}, nil
 }
 
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
-}
-
-func (r *runner) Close() error {
-	return r.listener.Close()
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
+	var auth httpproxy.Authentication
+	if username := opts[KeyUsername]; username != "" {
+		auth = httpproxy.BasicAuth(username, opts[KeyPassword])
+	}
+	return &permuteproxy.ServerFuncs{
+		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+			srv := &http.Server{
+				Handler: &httpproxy.ProxyHandler{
+					ProxyDial:      upstream.DialContext,
+					Authentication: auth,
+					BytesPool:      pool.Bytes,
+				},
+				BaseContext: func(net.Listener) context.Context { return ctx },
+			}
+			defer srv.Close()
+			return srv.Serve(httpproxy.NewListenerCompatibilityReadDeadline(ln))
+		},
+	}, nil
 }

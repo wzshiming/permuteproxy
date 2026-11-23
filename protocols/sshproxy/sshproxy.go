@@ -2,64 +2,518 @@ package sshproxy
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/google/shlex"
+	"github.com/wzshiming/sshd"
 	_ "github.com/wzshiming/sshd/directstreamlocal"
 	_ "github.com/wzshiming/sshd/directtcp"
 	_ "github.com/wzshiming/sshd/streamlocalforward"
 	_ "github.com/wzshiming/sshd/tcpforward"
-
 	"github.com/wzshiming/sshproxy"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/cmdutils"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/pool"
-	"github.com/wzshiming/permuteproxy/protocols"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
 const (
 	KeyUsername = "username"
 	KeyPassword = "password"
+
+	keyUDPCommand = "udp_command"
+	keyAllowExec  = "allow_exec"
+
+	// maxName bounds a target's host or socket path: no DNS name nor sun_path is longer.
+	maxName = 255
+
+	// maxLine bounds a quoted command line by what fits a packet of 256 KiB, x/crypto's limit, beside 18 bytes of exec request and up to 20 of padding.
+	maxLine = 256<<10 - 20 - 18
 )
 
-// NewSSHProxyDialer ssh proxy dialer
-func NewSSHProxyDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
-	}
+var options = []string{
+	"identity_data",
+	"identity_file",
+	"authorized_data",
+	"authorized_file",
+	"hostkey_data",
+	"hostkey_file",
+	keyUDPCommand,
+	keyAllowExec,
+}
 
-	u := protocols.EncodeURLWithMetadata("ssh", "localhost", metadata, KeyUsername, KeyPassword)
-	dialer, err := sshproxy.NewDialer(u)
+// keepAliveTimeout is how long a probe waits with neither its answer nor a byte from the connection it probes.
+var keepAliveTimeout = 5 * time.Second
+
+// endpoint renders the options as the URL form sshproxy parses; the host is a placeholder since
+// the inner transport decides where connections go.
+func endpoint(opts permuteproxy.Options) string {
+	u := url.URL{
+		Scheme:   "ssh",
+		Host:     "localhost",
+		User:     protoutils.Userinfo(opts, KeyUsername, KeyPassword),
+		RawQuery: protoutils.Values(opts, KeyUsername, KeyPassword).Encode(),
+	}
+	return u.String()
+}
+
+func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
+	dialer, err := sshproxy.NewDialer(endpoint(opts))
 	if err != nil {
 		return nil, err
 	}
-
-	dialer.ProxyDial = proxy.Dialer.DialContext
-	return dialer, nil
-}
-
-type runner struct {
-	listener permuteproxy.Listener
-	server   *sshproxy.SimpleServer
-}
-
-func NewSSHProxyRunner(listener permuteproxy.Listener, metadata permuteproxy.Metadata) (permuteproxy.Runner, error) {
-	u := protocols.EncodeURLWithMetadata("ssh", "localhost", metadata, KeyUsername, KeyPassword)
-	server, err := sshproxy.NewSimpleServer(u)
-	if err != nil {
-		return nil, err
+	udp, ok := opts[keyUDPCommand]
+	if !ok {
+		udp = cmdutils.NetcatDialUDP
 	}
-	server.BytesPool = pool.Bytes
-	server.Listener = listener
-	return &runner{
-		listener: listener,
-		server:   server,
+	if _, err := split(udp); err != nil {
+		return nil, fmt.Errorf("%s: %w", keyUDPCommand, err)
+	}
+	c := &client{dialer: dialer}
+	return &permuteproxy.ClientFuncs{
+		Dial:   c.dial,
+		Derive: map[string]string{"udp": "dgram+cmd:" + udp},
+		Close:  c.close,
 	}, nil
 }
 
-func (r *runner) Run(ctx context.Context) error {
-	return r.server.Run(ctx)
+// client dials over one SSH connection, made on first use over the stream inner dials.
+type client struct {
+	dialer *sshproxy.Dialer
+	once   sync.Once
+	closed atomic.Bool
+	mu     sync.Mutex           // orders the dialer's connects and drops
+	held   atomic.Pointer[link] // the connection the dialer holds, if any
+	next   *link                // the connection ProxyDial makes while connect holds mu
 }
 
-func (r *runner) Close() error {
-	return r.listener.Close()
+// link is a connection of the client, the bytes read from it and whether a probe of it runs.
+type link struct {
+	*ssh.Client
+	read    atomic.Int64
+	gone    chan struct{} // closes once the client no longer holds it
+	probing atomic.Bool
+}
+
+// counted adds the bytes each Read returns to n.
+type counted struct {
+	net.Conn
+	n *atomic.Int64
+}
+
+func (c counted) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	c.n.Add(int64(n))
+	return n, err
+}
+
+func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+	c.once.Do(func() {
+		c.dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			// The dialer reconnects whenever it has no connection, so a closed client refuses here.
+			if c.closed.Load() {
+				return nil, net.ErrClosed
+			}
+			conn, err := inner.Dial(ctx, permuteproxy.Stream)
+			if err != nil {
+				return nil, err
+			}
+			c.next = &link{gone: make(chan struct{})}
+			return counted{conn, &c.next.read}, nil
+		}
+	})
+	if network == "cmd" {
+		return c.exec(ctx, address)
+	}
+	if err := checkName(network, address); err != nil {
+		return nil, err
+	}
+	// A ctx that had ended before the dial says nothing about the connection, so it probes nothing.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	l, err := c.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := l.DialContext(ctx, network, address)
+	switch {
+	case err == nil:
+	case ctx.Err() != nil:
+		c.probe()
+	case dead(err):
+		c.drop(l)
+	}
+	return conn, err
+}
+
+// connect returns the shared connection, connecting when there is none.
+func (c *client) connect(ctx context.Context) (*link, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cli, err := c.dialer.SSHClient(ctx)
+	held := c.held.Load()
+	if err == nil && held != nil && held.Client == cli {
+		return held, nil
+	}
+	c.release(held)
+	if err != nil {
+		return nil, err
+	}
+	// The dialer made cli over the conn ProxyDial counts into next.
+	c.next.Client = cli
+	c.held.Store(c.next)
+	return c.next, nil
+}
+
+// release forgets l and ends its probe, reporting false if the client no longer held it; callers hold mu.
+func (c *client) release(l *link) bool {
+	if l == nil || !c.held.CompareAndSwap(l, nil) {
+		return false
+	}
+	close(l.gone)
+	return true
+}
+
+// drop closes l, so that the next dial connects again, unless a newer connection replaced it.
+func (c *client) drop(l *link) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.release(l) {
+		c.dialer.Close()
+	}
+}
+
+// probe sends the shared connection a keep-alive and drops it if it fails or nothing arrives, one probe per connection.
+func (c *client) probe() {
+	l := c.held.Load()
+	if l == nil || !l.probing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer l.probing.Store(false)
+		answered := make(chan error, 1)
+		go func() {
+			_, _, err := l.SendRequest("keepalive@openssh.com", true, nil)
+			answered <- err
+		}()
+		if l.await(answered) {
+			c.drop(l)
+		}
+	}()
+}
+
+// await reports whether the request failed, or a whole bound passed with neither its answer nor a byte from l; giving l up ends it.
+func (l *link) await(answered <-chan error) bool {
+	read := l.read.Load()
+	bound := time.NewTimer(keepAliveTimeout)
+	defer bound.Stop()
+	for {
+		select {
+		case err := <-answered:
+			return err != nil
+		case <-l.gone:
+			return false
+		case <-bound.C:
+			// The answer queues behind whatever the connection still delivers.
+			n := l.read.Load()
+			if n == read {
+				return true
+			}
+			read = n
+			bound.Reset(keepAliveTimeout)
+		}
+	}
+}
+
+// dead reports whether err may come from the connection itself, not a refusal or a bad address.
+func dead(err error) bool {
+	var refused *ssh.OpenChannelError
+	var host *net.AddrError
+	var port *strconv.NumError
+	return !errors.As(err, &refused) && !errors.As(err, &host) && !errors.As(err, &port)
+}
+
+// checkName refuses a target whose host or socket path is too long to be one, before any I/O.
+func checkName(network, address string) error {
+	name := address
+	if network != "unix" {
+		name, _, _ = net.SplitHostPort(address)
+	}
+	if len(name) > maxName {
+		return fmt.Errorf("ssh: %s target name of %d bytes is too long", network, len(name))
+	}
+	return nil
+}
+
+func (c *client) close() error {
+	c.closed.Store(true)
+	return c.dialer.Close()
+}
+
+// split splits line into words as a shell would, refusing a line without any.
+func split(line string) ([]string, error) {
+	argv, err := shlex.Split(line)
+	if err == nil && len(argv) == 0 {
+		err = fmt.Errorf("%q has no command", line)
+	}
+	return argv, err
+}
+
+// exec runs address, split as a shell would, on a new session of the shared connection.
+func (c *client) exec(ctx context.Context, address string) (net.Conn, error) {
+	argv, err := split(address)
+	if err != nil {
+		return nil, err
+	}
+	line := cmdutils.Quote(argv)
+	if len(line) > maxLine {
+		return nil, fmt.Errorf("ssh: cmd: command line of %d bytes is longer than an exec request carries", len(line))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// The SSH handshake, the session's open and the exec's reply ignore ctx, so they run aside.
+	type result struct {
+		conn net.Conn
+		err  error
+	}
+	results := make(chan result)
+	go func() {
+		conn, err := c.start(ctx, address, line)
+		select {
+		case results <- result{conn, err}:
+		case <-ctx.Done():
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	}()
+	select {
+	case r := <-results:
+		return r.conn, r.err
+	case <-ctx.Done():
+		c.probe()
+		return nil, ctx.Err()
+	}
+}
+
+// start runs line on a new session of the shared connection, opening none once ctx has ended.
+func (c *client) start(ctx context.Context, address, line string) (net.Conn, error) {
+	l, err := c.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sess, err := l.NewSession()
+	if err != nil {
+		// Drop a dead connection, also for a caller that left, so that the next dial connects again.
+		if dead(err) {
+			c.drop(l)
+		}
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		sess.Close()
+		return nil, err
+	}
+	// The pipes fail only once set or started.
+	stdin, _ := sess.StdinPipe()
+	stdout, _ := sess.StdoutPipe()
+	if err := sess.Start(line); err != nil {
+		sess.Close()
+		return nil, err
+	}
+	// A channel's Close only asks the server to close, so reads go through a pipe Close can end here.
+	r, w := io.Pipe()
+	go func() {
+		_, err := io.Copy(w, stdout)
+		w.CloseWithError(err)
+	}()
+	conn := &execConn{sess: sess, stdin: stdin, stdout: r, feed: w, remote: netutils.NewNetAddr("cmd", address), done: make(chan struct{})}
+	go func() {
+		conn.err = sess.Wait()
+		close(conn.done)
+	}()
+	return conn, nil
+}
+
+var (
+	localAddr     = netutils.NewNetAddr("cmd", "")
+	errNoDeadline = errors.New("ssh: cmd: deadline not supported")
+)
+
+// execConn is a remote command's stdin and stdout; its session discards the command's stderr.
+type execConn struct {
+	sess    *ssh.Session
+	writing sync.Mutex // a channel's writes share one packet buffer
+	stdin   io.Writer
+	stdout  *io.PipeReader
+	feed    *io.PipeWriter // what the channel's stdout is copied into
+	remote  net.Addr
+	done    chan struct{}
+	err     error
+	closed  atomic.Bool
+}
+
+func (c *execConn) Read(b []byte) (int, error) { return c.stdout.Read(b) }
+
+func (c *execConn) Write(b []byte) (int, error) {
+	c.writing.Lock()
+	defer c.writing.Unlock()
+	if c.closed.Load() {
+		return 0, net.ErrClosed
+	}
+	return c.stdin.Write(b)
+}
+
+func (c *execConn) Close() error {
+	c.closed.Store(true)
+	c.feed.CloseWithError(net.ErrClosed)
+	// Sending the channel's close waits for the transport, which a stalled peer may hold.
+	go c.sess.Close()
+	return nil
+}
+
+func (c *execConn) LocalAddr() net.Addr              { return localAddr }
+func (c *execConn) RemoteAddr() net.Addr             { return c.remote }
+func (c *execConn) SetDeadline(time.Time) error      { return errNoDeadline }
+func (c *execConn) SetReadDeadline(time.Time) error  { return errNoDeadline }
+func (c *execConn) SetWriteDeadline(time.Time) error { return errNoDeadline }
+
+// Done closes once the session has ended; Err then holds the exit the server reported.
+func (c *execConn) Done() <-chan struct{} { return c.done }
+func (c *execConn) Err() error            { return c.err }
+
+// Kill asks the server to kill the command and closes the channel.
+func (c *execConn) Kill() error {
+	err := c.sess.Signal(ssh.SIGKILL)
+	c.sess.Close()
+	return err
+}
+
+func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
+	allowExec := false
+	if value, ok := opts[keyAllowExec]; ok {
+		var err error
+		if allowExec, err = strconv.ParseBool(value); err != nil {
+			return nil, fmt.Errorf("%s: %w", keyAllowExec, err)
+		}
+	}
+	simple, err := sshproxy.NewSimpleServer(endpoint(opts))
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case !allowExec:
+	case simple.ServerConfig.NoClientAuth:
+		return nil, fmt.Errorf("%s without a password or authorized keys", keyAllowExec)
+	case simple.ServerConfig.PasswordCallback != nil && simple.Password == "":
+		return nil, fmt.Errorf("%s with an empty password", keyAllowExec)
+	}
+	return &permuteproxy.ServerFuncs{
+		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
+			srv := simple.Server
+			srv.Context = ctx
+			srv.ProxyDial = upstream.DialContext
+			srv.ProxyListen = upstream.Listen
+			srv.BytesPool = pool.Bytes
+			srv.UserPermissions = func(string) sshd.Permissions { return permissions{exec: allowExec} }
+			return srv.Serve(ln)
+		},
+	}, nil
+}
+
+// permissions grant this layer's server users everything but a session, which needs allow_exec.
+type permissions struct{ exec bool }
+
+func (p permissions) Allow(req, _ string) bool {
+	return req != "session" || p.exec
+}
+
+// serveSession runs an exec request's command line as network cmd on the server's upstream.
+func serveSession(ctx context.Context, newChan ssh.NewChannel, conn *sshd.ServerConn) {
+	// Any sshd server in the process reaches this handler, so only this layer's are served.
+	if p, ok := conn.Permissions.(permissions); !ok || !p.Allow("session", "") {
+		newChan.Reject(ssh.Prohibited, "exec is not allowed")
+		return
+	}
+	ch, reqs, err := newChan.Accept()
+	if err != nil {
+		return
+	}
+	defer ch.Close()
+	var cmd net.Conn
+	for req := range reqs {
+		p, killable := cmd.(netutils.Process)
+		switch {
+		case req.Type == "exec" && cmd == nil:
+			cmd = start(ctx, conn, ch, req)
+		case req.Type == "signal" && killable:
+			p.Kill()
+			req.Reply(true, nil)
+		default:
+			req.Reply(false, nil)
+		}
+	}
+	if cmd != nil {
+		cmd.Close()
+	}
+}
+
+// start dials the command an exec request names, replies whether it runs and pipes it through ch.
+func start(ctx context.Context, conn *sshd.ServerConn, ch ssh.Channel, req *ssh.Request) net.Conn {
+	var exec sshd.ExecMsg
+	if err := ssh.Unmarshal(req.Payload, &exec); err != nil {
+		req.Reply(false, nil)
+		return nil
+	}
+	cmd, err := conn.ProxyDial(ctx, "cmd", exec.Command)
+	req.Reply(err == nil, nil)
+	if err != nil {
+		return nil
+	}
+	go pipe(ch, cmd)
+	return cmd
+}
+
+// pipe joins ch and cmd until the command's output ends, then reports its exit and closes ch.
+func pipe(ch ssh.Channel, cmd net.Conn) {
+	go io.Copy(cmd, ch)
+	io.Copy(ch, cmd)
+	if p, ok := cmd.(netutils.Process); ok {
+		<-p.Done()
+		if status, ok := exitStatus(p.Err()); ok {
+			ch.SendRequest("exit-status", false, ssh.Marshal(sshd.ExitStatusMsg{Status: status}))
+		}
+	}
+	ch.Close()
+}
+
+// exitStatus is the status a command's exit error carries, if it carries one.
+func exitStatus(err error) (uint32, bool) {
+	var coded interface{ ExitCode() int }
+	var status interface{ ExitStatus() int } // as *ssh.ExitError reports the status of the next hop
+	switch {
+	case err == nil:
+		return 0, true
+	case errors.As(err, &coded) && coded.ExitCode() >= 0:
+		return uint32(coded.ExitCode()), true
+	case errors.As(err, &status) && status.ExitStatus() >= 0:
+		return uint32(status.ExitStatus()), true
+	}
+	return 0, false
 }

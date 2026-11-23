@@ -9,19 +9,19 @@ import (
 )
 
 func NewServer(metadata url.Values) (*tls.Config, error) {
-	if metadata.Has("tls_acme_host") {
-		hosts := strings.Split(strings.Join(metadata["tls_acme_host"], ","), ",")
-		cacheDir := metadata.Get("tls_acme_cache_dir")
+	if metadata.Has(keyAcmeHost) {
+		hosts := strings.Split(strings.Join(metadata[keyAcmeHost], ","), ",")
+		cacheDir := metadata.Get(keyAcmeCacheDir)
 		return NewAcme(hosts, cacheDir), nil
-	} else if certFile, keyFile := metadata.Get("tls_cert_file"), metadata.Get("tls_key_file"); certFile != "" && keyFile != "" {
-		cert, err := tls.LoadX509KeyPair(metadata.Get("tls_cert_file"), metadata.Get("tls_key_file"))
+	} else if certFile, keyFile := metadata.Get(keyCertFile), metadata.Get(keyKeyFile); certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(metadata.Get(keyCertFile), metadata.Get(keyKeyFile))
 		if err != nil {
 			return nil, err
 		}
 		return &tls.Config{
 			Certificates: []tls.Certificate{cert},
 		}, nil
-	} else if selfSigned, _ := strconv.ParseBool(metadata.Get("tls_self_signed")); selfSigned {
+	} else if selfSigned, _ := strconv.ParseBool(metadata.Get(keySelfSigned)); selfSigned {
 		return NewSelfSigned()
 	}
 	return nil, fmt.Errorf("can't new tls.Config for server")

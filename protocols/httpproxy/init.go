@@ -2,21 +2,17 @@ package httpproxy
 
 import (
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/protocols"
 )
 
 func init() {
-	define := permuteproxy.Define{
-		SchemeInfo: protocols.SchemeInfo{
-			Kind:          protocols.KindProxy,
-			Base:          protocols.KindStream,
-			UsernameField: KeyUsername,
-			PasswordField: KeyPassword,
-		},
-		Handler: permuteproxy.Handler{
-			DialerWrapper: permuteproxy.DialerWrapperFunc(NewHttpProxyDialer),
-			NewRunner:     permuteproxy.NewRunnerFunc(NewHttpProxyRunner),
-		},
-	}
-	permuteproxy.Register("http", define)
+	permuteproxy.RegisterLayer("http", permuteproxy.Spec{
+		Kind:           permuteproxy.KindProxy,
+		Requires:       permuteproxy.Stream,
+		Provides:       permuteproxy.Stream,
+		UsernameOption: KeyUsername,
+		PasswordOption: KeyPassword,
+		Networks:       []string{"tcp"},
+		NewClient:      NewClient,
+		NewServer:      NewServer,
+	})
 }

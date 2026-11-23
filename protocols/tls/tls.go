@@ -4,65 +4,59 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"sync"
+	"sync/atomic"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/protoutils"
 	"github.com/wzshiming/permuteproxy/internal/tlsutils"
 )
 
-func NewTLSDialer(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.Dialer, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.Dialer == nil {
-		return nil, permuteproxy.ErrNoProxy
-	}
-
-	tlsConfig, err := tlsutils.NewClient(metadata)
-	if err != nil {
-		return nil, err
-	}
-
-	return tlsDialer{tlsConfig, proxy.Dialer}, nil
+func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
+	values := protoutils.Values(opts)
+	// Each side's config is built where it is needed: the CA file only by dialers, key material
+	// only by listeners.
+	clientConfig := sync.OnceValues(func() (*tls.Config, error) { return tlsutils.NewClient(values) })
+	var serverConfig atomic.Pointer[tls.Config] // what the latest BeforeListen built
+	return &permuteproxy.AdapterFuncs{
+		BeforeDial: func() error {
+			_, err := clientConfig()
+			return err
+		},
+		BeforeListen: func() error {
+			config, err := tlsutils.NewServer(values)
+			if err != nil {
+				return err
+			}
+			serverConfig.Store(config)
+			return nil
+		},
+		Stream: &permuteproxy.Link{
+			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
+				config, _ := clientConfig() // BeforeDial has returned its error
+				// A canceled handshake closes raw itself, so the error path must not close it again.
+				raw := &closeOnce{Conn: carrier}
+				conn := tls.Client(raw, config)
+				if err := conn.HandshakeContext(ctx); err != nil {
+					raw.Close()
+					return nil, err
+				}
+				return conn, nil
+			},
+			Listener: func(ln net.Listener) (net.Listener, error) {
+				return tls.NewListener(ln, serverConfig.Load()), nil
+			},
+		},
+	}, nil
 }
 
-func NewTLSListenConfig(ctx context.Context, metadata permuteproxy.Metadata) (permuteproxy.ListenConfig, error) {
-	proxy, ok := permuteproxy.FromContext(ctx)
-	if !ok || proxy.ListenConfig == nil {
-		return nil, permuteproxy.ErrNoProxy
-	}
-
-	tlsConfig, err := tlsutils.NewServer(metadata)
-	if err != nil {
-		return nil, err
-	}
-	return tlsListenConfig{tlsConfig, proxy.ListenConfig}, nil
+type closeOnce struct {
+	net.Conn
+	once sync.Once
+	err  error
 }
 
-type tlsDialer struct {
-	tlsConfig *tls.Config
-	dialer    permuteproxy.Dialer
-}
-
-func (n tlsDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	c, err := n.dialer.DialContext(ctx, network, address)
-	if err != nil {
-		return nil, err
-	}
-	conn := tls.Client(c, n.tlsConfig)
-	err = conn.Handshake()
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
-type tlsListenConfig struct {
-	tlsConfig    *tls.Config
-	listenConfig permuteproxy.ListenConfig
-}
-
-func (n tlsListenConfig) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	l, err := n.listenConfig.Listen(ctx, network, address)
-	if err != nil {
-		return nil, err
-	}
-	return tls.NewListener(l, n.tlsConfig), nil
+func (c *closeOnce) Close() error {
+	c.once.Do(func() { c.err = c.Conn.Close() })
+	return c.err
 }
