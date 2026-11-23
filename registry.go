@@ -35,15 +35,6 @@ var (
 	validName = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 )
 
-func init() {
-	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost})
-	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost})
-	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath})
-	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath})
-	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
-	RegisterLayer("dgram", dgram)
-}
-
 func checkName(name string) {
 	if !validName.MatchString(name) {
 		panic(fmt.Sprintf("permuteproxy: malformed name %q", name))

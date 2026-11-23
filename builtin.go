@@ -7,6 +7,15 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
+func init() {
+	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost})
+	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost})
+	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath})
+	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath})
+	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
+	RegisterLayer("dgram", dgram)
+}
+
 // dgram is the built-in client-only adapter that dials its Stream carrier as best-effort datagrams to the carrier's peer.
 var dgram = LayerSpec{
 	Kind:     LayerAdapter,
