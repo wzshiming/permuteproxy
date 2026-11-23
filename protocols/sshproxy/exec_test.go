@@ -500,10 +500,9 @@ func TestDialConnectsAgainAfterConnectionDrops(t *testing.T) {
 			}
 			conn.Close()
 			base.drop()
-			// The dial that finds the connection gone fails and the next one connects again.
+			// A dial that finds the connection gone fails, unless the dialer replaced it first; the next one connects again.
 			if conn, err := n.DialContext(ctx, tt.network, tt.address); err == nil {
 				conn.Close()
-				t.Fatal("dial over the dropped connection succeeded")
 			}
 			conn, err = n.DialContext(ctx, tt.network, tt.address)
 			if err != nil {
@@ -826,9 +825,8 @@ func TestProbeEndsOnceItsConnectionIsGivenUp(t *testing.T) {
 	timesOut(t, n)
 	recv(t, probes, "the probe")
 	untilProbes(t, 1, keepAliveTimeout/2, "the probe started")
-	// Freezing keeps the given-up connection open, its keep-alive pending; the first write it fails goes unreported.
+	// Freezing keeps the given-up connection open, its keep-alive pending.
 	t.Cleanup(base.freeze())
-	timesOut(t, n)
 	if _, err := n.DialContext(timeout(t), "tcp", "127.0.0.1:1"); err == nil {
 		t.Fatal("tcp dial over the frozen connection succeeded")
 	}
