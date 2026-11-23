@@ -8,7 +8,7 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("ssh", permuteproxy.LayerSpec{
-		Kind:           permuteproxy.KindProxy,
+		Kind:           permuteproxy.LayerProxy,
 		Requires:       permuteproxy.Stream,
 		Provides:       permuteproxy.Stream | permuteproxy.Packet,
 		Lossy:          permuteproxy.Packet,

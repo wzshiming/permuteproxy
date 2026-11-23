@@ -6,7 +6,7 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("http", permuteproxy.LayerSpec{
-		Kind:           permuteproxy.KindProxy,
+		Kind:           permuteproxy.LayerProxy,
 		Requires:       permuteproxy.Stream,
 		Provides:       permuteproxy.Stream,
 		UsernameOption: KeyUsername,

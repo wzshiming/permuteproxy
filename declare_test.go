@@ -63,7 +63,7 @@ func TestDgramDeclaration(t *testing.T) {
 	if !ok {
 		t.Fatal("dgram is not registered")
 	}
-	if spec.Kind != KindAdapter || spec.Requires != Stream || spec.Provides != Packet || spec.Preserves != 0 || spec.Lossy != Packet {
+	if spec.Kind != LayerAdapter || spec.Requires != Stream || spec.Provides != Packet || spec.Preserves != 0 || spec.Lossy != Packet {
 		t.Fatalf("dgram declares kind %v, requires %v, provides %v, preserves %v, lossy %v", spec.Kind, spec.Requires, spec.Provides, spec.Preserves, spec.Lossy)
 	}
 	if err := parse(t, "dgram+cmd:nc host 1").Validate(); err != nil {
@@ -852,7 +852,7 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 
 func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 	name := fresh("test-dual-server")
-	RegisterLayer(name, LayerSpec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
+	RegisterLayer(name, LayerSpec{Kind: LayerProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-dual-server.newserver")
 		return &ServerFuncs{Serve: failServe, ServePacket: failServePacket}, nil
 	}})

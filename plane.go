@@ -29,12 +29,12 @@ func (p Plane) String() string {
 	return strings.Join(names, "|")
 }
 
-// Kind says whether a layer transforms its carrier or speaks a proxy protocol.
-type Kind uint8
+// LayerKind says whether a layer transforms its carrier or speaks a proxy protocol.
+type LayerKind uint8
 
 const (
-	KindAdapter Kind = iota // turns its carrier into the planes of the layer above, as tls does
-	KindProxy               // serves or dials a proxy protocol as the outermost layer, as socks5 does
+	LayerAdapter LayerKind = iota // turns its carrier into the planes of the layer above, as tls does
+	LayerProxy                    // serves or dials a proxy protocol as the outermost layer, as socks5 does
 )
 
 // AddressKind says how a URI writes a network's address.
@@ -62,7 +62,7 @@ func (o Options) clone() Options {
 
 // LayerSpec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
 type LayerSpec struct {
-	Kind           Kind                                      // adapter or proxy
+	Kind           LayerKind                                 // adapter or proxy
 	Requires       Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
 	Provides       Plane                                     // planes offered above whatever the carrier has
 	Preserves      Plane                                     // carrier planes also offered above, but only those the carrier has

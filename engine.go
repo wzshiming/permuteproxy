@@ -66,7 +66,7 @@ func (e Engine) Transport(c Chain) (Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(r.specs) > 0 && r.specs[0].Kind == KindProxy {
+	if len(r.specs) > 0 && r.specs[0].Kind == LayerProxy {
 		return nil, fmt.Errorf("layer %q: proxy needs Client or Server: %w", c.Layers[0].Scheme, ErrInvalidChain)
 	}
 	return e.build(r, 0)
@@ -77,7 +77,7 @@ func (c Chain) proxy() (*resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(r.specs) == 0 || r.specs[0].Kind != KindProxy {
+	if len(r.specs) == 0 || r.specs[0].Kind != LayerProxy {
 		return nil, fmt.Errorf("outermost layer is not a proxy: %w", ErrInvalidChain)
 	}
 	return r, nil

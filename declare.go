@@ -445,7 +445,7 @@ func (a assembledServer) Close() error {
 
 // dgram is the built-in client-only adapter that dials its Stream carrier as best-effort datagrams to the carrier's peer.
 var dgram = LayerSpec{
-	Kind:     KindAdapter,
+	Kind:     LayerAdapter,
 	Requires: Stream,
 	Provides: Packet,
 	Lossy:    Packet,

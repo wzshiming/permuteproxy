@@ -59,7 +59,7 @@ func (r *relay) Close() error {
 // derivingProxy is a Stream proxy listing networks and deriving derive without a ListenPacket; its Dial records and returns dial's conn.
 func derivingProxy(name string, provides, preserves Plane, networks []string, derive map[string]string, dial func(string) net.Conn) LayerSpec {
 	return LayerSpec{
-		Kind:      KindProxy,
+		Kind:      LayerProxy,
 		Requires:  Stream,
 		Provides:  provides,
 		Preserves: preserves,
@@ -290,7 +290,7 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 
 func TestFailedDerivedDialReleasesWhatItBuilt(t *testing.T) {
 	calls = nil
-	spec := LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Dial:   func(context.Context, Transport, string, string) (net.Conn, error) { return nil, errLink },
 			Derive: map[string]string{"unix": relayed["unix"]},
@@ -347,7 +347,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 			return nil
 		},
 	}, nil))
-	spec := LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Dial: func(_ context.Context, _ Transport, network, address string) (net.Conn, error) {
 				record("dial %s %s", network, address)
@@ -390,7 +390,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 func TestDerivedDialBlockedInDialDoesNotHangClientClose(t *testing.T) {
 	calls = nil
 	entered, closed := make(chan struct{}), make(chan struct{})
-	spec := LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			// Dial stands for I/O that only the client's Close ends.
 			Dial: func(context.Context, Transport, string, string) (net.Conn, error) {
@@ -584,7 +584,7 @@ func TestDerivedDialReopensEndedSession(t *testing.T) {
 func TestClientRefusesDerivationOverNetworkWithoutDial(t *testing.T) {
 	calls = nil
 	// A layer offering only datagrams lists cmd for its derivation alone, so nothing else has it declare a Dial.
-	spec := LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"cmd"}, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Packet, Networks: []string{"cmd"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Derive: map[string]string{"udp": "dgram+cmd:relay %h %p"},
 			Close:  func() error { record("test-dialless.close"); return nil },

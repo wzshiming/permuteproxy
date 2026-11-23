@@ -82,7 +82,7 @@ func (c Chain) resolve() (*resolved, error) {
 		if !ok {
 			return nil, fmt.Errorf("layer %q: unknown scheme: %w", l.Scheme, ErrInvalidChain)
 		}
-		if spec.Kind == KindProxy && i != 0 {
+		if spec.Kind == LayerProxy && i != 0 {
 			return nil, fmt.Errorf("layer %q: proxy must be outermost: %w", l.Scheme, ErrInvalidChain)
 		}
 		for k := range l.Options {
