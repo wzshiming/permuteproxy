@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // relay is the carrier a deriving proxy dials: its far end answers each read with the command dialed and what it read, and hangs up on "eof".
@@ -148,20 +149,6 @@ func derivingClient(t *testing.T, c Chain) Network {
 	return n
 }
 
-// echoes writes msg to conn and expects want back in one read.
-func echoes(t *testing.T, conn net.Conn, msg, want string) {
-	t.Helper()
-	if _, err := conn.Write([]byte(msg)); err != nil {
-		t.Fatal(err)
-	}
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	buf := make([]byte, 256)
-	n, err := conn.Read(buf)
-	if err != nil || string(buf[:n]) != want {
-		t.Fatalf("Read = %q, %v; want %q", buf[:n], err, want)
-	}
-}
-
 func TestClientRefusesDerivations(t *testing.T) {
 	e := Engine{Base: &fakeNet{name: "base"}}
 	for name := range underived {
@@ -285,7 +272,7 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-derive.dial stream cmd relay -U '/tmp/a b.sock'", "test-held.client")
-	echoes(t, conn, "hi", "relay -U '/tmp/a b.sock'|hi")
+	testutils.RoundTrip(t, conn, "hi", "relay -U '/tmp/a b.sock'|hi")
 	// The conn releases what the expression built over the client, never the client.
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
@@ -300,7 +287,7 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-derive.close", "closable.close")
-	echoes(t, open, "still", "relay -U /tmp/open.sock|still")
+	testutils.RoundTrip(t, open, "still", "relay -U /tmp/open.sock|still")
 	open.Close()
 	assertCalls(t, "relay.close relay -U /tmp/open.sock", "test-held.close")
 }
@@ -385,10 +372,10 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 		conn, err = n.DialContext(ctx, "unix", "/tmp/x.sock")
 		dialed <- err
 	}()
-	recv(t, entered, "the derived dial reaching its layer")
+	testutils.Wait(t, entered, "the derived dial reaching its layer")
 	done := make(chan error, 1)
 	go func() { done <- n.(io.Closer).Close() }()
-	if err := recv(t, done, "the client's Close"); err != nil {
+	if err := testutils.Wait(t, done, "the client's Close"); err != nil {
 		t.Fatal(err)
 	}
 	// The dial in flight went on once ClientFuncs.Close had run, and Close returned after it.
@@ -397,7 +384,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 		t.Fatalf("derived dial after the client's Close = %v, want net.ErrClosed", err)
 	}
 	assertCalls(t)
-	if err := recv(t, dialed, "the derived dial"); err != nil {
+	if err := testutils.Wait(t, dialed, "the derived dial"); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
@@ -428,13 +415,13 @@ func TestDerivedDialBlockedInDialDoesNotHangClientClose(t *testing.T) {
 		_, err := n.DialContext(context.Background(), "unix", "/tmp/x.sock")
 		dialed <- err
 	}()
-	recv(t, entered, "the derived dial reaching ClientFuncs.Dial")
+	testutils.Wait(t, entered, "the derived dial reaching ClientFuncs.Dial")
 	done := make(chan error, 1)
 	go func() { done <- n.(io.Closer).Close() }()
-	if err := recv(t, done, "the client's Close"); err != nil {
+	if err := testutils.Wait(t, done, "the client's Close"); err != nil {
 		t.Fatal(err)
 	}
-	if err := recv(t, dialed, "the derived dial"); !errors.Is(err, net.ErrClosed) {
+	if err := testutils.Wait(t, dialed, "the derived dial"); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("derived dial ended by the client's Close = %v, want net.ErrClosed", err)
 	}
 	assertCalls(t, "close")
@@ -555,8 +542,8 @@ func TestDerivedDialOpensSessionOnWrite(t *testing.T) {
 	if remote := conn.RemoteAddr(); remote.Network() != "udp" || remote.String() != "peer.invalid:53" {
 		t.Fatalf("RemoteAddr() = %s %v, want the udp address carried verbatim", remote.Network(), remote)
 	}
-	echoes(t, conn, "ping", "relay peer.invalid 53|ping")
-	echoes(t, conn, "again", "relay peer.invalid 53|again")
+	testutils.RoundTrip(t, conn, "ping", "relay peer.invalid 53|ping")
+	testutils.RoundTrip(t, conn, "again", "relay peer.invalid 53|again")
 	assertCalls(t, "test-derive.dial stream cmd relay peer.invalid 53")
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
@@ -586,15 +573,15 @@ func TestDerivedDialReopensEndedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	echoes(t, conn, "one", "relay peer.invalid 53|one")
-	first := recv(t, relays, "the first dial")
+	testutils.RoundTrip(t, conn, "one", "relay peer.invalid 53|one")
+	first := testutils.Wait(t, relays, "the first dial")
 	// The relay hangs up on eof, which ends the session.
 	if _, err := conn.Write([]byte("eof")); err != nil {
 		t.Fatal(err)
 	}
-	recv(t, first.closed, "the ended session's close")
-	echoes(t, conn, "two", "relay peer.invalid 53|two")
-	recv(t, relays, "the second dial")
+	testutils.Wait(t, first.closed, "the ended session's close")
+	testutils.RoundTrip(t, conn, "two", "relay peer.invalid 53|two")
+	testutils.Wait(t, relays, "the second dial")
 	assertCalls(t, "test-derive.dial stream cmd relay peer.invalid 53", "relay.close relay peer.invalid 53", "test-derive.dial stream cmd relay peer.invalid 53")
 }
 

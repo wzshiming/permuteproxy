@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 func TestAdapterPairs(t *testing.T) {
@@ -113,7 +114,7 @@ func TestDgramDialsStreamCarrierAsDatagrams(t *testing.T) {
 	if _, err := pc.WriteTo([]byte("ping"), peer); err != nil {
 		t.Fatal(err)
 	}
-	if got := recv(t, read, "carrier read"); got != "ping" {
+	if got := testutils.Wait(t, read, "carrier read"); got != "ping" {
 		t.Fatalf("carrier read %q, want ping", got)
 	}
 	go far.Write([]byte("pong"))
@@ -641,19 +642,6 @@ func TestClientReportsLossyFromLayerSpec(t *testing.T) {
 	}
 }
 
-// recv waits for a value from ch, failing the test after five seconds.
-func recv[T any](t *testing.T, ch <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-ch:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s did not happen", what)
-		var zero T
-		return zero
-	}
-}
-
 func TestServerBindFailureReleasesCarriers(t *testing.T) {
 	calls = nil
 	base := NetworkFuncs{
@@ -764,23 +752,23 @@ func TestServerStopReleasesCarriers(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- srv.Run(ctx) }()
-			addr := recv(t, addrs, "bind")
+			addr := testutils.Wait(t, addrs, "bind")
 			client, err := net.Dial("tcp", addr.String())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer client.Close()
-			recv(t, accepted, "accept")
+			testutils.Wait(t, accepted, "accept")
 			if stop == "cancel" {
 				cancel()
 			} else if err := srv.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := recv(t, done, "Run returning"); err != nil {
+			if err := testutils.Wait(t, done, "Run returning"); err != nil {
 				t.Fatalf("Run() = %v after the stop, want nil", err)
 			}
 			for i := 0; i < 2; i++ {
-				if err := recv(t, ends, "serve read"); err == nil {
+				if err := testutils.Wait(t, ends, "serve read"); err == nil {
 					t.Fatal("a serve read its carrier after the stop")
 				}
 			}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
@@ -16,7 +17,7 @@ import (
 func sshExec(t *testing.T, upstream permuteproxy.Network) permuteproxy.Network {
 	t.Helper()
 	c := parse(t, "ssh://u:p@127.0.0.1:0?allow_exec=true")
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	c.Layers[0].Options = permuteproxy.Options{"username": "u", "password": "p"}
@@ -44,7 +45,7 @@ func TestNetcatUDPOverSSHExec(t *testing.T) {
 	}
 	defer conn.Close()
 	echoed(t, conn, []byte("ping"))
-	signaled(t, received, "the datagram reaching the udp echo")
+	testutils.Wait(t, received, "the datagram reaching the udp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}
@@ -58,7 +59,7 @@ func TestSSHClientDialsUDPThroughNetcat(t *testing.T) {
 	echo, received := watchedUDPEcho(t)
 	conn := dialPacket(t, ctx, sshExec(t, commands), echo.String())
 	echoed(t, conn, []byte("ping"))
-	signaled(t, received, "the datagram reaching the udp echo")
+	testutils.Wait(t, received, "the datagram reaching the udp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}
@@ -71,7 +72,7 @@ func TestSOCKS5AssociationOverSSHUpstream(t *testing.T) {
 	commands := newProbe(local.Network)
 	upstream := newProbe(sshExec(t, commands))
 	c := parse(t, "socks5://127.0.0.1:0")
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	n, err := permuteproxy.Engine{}.Client(c)
@@ -82,7 +83,7 @@ func TestSOCKS5AssociationOverSSHUpstream(t *testing.T) {
 	echo, received := watchedUDPEcho(t)
 	conn := dialPacket(t, ctx, n, echo.String())
 	echoed(t, conn, []byte("ping"))
-	signaled(t, received, "the datagram reaching the udp echo")
+	testutils.Wait(t, received, "the datagram reaching the udp echo")
 	// The association's outgoing socket is the ssh client's udp, which runs nc on the ssh server.
 	if upstream.packets.Load() != 1 || upstream.dials.Load() != 0 {
 		t.Fatalf("upstream packets %d dials %d, want 1 and 0", upstream.packets.Load(), upstream.dials.Load())
@@ -108,7 +109,7 @@ func TestNetcatOverSSHExecCarriesAStream(t *testing.T) {
 	}
 	defer conn.Close()
 	echoed(t, conn, streamPayload)
-	signaled(t, accepted, "nc's conn reaching the tcp echo")
+	testutils.Wait(t, accepted, "nc's conn reaching the tcp echo")
 	if got := commands.dials.Load(); got != 1 {
 		t.Fatalf("ssh server ran %d commands, want the one nc", got)
 	}
@@ -182,7 +183,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	})
 	t.Run("socks5", func(t *testing.T) {
 		c := parse(t, "socks5://127.0.0.1:0")
-		proxyBase := newProbe(system)
+		proxyBase := newProbe(testutils.System{})
 		_, done := start(t, permuteproxy.Engine{Base: proxyBase}, c)
 		c.Endpoint.Address = waitBound(t, proxyBase, done).String()
 		base := &lossyCalls{Network: ssh}
@@ -191,7 +192,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeIf(n)
-		_, dial := n.DialContext(ctx, "udp", udpEcho(t).String())
+		_, dial := n.DialContext(ctx, "udp", testutils.UDPEcho(t).String())
 		_, listen := n.ListenPacket(ctx, "udp", ":0")
 		refused(t, base, map[string]error{"dial udp": dial, "listen packet udp": listen})
 		if body, err := fetch(ctx, n, okTarget(t)); err != nil || body != "OK" {
