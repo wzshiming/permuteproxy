@@ -22,12 +22,6 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc:  (&net.Dialer{}).DialContext,
-	ListenFunc:       (&net.ListenConfig{}).Listen,
-	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
-}
-
 // closeProbe counts what a client or server takes from a network and how often each is closed;
 // packetClosed signals every socket close for closes the libraries perform asynchronously.
 type closeProbe struct {
@@ -161,9 +155,9 @@ func echo(t *testing.T) net.PacketConn {
 }
 
 func TestAssociationCloseEndsControlAndSocket(t *testing.T) {
-	upstream := newProbe(system)
+	upstream := newProbe(testutils.System{})
 	addr := serve(t, upstream, nil)
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
 	peer := echo(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -211,12 +205,12 @@ func TestAssociationFailuresCloseControl(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			upstream := newProbe(system)
+			upstream := newProbe(testutils.System{})
 			addr := serve(t, upstream, tt.server)
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			if tt.noSocket {
 				base.Network = permuteproxy.NetworkFuncs{
-					DialContextFunc:  system.DialContext,
+					DialContextFunc:  testutils.System{}.DialContext,
 					ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, bindErr },
 				}
 			}
@@ -264,7 +258,7 @@ func TestAssociationCanceledHandshakeClosesControl(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, ln.Addr().String(), nil, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -297,8 +291,8 @@ func TestAssociationCanceledHandshakeClosesControl(t *testing.T) {
 }
 
 func TestAssociationSurvivesLaterCancel(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	base := newProbe(system)
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
 	peer := echo(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -324,7 +318,7 @@ func TestAssociationSurvivesLaterCancel(t *testing.T) {
 func TestServerStopEndsAssociation(t *testing.T) {
 	for _, stop := range []string{"close", "cancel"} {
 		t.Run(stop, func(t *testing.T) {
-			upstream := newProbe(system)
+			upstream := newProbe(testutils.System{})
 			bound := make(chan net.Addr, 1)
 			srv := server(t, upstream, nil, bound)
 			runCtx, stopRun := context.WithCancel(context.Background())
@@ -338,7 +332,7 @@ func TestServerStopEndsAssociation(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("server did not bind")
 			}
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			n := dialer(t, base, addr.String(), nil, true)
 			peer := echo(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -393,8 +387,8 @@ func isTimeout(err error) bool {
 }
 
 func TestAssociationConcurrentIO(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	n := dialer(t, newProbe(system), addr, nil, true)
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
 	peer := echo(t).LocalAddr()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -531,8 +525,8 @@ func stray(t *testing.T, pc net.PacketConn, payload string) {
 }
 
 func TestAssociationSkipsStrayDatagrams(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	n := dialer(t, newProbe(system), addr, nil, true)
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
 	peer := echo(t).LocalAddr()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -593,10 +587,10 @@ func TestAssociationNameResolution(t *testing.T) {
 		lookups.Add(1)
 		return nil, errors.New("no dns")
 	})
-	addr := serve(t, newProbe(system), nil)
+	addr := serve(t, newProbe(testutils.System{}), nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	if conn, err := dialer(t, base, addr, nil, true).DialContext(ctx, "udp", "proxy.invalid:9"); err == nil {
 		conn.Close()
 		t.Fatal("socks5 dialed a name that does not resolve")
@@ -605,7 +599,7 @@ func TestAssociationNameResolution(t *testing.T) {
 		t.Fatalf("socks5: %d lookups, %d control conns; want a local lookup before any conn", lookups.Load(), base.dials.Load())
 	}
 	lookups.Store(0)
-	base = newProbe(system)
+	base = newProbe(testutils.System{})
 	conn, err := dialer(t, base, addr, nil, false).DialContext(ctx, "udp", "proxy.invalid:9")
 	if err != nil {
 		t.Fatalf("socks5h: %v", err)
@@ -653,7 +647,7 @@ func TestUDPDialDefaultPeer(t *testing.T) {
 		go answerDNS(server, "echo.test")
 		return client, nil
 	})
-	addr := serve(t, newProbe(system), nil)
+	addr := serve(t, newProbe(testutils.System{}), nil)
 	port := strconv.Itoa(echo(t).LocalAddr().(*net.UDPAddr).Port)
 	ip, name := net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("echo.test", port)
 	tests := []struct {
@@ -674,7 +668,7 @@ func TestUDPDialDefaultPeer(t *testing.T) {
 			lookups.Store(0)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			conn, err := dialer(t, newProbe(system), addr, nil, tt.resolve).DialContext(ctx, "udp", tt.target)
+			conn, err := dialer(t, newProbe(testutils.System{}), addr, nil, tt.resolve).DialContext(ctx, "udp", tt.target)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -719,7 +713,7 @@ func TestSchemesTakeOnlyCredentials(t *testing.T) {
 
 func TestClientRefusesUnlistedNetworks(t *testing.T) {
 	for _, resolve := range []bool{true, false} {
-		base := newProbe(system)
+		base := newProbe(testutils.System{})
 		n := dialer(t, base, "127.0.0.1:1", nil, resolve)
 		ctx := context.Background()
 		if _, err := n.DialContext(ctx, "unix", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
@@ -815,7 +809,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 	target := freeAddress(t)
 	binds := make(chan error, 1)
 	upstream := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
-		ln, err := system.Listen(ctx, network, address)
+		ln, err := testutils.System{}.Listen(ctx, network, address)
 		binds <- err
 		return ln, err
 	}}

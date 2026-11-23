@@ -41,11 +41,6 @@ func (p *closeProbe) DialContext(ctx context.Context, network, address string) (
 	return testutils.CountingConn{Conn: conn, Closes: &p.closed}, nil
 }
 
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc: (&net.Dialer{}).DialContext,
-	ListenFunc:      (&net.ListenConfig{}).Listen,
-}
-
 func writePEM(t *testing.T, name, kind string, der []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
@@ -146,7 +141,7 @@ func serveEcho(t *testing.T, ln net.Listener) net.Addr {
 func TestVerifiedHandshake(t *testing.T) {
 	caFile, certFile, keyFile := issue(t, "proxy.test")
 	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
-	base := &closeProbe{Network: system}
+	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -178,7 +173,7 @@ func TestFailedHandshakeClosesSocket(t *testing.T) {
 		"untrusted issuer":  "?tls_server_name=proxy.test",
 	} {
 		t.Run(name, func(t *testing.T) {
-			base := &closeProbe{Network: system}
+			base := &closeProbe{Network: testutils.System{}}
 			tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+query)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -286,7 +281,7 @@ func TestClientConfigIsLazy(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
 	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
 	addr := echoServer(t, uri)
-	base := &closeProbe{Network: system}
+	base := &closeProbe{Network: testutils.System{}}
 	c, err := permuteproxy.ParseURI(uri)
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +321,7 @@ func TestCanceledHandshakeClosesSocketOnce(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	base := &closeProbe{Network: system}
+	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+ln.Addr().String()+"?tls_skip_verify=true")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

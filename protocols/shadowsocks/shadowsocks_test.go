@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 type countingPacket struct {
@@ -105,12 +106,6 @@ func TestClientRefusesPlaneBeforeIO(t *testing.T) {
 	}
 }
 
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc:  (&net.Dialer{}).DialContext,
-	ListenFunc:       (&net.ListenConfig{}).Listen,
-	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
-}
-
 // upstreamProbe counts the outgoing sockets a server opens and closes.
 type upstreamProbe struct {
 	permuteproxy.Network
@@ -188,7 +183,7 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			}
 			defer raw.Close()
 			carrier := &faultyCarrier{PacketConn: raw, err: tt.err}
-			upstream := &upstreamProbe{Network: system}
+			upstream := &upstreamProbe{Network: testutils.System{}}
 			funcs, err := NewServer(permuteproxy.Options{KeyEncrypto: "aes-256-gcm", KeyPassword: "p"})
 			if err != nil {
 				t.Fatal(err)
@@ -197,7 +192,7 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- funcs.ServePacket(ctx, carrier, upstream) }()
-			n, err := permuteproxy.Engine{Base: system}.Client(chain(t, "ss+udp://aes-256-gcm:p@"+raw.LocalAddr().String()))
+			n, err := permuteproxy.Engine{Base: testutils.System{}}.Client(chain(t, "ss+udp://aes-256-gcm:p@"+raw.LocalAddr().String()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -245,13 +240,13 @@ func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := permuteproxy.NetworkFuncs{ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return proxy, nil }}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: system}.Server(chain(t, "ss+udp://aes-256-gcm:p@"+proxy.LocalAddr().String()))
+	srv, err := permuteproxy.Engine{Base: base, Upstream: testutils.System{}}.Server(chain(t, "ss+udp://aes-256-gcm:p@"+proxy.LocalAddr().String()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Run(ctx)
 	defer srv.Close()
-	inner, err := permuteproxy.Engine{Base: system}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: proxy.LocalAddr().String()}})
+	inner, err := permuteproxy.Engine{Base: testutils.System{}}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: proxy.LocalAddr().String()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +254,7 @@ func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pc, err := funcs.ListenPacket(ctx, inner, system, "udp", ":0")
+	pc, err := funcs.ListenPacket(ctx, inner, testutils.System{}, "udp", ":0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,13 +282,13 @@ func TestPacketTargetByNameReachesItsPeer(t *testing.T) {
 	}
 	c := chain(t, "ss+udp://aes-256-gcm:p@"+proxy.LocalAddr().String())
 	base := permuteproxy.NetworkFuncs{ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return proxy, nil }}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: system}.Server(c)
+	srv, err := permuteproxy.Engine{Base: base, Upstream: testutils.System{}}.Server(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	go srv.Run(ctx)
 	defer srv.Close()
-	n, err := permuteproxy.Engine{Base: system}.Client(c)
+	n, err := permuteproxy.Engine{Base: testutils.System{}}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
