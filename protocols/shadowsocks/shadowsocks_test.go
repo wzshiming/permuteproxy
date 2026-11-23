@@ -189,7 +189,7 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			defer raw.Close()
 			carrier := &faultyCarrier{PacketConn: raw, err: tt.err}
 			upstream := &upstreamProbe{Network: system}
-			funcs, err := NewServer(permuteproxy.Options{KeyUsername: "aes-256-gcm", KeyPassword: "p"})
+			funcs, err := NewServer(permuteproxy.Options{KeyEncrypto: "aes-256-gcm", KeyPassword: "p"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	funcs, err := NewClient(permuteproxy.Options{KeyUsername: "aes-256-gcm", KeyPassword: "p"})
+	funcs, err := NewClient(permuteproxy.Options{KeyEncrypto: "aes-256-gcm", KeyPassword: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}

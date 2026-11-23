@@ -9,7 +9,7 @@ func init() {
 		Kind:        permuteproxy.LayerProxy,
 		Preserves:   permuteproxy.Stream | permuteproxy.Packet,
 		Networks:    []string{"tcp", "udp"},
-		UsernameKey: KeyUsername,
+		UsernameKey: KeyEncrypto,
 		PasswordKey: KeyPassword,
 		NewClient:   NewClient,
 		NewServer:   NewServer,
