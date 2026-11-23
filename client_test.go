@@ -244,3 +244,20 @@ func TestLossyLocalRefusesClientPacket(t *testing.T) {
 		assertCalls(t, want)
 	}
 }
+
+func TestClientWithoutListenPacketRefusesListedDatagrams(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	// The engine refuses datagrams to a proxy without Packet first, so this one is assembled directly.
+	n, err := derivingProxy("test-derive", Stream, 0, []string{"tcp", "udp", "unixgram"}, nil, dialRelay).client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("dial udp without ListenPacket = %v, want ErrUnsupported", err)
+	}
+	if _, err := n.ListenPacket(ctx, "unixgram", "/tmp/x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("listen packet unixgram without ListenPacket = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+}
