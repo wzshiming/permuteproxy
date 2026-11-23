@@ -375,29 +375,50 @@ func TestAdapterRejectsDeclarations(t *testing.T) {
 	assertCalls(t)
 }
 
-func TestAdapterClosesOnce(t *testing.T) {
-	calls = nil
+func TestTransportAndClientCloseOnce(t *testing.T) {
 	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
 	tests := []struct {
-		chain Chain
+		uri   string
+		proxy bool
 		want  []string
 	}{
-		{mk("tcp", "closable"), []string{"closable.close"}},
-		{mk("tcp", "test-tls", "closable"), []string{"closable.close"}},
-		{mk("tcp", "closable", "closable"), []string{"closable.close", "closable.close"}},
+		{"closable+tcp://127.0.0.1:1", false, []string{"closable.close"}},
+		{"test-tls+closable+tcp://127.0.0.1:1", false, []string{"closable.close"}},
+		{"closable+closable+tcp://127.0.0.1:1", false, []string{"closable.close", "closable.close"}},
+		{"closable+test-tls://127.0.0.1:1", false, []string{"closable.close"}},
+		{"test-tls://127.0.0.1:1", false, nil},
+		{"closableproxy+tcp://127.0.0.1:1", true, []string{"closableproxy.close"}},
+		{"closableproxy+closable+tcp://127.0.0.1:1", true, []string{"closableproxy.close", "closable.close"}},
+		{"test-http+closable+tcp://127.0.0.1:1", true, []string{"closable.close"}},
+		{"closableproxy://127.0.0.1:1", true, []string{"closableproxy.close"}},
+		{"test-http://127.0.0.1:1", true, nil},
 	}
 	for _, tt := range tests {
-		tr, err := e.Transport(tt.chain)
-		if err != nil {
-			t.Fatal(err)
-		}
-		calls = nil
-		for i := 0; i < 2; i++ {
-			if err := tr.(io.Closer).Close(); err != nil {
+		t.Run(tt.uri, func(t *testing.T) {
+			var got any
+			var err error
+			if tt.proxy {
+				got, err = e.Client(parse(t, tt.uri))
+			} else {
+				got, err = e.Transport(parse(t, tt.uri))
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
-		}
-		assertCalls(t, tt.want...)
+			c, ok := got.(io.Closer)
+			if !ok {
+				t.Fatal("result has no Close")
+			}
+			calls = nil
+			if err := c.Close(); err != nil {
+				t.Fatal(err)
+			}
+			assertCalls(t, tt.want...)
+			if err := c.Close(); err != nil {
+				t.Fatalf("second Close = %v", err)
+			}
+			assertCalls(t)
+		})
 	}
 }
 
@@ -587,32 +608,6 @@ func TestClientRejectsDeclarations(t *testing.T) {
 	}
 	if _, err := e.Client(mk("", "test-client-broken")); !errors.Is(err, errDeclare) {
 		t.Fatalf("Client() = %v, want the NewClient error kept", err)
-	}
-}
-
-func TestClientClosesOnce(t *testing.T) {
-	calls = nil
-	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
-	tests := []struct {
-		chain Chain
-		want  []string
-	}{
-		{mk("tcp", "closableproxy"), []string{"closableproxy.close"}},
-		{mk("tcp", "closableproxy", "closable"), []string{"closableproxy.close", "closable.close"}},
-		{mk("tcp", "test-http", "closable"), []string{"closable.close"}},
-	}
-	for _, tt := range tests {
-		n, err := e.Client(tt.chain)
-		if err != nil {
-			t.Fatal(err)
-		}
-		calls = nil
-		for i := 0; i < 2; i++ {
-			if err := n.(io.Closer).Close(); err != nil {
-				t.Fatal(err)
-			}
-		}
-		assertCalls(t, tt.want...)
 	}
 }
 
