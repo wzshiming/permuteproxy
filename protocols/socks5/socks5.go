@@ -95,7 +95,7 @@ func (c *client) associate(ctx context.Context, inner permuteproxy.Transport, lo
 		if err := a.adopt(conn, nil); err != nil {
 			return nil, err
 		}
-		return conn, nil
+		return control{conn, a}, nil
 	}
 	d.ProxyPacketDial = func(ctx context.Context, _, _ string) (net.PacketConn, error) {
 		pc, err := local.ListenPacket(ctx, network, address)
@@ -239,6 +239,17 @@ func (s socket) ReadFrom(b []byte) (int, net.Addr, error) {
 type readError struct{ error }
 
 func (e readError) Unwrap() error { return e.error }
+
+// control is the control conn the library holds; it closes it when the handshake fails and along
+// with the socket, which must end the whole association once.
+type control struct {
+	net.Conn
+	a *association
+}
+
+func (c control) Close() error {
+	return c.a.Close()
+}
 
 func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	return &permuteproxy.ServerFuncs{Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
