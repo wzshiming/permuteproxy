@@ -129,21 +129,13 @@ func TestServerReachesTargetThroughUpstream(t *testing.T) {
 	}
 }
 
-// freeAddress is a loopback tcp address nothing listens on.
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	ln := listen(t)
-	ln.Close()
-	return ln.Addr().String()
-}
-
 type accepted struct {
 	conn net.Conn
 	err  error
 }
 
 func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
-	target := freeAddress(t)
+	target := testutils.ReservePort(t)
 	proxies := make(chan string, 1)
 	base := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
 		ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
@@ -232,7 +224,7 @@ func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
 	ln := listen(t)
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +247,7 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 	ln := listen(t)
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
