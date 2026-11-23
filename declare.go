@@ -28,7 +28,6 @@ type Link struct {
 	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
 	Listener       func(ln net.Listener) (net.Listener, error)                   // Stream over a Stream carrier
 	PacketListener func(pc net.PacketConn) (net.Listener, error)                 // Stream over a Packet carrier
-	PacketConn     func(pc net.PacketConn) (net.PacketConn, error)               // Packet over a Packet carrier
 }
 
 // carrier is the plane l consumes to provide plane p.
@@ -50,8 +49,7 @@ func (f *AdapterFuncs) link(p Plane) *Link {
 // fits reports whether each server form l sets is the one for p over a carrier of plane over.
 func (l *Link) fits(p, over Plane) bool {
 	return (l.Listener == nil || p == Stream && over == Stream) &&
-		(l.PacketListener == nil || p == Stream && over == Packet) &&
-		(l.PacketConn == nil || p == Packet && over == Packet)
+		(l.PacketListener == nil || p == Stream && over == Packet)
 }
 
 // covers reports how funcs falls short of the planes s declares.
@@ -114,13 +112,8 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 			return apply(ctx, funcs.BeforeListen, inner.ListenPacket, link.PacketListener)
 		}
 	}
-	switch link := funcs.Packet; {
-	case link == nil:
+	if funcs.Packet == nil {
 		t.ListenPacketFunc = inner.ListenPacket
-	case link.PacketConn != nil:
-		t.ListenPacketFunc = func(ctx context.Context) (net.PacketConn, error) {
-			return apply(ctx, funcs.BeforeListen, inner.ListenPacket, link.PacketConn)
-		}
 	}
 	return assembled{t, closeOnce(funcs.Close, inner)}, nil
 }

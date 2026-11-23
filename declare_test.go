@@ -25,7 +25,7 @@ func TestAdapterPairs(t *testing.T) {
 	}{
 		{"test-tls", Stream, []string{"base.dial tcp 127.0.0.1:1", "test-tls.client"}, []string{"base.listen tcp 127.0.0.1:1", "test-tls.listener"}},
 		{"test-quic", Stream, []string{"base.listenpacket udp :0", "test-quic.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-quic.packetlistener"}},
-		{"test-dtls", Packet, []string{"base.listenpacket udp :0", "test-dtls.client"}, []string{"base.listenpacket udp 127.0.0.1:1", "test-dtls.packetconn"}},
+		{"test-dtls", Packet, []string{"base.listenpacket udp :0", "test-dtls.client"}, nil},
 		{"test-uot", Packet, []string{"base.dial tcp 127.0.0.1:1", "test-uot.client"}, nil},
 	}
 	for _, tt := range tests {
@@ -220,7 +220,7 @@ func TestAdapterLeavesCarrierToLink(t *testing.T) {
 			assertCalls(t, "carrier.close")
 		})
 	}
-	for _, scheme := range []string{"test-tls", "test-quic", "test-dtls"} {
+	for _, scheme := range []string{"test-tls", "test-quic"} {
 		tr, err := e.Transport(mk("", scheme))
 		if err != nil {
 			t.Fatal(err)
@@ -240,8 +240,7 @@ func TestAdapterLeavesCarrierToLink(t *testing.T) {
 	}
 	assertCalls(t,
 		"test-tls.new", "test-tls.client", "test-tls.listener",
-		"test-quic.new", "test-quic.client", "test-quic.packetlistener",
-		"test-dtls.new", "test-dtls.client", "test-dtls.packetconn")
+		"test-quic.new", "test-quic.client", "test-quic.packetlistener")
 }
 
 func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
@@ -255,10 +254,8 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 	}{
 		{"test-hook-ss", nil, []string{"test-hook-ss.beforedial", "base.dial tcp 127.0.0.1:1", "test-hook-ss.client"}, []string{"test-hook-ss.beforelisten", "base.listen tcp 127.0.0.1:1", "test-hook-ss.listener"}},
 		{"test-hook-sp", nil, []string{"test-hook-sp.beforedial", "base.listenpacket udp :0", "test-hook-sp.client"}, []string{"test-hook-sp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-sp.packetlistener"}},
-		{"test-hook-pp", nil, []string{"test-hook-pp.beforedial", "base.listenpacket udp :0", "test-hook-pp.client"}, []string{"test-hook-pp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-pp.packetconn"}},
 		{"test-hookfail-ss", errHook, []string{"test-hookfail-ss.beforedial"}, []string{"test-hookfail-ss.beforelisten"}},
 		{"test-hookfail-sp", errHook, []string{"test-hookfail-sp.beforedial"}, []string{"test-hookfail-sp.beforelisten"}},
-		{"test-hookfail-pp", errHook, []string{"test-hookfail-pp.beforedial"}, []string{"test-hookfail-pp.beforelisten"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.scheme, func(t *testing.T) {

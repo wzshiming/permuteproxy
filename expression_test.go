@@ -487,8 +487,8 @@ func TestEngineListensOnExpressionNetwork(t *testing.T) {
 		{"under the declared name", base, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"base.listen test-nc-unix /tmp/a b.sock"}},
 		{"under the declared name through its implementation", Engine{}, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"impl.listen test-nc-unix /tmp/a b.sock"}},
 		{"under the declared name around dgram", base, chainOver("test-nc-udp", "127.0.0.1:1"), []string{"base.listenpacket test-nc-udp 127.0.0.1:1"}},
-		{"under the declared name below the chain's layer", base, chainOver("test-dtls-udp", "127.0.0.1:1", "test-dtls"), []string{"base.listenpacket test-dtls-udp 127.0.0.1:1", "test-dtls.packetconn"}},
-		{"refused under a declared name the hop reports lossy", Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"test-dtls-udp"}}}, chainOver("test-dtls-udp", "127.0.0.1:1", "test-dtls"), nil},
+		{"under the declared name below the chain's layer", base, chainOver("test-dtls-udp", "127.0.0.1:1", "test-quic"), []string{"base.listenpacket test-dtls-udp 127.0.0.1:1", "test-quic.packetlistener"}},
+		{"refused under a declared name the hop reports lossy", Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"test-dtls-udp"}}}, chainOver("test-dtls-udp", "127.0.0.1:1", "test-quic"), nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

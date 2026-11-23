@@ -103,8 +103,6 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Layer
 					record("%s.packetlistener", name)
 					return idleListener{}, nil
 				}
-			case requires == Packet:
-				link.PacketConn = func(pc net.PacketConn) (net.PacketConn, error) { record("%s.packetconn", name); return pc, nil }
 			}
 			if provides == Stream {
 				return &AdapterFuncs{Stream: link}, nil
@@ -168,14 +166,12 @@ var (
 	failClient         = func(_ context.Context, carrier net.Conn) (net.Conn, error) { carrier.Close(); return nil, errLink }
 	failListener       = func(ln net.Listener) (net.Listener, error) { ln.Close(); return nil, errLink }
 	failPacketListener = func(pc net.PacketConn) (net.Listener, error) { pc.Close(); return nil, errLink }
-	failPacketConn     = func(pc net.PacketConn) (net.PacketConn, error) { pc.Close(); return nil, errLink }
 )
 
 // failingLinks are layers whose link functions all fail, one per pair with a server form.
 var failingLinks = map[string]LayerSpec{
 	"test-fail-ss": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Listener: failListener}}, nil),
 	"test-fail-sp": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Client: failClient, PacketListener: failPacketListener}}, nil),
-	"test-fail-pp": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{Client: failClient, PacketConn: failPacketConn}}, nil),
 }
 
 var errHook = errors.New("hook failed")
@@ -231,7 +227,7 @@ var uncovered = map[string]LayerSpec{
 	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{PacketListener: failPacketListener}}, nil),
 	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: failListener}}, nil),
 	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: failPacketListener}}, nil),
-	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, PacketConn: failPacketConn}}, nil),
+	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, Listener: failListener}}, nil),
 }
 
 // declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
@@ -339,10 +335,8 @@ func init() {
 	}
 	RegisterLayer("test-hook-ss", hookedAdapter("test-hook-ss", Stream, Stream, nil))
 	RegisterLayer("test-hook-sp", hookedAdapter("test-hook-sp", Packet, Stream, nil))
-	RegisterLayer("test-hook-pp", hookedAdapter("test-hook-pp", Packet, Packet, nil))
 	RegisterLayer("test-hookfail-ss", hookedAdapter("test-hookfail-ss", Stream, Stream, errHook))
 	RegisterLayer("test-hookfail-sp", hookedAdapter("test-hookfail-sp", Packet, Stream, errHook))
-	RegisterLayer("test-hookfail-pp", hookedAdapter("test-hookfail-pp", Packet, Packet, errHook))
 	hookKeep := hookedAdapter("test-hook-keep", Stream, Stream, nil)
 	hookKeep.Preserves = Packet
 	RegisterLayer("test-hook-keep", hookKeep)
