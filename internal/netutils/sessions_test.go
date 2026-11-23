@@ -13,6 +13,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // pipeSession is one conn a pipeDialer handed out: the peer it was dialed for and the far end.
@@ -155,7 +157,7 @@ func writeTo(t *testing.T, pc net.PacketConn, b string, peer net.Addr) {
 // readFrom waits for one ReadFrom into a buffer of size bytes.
 func readFrom(t *testing.T, pc net.PacketConn, size int) (string, net.Addr) {
 	t.Helper()
-	r := wait(t, goReadFrom(pc, size), "ReadFrom")
+	r := testutils.Wait(t, goReadFrom(pc, size), "ReadFrom")
 	if r.err != nil {
 		t.Fatalf("ReadFrom = %v", r.err)
 	}
@@ -192,19 +194,6 @@ func goWriteTo(pc net.PacketConn, b string, peer net.Addr) <-chan error {
 func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.Is(err, os.ErrDeadlineExceeded) && errors.As(err, &ne) && ne.Timeout()
-}
-
-// wait receives from c, failing the test if nothing arrives.
-func wait[T any](t *testing.T, c <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-c:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s never returned", what)
-	}
-	var zero T
-	return zero
 }
 
 func testPeer(i int) net.Addr {
@@ -312,7 +301,7 @@ func TestSessionsDialErrorReachesWaitingWrites(t *testing.T) {
 		synctest.Wait()
 		close(release)
 		for _, write := range writes {
-			if err := wait(t, write, "WriteTo"); !errors.Is(err, refused) {
+			if err := testutils.Wait(t, write, "WriteTo"); !errors.Is(err, refused) {
 				t.Fatalf("WriteTo sharing a failed dial = %v, want %v", err, refused)
 			}
 		}
@@ -441,7 +430,7 @@ func TestSessionsCloseUnblocksReadFrom(t *testing.T) {
 		if err := pc.Close(); err != nil {
 			t.Fatalf("Close = %v", err)
 		}
-		if r := wait(t, read, "ReadFrom blocked at Close"); !errors.Is(r.err, net.ErrClosed) {
+		if r := testutils.Wait(t, read, "ReadFrom blocked at Close"); !errors.Is(r.err, net.ErrClosed) {
 			t.Fatalf("ReadFrom blocked at Close = %v, want net.ErrClosed", r.err)
 		}
 		if _, _, err := pc.ReadFrom(make([]byte, 64)); !errors.Is(err, net.ErrClosed) {
@@ -480,13 +469,13 @@ func TestSessionsCloseReleasesSessions(t *testing.T) {
 		writes := []<-chan error{goWriteTo(pc, "stuck", testPeer(1)), goWriteTo(pc, "stuck", slow)}
 		s := d.next(t)
 		go s.remote.Write([]byte("unread"))
-		ctx := wait(t, dialing, "dial")
+		ctx := testutils.Wait(t, dialing, "dial")
 		synctest.Wait()
 		if err := pc.Close(); err != nil {
 			t.Fatalf("Close = %v", err)
 		}
 		for _, write := range writes {
-			if err := wait(t, write, "WriteTo blocked at Close"); !errors.Is(err, net.ErrClosed) {
+			if err := testutils.Wait(t, write, "WriteTo blocked at Close"); !errors.Is(err, net.ErrClosed) {
 				t.Fatalf("WriteTo blocked at Close = %v, want net.ErrClosed", err)
 			}
 		}
@@ -659,7 +648,7 @@ func TestSessionsConcurrentUse(t *testing.T) {
 				}
 			}
 		})
-		wait(t, enough, "echo")
+		testutils.Wait(t, enough, "echo")
 		if err := pc.Close(); err != nil {
 			t.Fatalf("Close = %v", err)
 		}
@@ -722,7 +711,7 @@ func TestSessionsIdleTimeoutCountsFromLastActivity(t *testing.T) {
 				again := d.next(t)
 				again.expect(t, "again")
 				go again.remote.Write([]byte("back"))
-				if r := wait(t, read, "ReadFrom"); r.b != "back" || r.err != nil {
+				if r := testutils.Wait(t, read, "ReadFrom"); r.b != "back" || r.err != nil {
 					t.Fatalf("ReadFrom = %q, %v, want \"back\" from the new session", r.b, r.err)
 				}
 			})
@@ -755,7 +744,7 @@ func TestSessionsEndedSessionIsForgotten(t *testing.T) {
 				again := d.next(t)
 				again.expect(t, "again")
 				go again.remote.Write([]byte("back"))
-				if r := wait(t, read, "ReadFrom"); r.b != "back" || r.err != nil {
+				if r := testutils.Wait(t, read, "ReadFrom"); r.b != "back" || r.err != nil {
 					t.Fatalf("ReadFrom = %q, %v, want \"back\" from the new session", r.b, r.err)
 				}
 			})
@@ -806,7 +795,7 @@ func TestSessionsDialContextLivesWithItsSession(t *testing.T) {
 				defer pc.Close()
 				pc.SetWriteDeadline(time.Now().Add(time.Second))
 				writeTo(t, pc, "open", testPeer(1))
-				ctx := wait(t, dialed, "dial")
+				ctx := testutils.Wait(t, dialed, "dial")
 				d.next(t).expect(t, "open")
 				quiet(2 * time.Second)
 				if ctx.Err() != nil {
@@ -896,13 +885,13 @@ func TestSessionsCapCountsDialsInFlight(t *testing.T) {
 		pc := NewSessions(d.dial, SessionOptions{MaxSessions: 1})
 		defer pc.Close()
 		write := goWriteTo(pc, "slow", slow)
-		ctx := wait(t, dialing, "dial")
+		ctx := testutils.Wait(t, dialing, "dial")
 		writeTo(t, pc, "fast", testPeer(2))
 		d.next(t).expect(t, "fast")
 		if ctx.Err() == nil {
 			t.Fatal("a dial in flight survived a newer session over the cap")
 		}
-		if err := wait(t, write, "evicted WriteTo"); err == nil || errors.Is(err, net.ErrClosed) {
+		if err := testutils.Wait(t, write, "evicted WriteTo"); err == nil || errors.Is(err, net.ErrClosed) {
 			t.Fatalf("evicted WriteTo = %v, want an error other than net.ErrClosed", err)
 		}
 	})
@@ -934,7 +923,7 @@ func TestSessionsLateDialIsDiscarded(t *testing.T) {
 				synctest.Wait()
 				tt.overtake(t, pc)
 				close(release)
-				err := wait(t, write, "WriteTo")
+				err := testutils.Wait(t, write, "WriteTo")
 				if err == nil || errors.Is(err, net.ErrClosed) != tt.closed {
 					t.Fatalf("WriteTo whose dial outlived its session = %v, want net.ErrClosed only after Close", err)
 				}
@@ -961,7 +950,7 @@ func TestSessionsReadDeadline(t *testing.T) {
 		s := d.next(t)
 		start := time.Now()
 		pc.SetReadDeadline(start.Add(time.Second))
-		if r := wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) || time.Since(start) != time.Second {
+		if r := testutils.Wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) || time.Since(start) != time.Second {
 			t.Fatalf("ReadFrom = %v after %v, want a timeout after 1s", r.err, time.Since(start))
 		}
 		pc.SetReadDeadline(time.Time{})
@@ -974,7 +963,7 @@ func TestSessionsReadDeadline(t *testing.T) {
 		read := goReadFrom(pc, 64)
 		quiet(time.Second / 2)
 		pc.SetReadDeadline(start.Add(2 * time.Second))
-		if r := wait(t, read, "ReadFrom"); !isTimeout(r.err) || time.Since(start) != 2*time.Second {
+		if r := testutils.Wait(t, read, "ReadFrom"); !isTimeout(r.err) || time.Since(start) != 2*time.Second {
 			t.Fatalf("ReadFrom = %v after %v, want a timeout at the extended 2s", r.err, time.Since(start))
 		}
 		pc.SetReadDeadline(time.Now().Add(time.Hour))
@@ -985,7 +974,7 @@ func TestSessionsReadDeadline(t *testing.T) {
 		read = goReadFrom(pc, 64)
 		synctest.Wait()
 		pc.SetReadDeadline(time.Now())
-		if r := wait(t, read, "ReadFrom"); !isTimeout(r.err) {
+		if r := testutils.Wait(t, read, "ReadFrom"); !isTimeout(r.err) {
 			t.Fatalf("ReadFrom blocked when the deadline moved to now = %v, want a timeout", r.err)
 		}
 	})
@@ -1007,10 +996,10 @@ func TestSessionsWriteDeadlineBoundsDial(t *testing.T) {
 		defer pc.Close()
 		start := time.Now()
 		pc.SetWriteDeadline(start.Add(time.Second))
-		if err := wait(t, goWriteTo(pc, "slow", testPeer(1)), "WriteTo"); !isTimeout(err) || time.Since(start) != time.Second {
+		if err := testutils.Wait(t, goWriteTo(pc, "slow", testPeer(1)), "WriteTo"); !isTimeout(err) || time.Since(start) != time.Second {
 			t.Fatalf("WriteTo through a stalled dial = %v after %v, want a timeout after 1s", err, time.Since(start))
 		}
-		if ctx := wait(t, dialing, "dial"); ctx.Err() == nil {
+		if ctx := testutils.Wait(t, dialing, "dial"); ctx.Err() == nil {
 			t.Fatal("the dial's context outlived the write deadline")
 		}
 		if _, err := pc.WriteTo([]byte("late"), testPeer(1)); !isTimeout(err) || d.dials.Load() != 1 {
@@ -1030,7 +1019,7 @@ func TestSessionsWriteDeadlineBoundsWrite(t *testing.T) {
 		defer pc.Close()
 		start := time.Now()
 		pc.SetWriteDeadline(start.Add(time.Second))
-		if err := wait(t, goWriteTo(pc, "stuck", testPeer(1)), "WriteTo"); !isTimeout(err) || time.Since(start) != time.Second {
+		if err := testutils.Wait(t, goWriteTo(pc, "stuck", testPeer(1)), "WriteTo"); !isTimeout(err) || time.Since(start) != time.Second {
 			t.Fatalf("WriteTo a far end that never reads = %v after %v, want a timeout after 1s", err, time.Since(start))
 		}
 		s := d.next(t)
@@ -1041,7 +1030,7 @@ func TestSessionsWriteDeadlineBoundsWrite(t *testing.T) {
 		write := goWriteTo(pc, "stuck", testPeer(2))
 		synctest.Wait()
 		pc.SetWriteDeadline(time.Now())
-		if err := wait(t, write, "WriteTo"); !isTimeout(err) {
+		if err := testutils.Wait(t, write, "WriteTo"); !isTimeout(err) {
 			t.Fatalf("WriteTo blocked when the deadline moved to now = %v, want a timeout", err)
 		}
 		if n := d.dials.Load(); n != 2 {
@@ -1056,10 +1045,10 @@ func TestSessionsSetDeadlineSetsBoth(t *testing.T) {
 		pc := NewSessions(d.dial, SessionOptions{})
 		defer pc.Close()
 		pc.SetDeadline(time.Now())
-		if r := wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) {
+		if r := testutils.Wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) {
 			t.Fatalf("ReadFrom past SetDeadline = %v, want a timeout", r.err)
 		}
-		if err := wait(t, goWriteTo(pc, "x", testPeer(1)), "WriteTo"); !isTimeout(err) {
+		if err := testutils.Wait(t, goWriteTo(pc, "x", testPeer(1)), "WriteTo"); !isTimeout(err) {
 			t.Fatalf("WriteTo past SetDeadline = %v, want a timeout", err)
 		}
 		pc.SetDeadline(time.Time{})
@@ -1107,9 +1096,9 @@ func TestSessionsWriteDeadlineSetDuringDial(t *testing.T) {
 		pc := NewSessions(d.dial, SessionOptions{})
 		defer pc.Close()
 		write := goWriteTo(pc, "slow", testPeer(1))
-		ctx := wait(t, dialing, "dial")
+		ctx := testutils.Wait(t, dialing, "dial")
 		pc.SetWriteDeadline(time.Now())
-		if err := wait(t, write, "WriteTo"); !isTimeout(err) || ctx.Err() == nil {
+		if err := testutils.Wait(t, write, "WriteTo"); !isTimeout(err) || ctx.Err() == nil {
 			t.Fatalf("WriteTo whose deadline passed during its dial = %v, want a timeout and the dial canceled", err)
 		}
 	})
@@ -1123,7 +1112,7 @@ func TestSessionsDeadlineClearedThenSetAgain(t *testing.T) {
 		pc.SetReadDeadline(start.Add(time.Hour))
 		pc.SetReadDeadline(time.Time{})
 		pc.SetReadDeadline(start.Add(time.Second))
-		if r := wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) || time.Since(start) != time.Second {
+		if r := testutils.Wait(t, goReadFrom(pc, 64), "ReadFrom"); !isTimeout(r.err) || time.Since(start) != time.Second {
 			t.Fatalf("ReadFrom = %v after %v, want a timeout after 1s", r.err, time.Since(start))
 		}
 	})

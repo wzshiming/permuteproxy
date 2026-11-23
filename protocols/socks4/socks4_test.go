@@ -129,17 +129,6 @@ func TestServerReachesTargetThroughUpstream(t *testing.T) {
 	}
 }
 
-func wait[T any](t *testing.T, ch <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-ch:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s: timed out", what)
-	}
-	panic("unreachable")
-}
-
 // freeAddress is a loopback tcp address nothing listens on.
 func freeAddress(t *testing.T) string {
 	t.Helper()
@@ -179,7 +168,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		ctx, stop := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- srv.Run(ctx) }()
-		dialer := &socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: wait(t, proxies, "the proxy's listener")}
+		dialer := &socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: testutils.Wait(t, proxies, "the proxy's listener")}
 		bind, err := dialer.Listen(ctx, "tcp", target)
 		if err != nil {
 			t.Fatal(err)
@@ -189,14 +178,14 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 			conn, err := bind.Accept()
 			replies <- accepted{conn, err}
 		}()
-		if err := wait(t, binds, "the BIND listen"); err != nil {
+		if err := testutils.Wait(t, binds, "the BIND listen"); err != nil {
 			t.Fatalf("run %d: BIND listen on %s = %v", run, target, err)
 		}
 		peer, err := net.Dial("tcp", target)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply := wait(t, replies, "the BIND reply")
+		reply := testutils.Wait(t, replies, "the BIND reply")
 		if reply.err != nil {
 			t.Fatalf("run %d: BIND = %v", run, reply.err)
 		}
@@ -206,7 +195,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		reply.conn.Close()
 		peer.Close()
 		stop()
-		if err := wait(t, done, "Run"); err != nil {
+		if err := testutils.Wait(t, done, "Run"); err != nil {
 			t.Fatalf("run %d: Run = %v", run, err)
 		}
 	}
@@ -248,11 +237,11 @@ func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	go bind.Accept()
-	wait(t, entered, "the BIND listen")
+	testutils.Wait(t, entered, "the BIND listen")
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 	close(release)
-	wait(t, closed, "the close of a BIND listener opened after Serve returned")
+	testutils.Wait(t, closed, "the close of a BIND listener opened after Serve returned")
 }
 
 func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
@@ -275,10 +264,10 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 		conn, err := bind.Accept()
 		replies <- accepted{conn, err}
 	}()
-	if reply := wait(t, replies, "the BIND reply"); reply.err == nil {
+	if reply := testutils.Wait(t, replies, "the BIND reply"); reply.err == nil {
 		reply.conn.Close()
 		t.Fatal("BIND succeeded without a listener")
 	}
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 }

@@ -34,17 +34,6 @@ func run(s *Server, ctx context.Context) <-chan error {
 	return done
 }
 
-func wait(t *testing.T, done <-chan error) error {
-	t.Helper()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return")
-		return nil
-	}
-}
-
 func assertClosed(t *testing.T, addr net.Addr) {
 	t.Helper()
 	if conn, err := net.DialTimeout("tcp", addr.String(), time.Second); err == nil {
@@ -74,7 +63,7 @@ func TestServerCloseStopsRun(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after Close, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -104,7 +93,7 @@ func TestServerCancelStopsRun(t *testing.T) {
 	addr := <-bound
 	inner := <-serveCtx
 	cancel()
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after cancel, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -122,7 +111,7 @@ func TestServerCloseCancelsServeContext(t *testing.T) {
 	done := run(s, context.Background())
 	inner := <-serveCtx
 	s.Close()
-	wait(t, done)
+	testutils.Wait(t, done, "Run")
 	if inner.Err() == nil {
 		t.Fatal("Close left the serve context alive")
 	}
@@ -137,7 +126,7 @@ func TestServerCloseBeforeRun(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, run(s, context.Background())); err != nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err != nil {
 		t.Fatalf("Run after Close = %v, want nil", err)
 	}
 	if listens.Load() != 0 {
@@ -148,7 +137,7 @@ func TestServerCloseBeforeRun(t *testing.T) {
 func TestServerReportsErrors(t *testing.T) {
 	bindErr := errors.New("bind failed")
 	s := NewServer(func(context.Context) (net.Listener, error) { return nil, bindErr }, nil, acceptLoop, nil)
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, bindErr) {
 		t.Fatalf("Run = %v, want bind error", err)
 	}
 
@@ -161,7 +150,7 @@ func TestServerReportsErrors(t *testing.T) {
 		}
 		return ln, err
 	}, nil, func(context.Context, net.Listener) error { return serveErr }, nil)
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want serve error", err)
 	}
 	assertClosed(t, <-bound)
@@ -256,7 +245,7 @@ func TestServerStopReleasesAcceptedConns(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 			if err := recv(t, reads, "server read"); err == nil {
@@ -302,7 +291,7 @@ func TestServerServeExitClosesConns(t *testing.T) {
 	defer client.Close()
 	recv(t, accepted, "accept")
 	close(release)
-	if err := wait(t, done); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, done, "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want serve error", err)
 	}
 	if err := recv(t, reads, "server read"); err == nil {
@@ -362,7 +351,7 @@ func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
 	if got := conn.Closes.Load(); got != 1 {
 		t.Fatalf("late connection closed %d times, want 1", got)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 	if got := fake.closes.Load(); got != 1 {
@@ -394,7 +383,7 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 			result <- nil
 			return nil
 		}, nil)
-	if err := wait(t, run(s, context.Background())); err != nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err != nil {
 		t.Fatalf("Run = %v", err)
 	}
 	recv(t, result, "serve")
@@ -411,7 +400,7 @@ func TestServerCanceledContextDoesNotBind(t *testing.T) {
 	}, nil, acceptLoop, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := wait(t, run(s, ctx)); err != nil {
+	if err := testutils.Wait(t, run(s, ctx), "Run"); err != nil {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 	if listens.Load() != 0 {
@@ -441,7 +430,7 @@ func TestServerBindFailingOnStopReturnsNil(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil for a bind that failed because of the stop", err)
 			}
 		})
@@ -477,7 +466,7 @@ func TestServerStopDuringBind(t *testing.T) {
 				t.Fatal(err)
 			}
 			close(release)
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 			if served.Load() != 0 {
@@ -505,7 +494,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	defer cancel()
 	first := run(s, ctx)
 	recv(t, bound, "bind")
-	if err := wait(t, run(s, context.Background())); err == nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err == nil {
 		t.Fatal("second Run while running = nil, want an error")
 	}
 	select {
@@ -514,7 +503,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	default:
 	}
 	cancel()
-	if err := wait(t, first); err != nil {
+	if err := testutils.Wait(t, first, "Run"); err != nil {
 		t.Fatalf("first Run = %v, want nil", err)
 	}
 	again := run(s, context.Background())
@@ -522,7 +511,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, again); err != nil {
+	if err := testutils.Wait(t, again, "Run"); err != nil {
 		t.Fatalf("Run after cancel = %v, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -589,7 +578,7 @@ func TestPlaneServerBindsBothBeforeServing(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after Close, want nil", err)
 	}
 	assertClosed(t, recv(t, bound, "bind"))
@@ -610,7 +599,7 @@ func TestPlaneServerBindFailureReleasesFirst(t *testing.T) {
 		func(context.Context) (net.PacketConn, error) { return nil, bindErr },
 		func(context.Context, net.Listener) error { served.Add(1); return nil },
 		func(context.Context, net.PacketConn) error { served.Add(1); return nil })
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, bindErr) {
 		t.Fatalf("Run = %v, want the packet bind error", err)
 	}
 	if got := fake.closes.Load(); got != 1 {
@@ -651,7 +640,7 @@ func TestPlaneServerServeErrorStopsBoth(t *testing.T) {
 			return err
 		},
 		func(context.Context, net.PacketConn) error { return serveErr })
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want the packet serve error", err)
 	}
 	if err := recv(t, streamDone, "stream serve exit"); err == nil {
@@ -714,7 +703,7 @@ func TestPlaneServerFirstReturnCancelsOther(t *testing.T) {
 				},
 				func(ctx context.Context, _ net.Listener) error { return stream(ctx) },
 				func(ctx context.Context, _ net.PacketConn) error { return packet(ctx) })
-			if err := wait(t, run(s, context.Background())); !errors.Is(err, tt.want) {
+			if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, tt.want) {
 				t.Fatalf("Run = %v, want %v", err, tt.want)
 			}
 			first, second := recv(t, exits, "serve exit"), recv(t, exits, "serve exit")
@@ -753,7 +742,7 @@ func TestPlaneServerStopReachesWaitingServes(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 		})
@@ -782,7 +771,7 @@ func TestPlaneServerBindsOnlyWhatIsSet(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v after Close, want nil", err)
 			}
 			if got := binds.Load(); got != 1 {
