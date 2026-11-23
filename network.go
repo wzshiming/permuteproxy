@@ -119,3 +119,10 @@ func (n byName) ListenPacket(ctx context.Context, network, address string) (net.
 func (n byName) Lossy(network string) bool {
 	return isLossy(n.resolve(network), network)
 }
+
+func orByName(n Network) Network {
+	if n != nil {
+		return n
+	}
+	return byName{}
+}

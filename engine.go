@@ -10,13 +10,6 @@ type Engine struct {
 	Upstream Network // what servers reach their targets through; nil resolves each call as a nil Base does
 }
 
-func orByName(n Network) Network {
-	if n != nil {
-		return n
-	}
-	return byName{}
-}
-
 func (e Engine) build(r *resolved, from int) (Transport, error) {
 	n, layered := orByName(e.Base), len(r.layers) > 0
 	dial := bind(n, r.stream, r.packet, r.dial, layered)
