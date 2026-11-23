@@ -18,11 +18,11 @@ type AdapterFuncs struct {
 	Stream       *Link        // how the layer provides Stream
 	Packet       *Link        // how the layer provides Packet
 	BeforeDial   func() error // optional; runs before a Dial obtains a link's carrier, failing the Dial with its error
-	BeforeListen func() error // optional; runs before a Listen or ListenPacket obtains a link's carrier, failing it with its error
+	BeforeListen func() error // optional; runs before a Listen obtains a link's carrier, failing the Listen with its error
 	Close        func() error // optional; releases what NewAdapter acquired
 }
 
-// Link derives one plane from a carrier of one plane through a client and a server form, each function owning the carrier it is handed, also when it fails.
+// Link derives one plane from a carrier of one plane through a client form and, for Stream, a server form, each function owning the carrier it is handed, also when it fails.
 type Link struct {
 	Over           Plane                                                         // carrier plane consumed; zero means the provided plane itself
 	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
