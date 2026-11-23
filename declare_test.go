@@ -618,7 +618,7 @@ func TestClientClosesOnce(t *testing.T) {
 	}
 }
 
-func TestClientReportsLossyFromSpec(t *testing.T) {
+func TestClientReportsLossyFromLayerSpec(t *testing.T) {
 	e := Engine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		scheme string
@@ -852,7 +852,7 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 
 func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 	name := fresh("test-dual-server")
-	RegisterLayer(name, Spec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
+	RegisterLayer(name, LayerSpec{Kind: KindProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-dual-server.newserver")
 		return &ServerFuncs{Serve: failServe, ServePacket: failServePacket}, nil
 	}})

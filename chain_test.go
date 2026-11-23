@@ -79,8 +79,8 @@ func taint(name string, opts Options) {
 }
 
 // fakeAdapter provides one plane over the plane it requires, recording each call of its link.
-func fakeAdapter(name string, requires, provides Plane, options ...string) Spec {
-	return Spec{
+func fakeAdapter(name string, requires, provides Plane, options ...string) LayerSpec {
+	return LayerSpec{
 		Kind:     KindAdapter,
 		Requires: requires,
 		Provides: provides,
@@ -115,8 +115,8 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Spec 
 }
 
 // fakeProxy declares a proxy whose client and server functions record each call with what they are handed.
-func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) Spec {
-	return Spec{
+func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) LayerSpec {
+	return LayerSpec{
 		Kind:           KindProxy,
 		Requires:       requires,
 		Provides:       provides,
@@ -157,8 +157,8 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 }
 
 // declared is an adapter whose NewAdapter returns funcs and err as given.
-func declared(requires, provides Plane, funcs *AdapterFuncs, err error) Spec {
-	return Spec{Kind: KindAdapter, Requires: requires, Provides: provides, NewAdapter: func(Options) (*AdapterFuncs, error) { return funcs, err }}
+func declared(requires, provides Plane, funcs *AdapterFuncs, err error) LayerSpec {
+	return LayerSpec{Kind: KindAdapter, Requires: requires, Provides: provides, NewAdapter: func(Options) (*AdapterFuncs, error) { return funcs, err }}
 }
 
 var (
@@ -172,7 +172,7 @@ var (
 )
 
 // failingLinks are layers whose link functions all fail, one per pair with a server form.
-var failingLinks = map[string]Spec{
+var failingLinks = map[string]LayerSpec{
 	"test-fail-ss": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Listener: failListener}}, nil),
 	"test-fail-sp": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Client: failClient, PacketListener: failPacketListener}}, nil),
 	"test-fail-pp": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{Client: failClient, PacketConn: failPacketConn}}, nil),
@@ -181,7 +181,7 @@ var failingLinks = map[string]Spec{
 var errHook = errors.New("hook failed")
 
 // hookedAdapter is fakeAdapter with BeforeDial and BeforeListen hooks that record each call and return err.
-func hookedAdapter(name string, requires, provides Plane, err error) Spec {
+func hookedAdapter(name string, requires, provides Plane, err error) LayerSpec {
 	spec := fakeAdapter(name, requires, provides)
 	newAdapter := spec.NewAdapter
 	spec.NewAdapter = func(opts Options) (*AdapterFuncs, error) {
@@ -222,7 +222,7 @@ type idlePacketConn struct{ net.PacketConn }
 func (idlePacketConn) Close() error { return nil }
 
 // uncovered are layers whose links do not cover the planes they declare.
-var uncovered = map[string]Spec{
+var uncovered = map[string]LayerSpec{
 	"test-bad-missing": declared(Stream, Stream, &AdapterFuncs{}, nil),
 	"test-bad-extra":   declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Packet: &Link{}}, nil),
 	"test-bad-carrier": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Packet}}, nil),
@@ -235,8 +235,8 @@ var uncovered = map[string]Spec{
 }
 
 // declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
-func declaredProxy(provides, preserves Plane, funcs *ClientFuncs, err error) Spec {
-	return Spec{Kind: KindProxy, Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
+func declaredProxy(provides, preserves Plane, funcs *ClientFuncs, err error) LayerSpec {
+	return LayerSpec{Kind: KindProxy, Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
 }
 
 // failDial and failListenPacket fill client functions that fixtures must declare but do not exercise.
@@ -246,7 +246,7 @@ var (
 )
 
 // uncoveredClients are proxies whose ClientFuncs miss the function a plane they declare needs.
-var uncoveredClients = map[string]Spec{
+var uncoveredClients = map[string]LayerSpec{
 	"test-client-no-dial":        declaredProxy(Stream, 0, &ClientFuncs{ListenPacket: failListenPacket}, nil),
 	"test-client-kept-no-dial":   declaredProxy(0, Stream, &ClientFuncs{ListenPacket: failListenPacket}, nil),
 	"test-client-no-packet":      declaredProxy(Packet, 0, &ClientFuncs{Dial: failDial}, nil),
@@ -254,8 +254,8 @@ var uncoveredClients = map[string]Spec{
 }
 
 // declaredServer is a proxy providing Stream over the planes it requires or preserves, whose NewServer returns funcs and err as given.
-func declaredServer(requires, preserves Plane, funcs *ServerFuncs, err error) Spec {
-	return Spec{Kind: KindProxy, Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
+func declaredServer(requires, preserves Plane, funcs *ServerFuncs, err error) LayerSpec {
+	return LayerSpec{Kind: KindProxy, Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
 }
 
 // failServe and failServePacket fill server functions that fixtures must declare but do not exercise.
@@ -265,7 +265,7 @@ var (
 )
 
 // uncoveredServers are proxies whose ServerFuncs miss the function a plane they require or preserve needs.
-var uncoveredServers = map[string]Spec{
+var uncoveredServers = map[string]LayerSpec{
 	"test-server-no-serve":       declaredServer(Stream, 0, &ServerFuncs{ServePacket: failServePacket}, nil),
 	"test-server-kept-no-serve":  declaredServer(0, Stream, &ServerFuncs{ServePacket: failServePacket}, nil),
 	"test-server-no-packet":      declaredServer(Packet, 0, &ServerFuncs{Serve: failServe}, nil),
@@ -313,7 +313,7 @@ func init() {
 	anyProxy.NewClient, anyProxy.Networks = nil, nil
 	RegisterLayer("test-any", anyProxy)
 	// test-peer resolves the default peer of its udp dials and binds their sockets through local.
-	RegisterLayer("test-peer", Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
+	RegisterLayer("test-peer", LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			ListenPacket: func(ctx context.Context, _ Transport, local Network, network, address string) (net.PacketConn, error) {
 				record("test-peer.listenpacket %s %s", network, address)
@@ -352,7 +352,7 @@ func init() {
 	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
 	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("closableserver", declaredServer(Stream, 0, &ServerFuncs{Serve: failServe, Close: func() error { record("closableserver.close"); return nil }}, nil))
-	RegisterLayer("nilproxy", Spec{
+	RegisterLayer("nilproxy", LayerSpec{
 		Kind:      KindProxy,
 		Requires:  Stream,
 		Provides:  Stream,
@@ -375,11 +375,11 @@ func init() {
 	RegisterLayer("test-reject-client-packet", declaredProxy(Packet, 0, &ClientFuncs{Close: func() error { record("test-reject-client-packet.close"); return nil }}, nil))
 	RegisterLayer("test-reject-server-packet", declaredServer(Stream, Packet, &ServerFuncs{Serve: failServe, Close: func() error { record("test-reject-server-packet.close"); return nil }}, nil))
 	// test-counted passes its carrier through and records its Close.
-	RegisterLayer("test-counted", Spec{Kind: KindAdapter, Preserves: Stream | Packet, NewAdapter: func(Options) (*AdapterFuncs, error) {
+	RegisterLayer("test-counted", LayerSpec{Kind: KindAdapter, Preserves: Stream | Packet, NewAdapter: func(Options) (*AdapterFuncs, error) {
 		return &AdapterFuncs{Close: func() error { record("test-counted.close"); return nil }}, nil
 	}})
 	// test-packet-server binds only a Packet carrier, so a Stream one leaves it nothing to serve.
-	RegisterLayer("test-packet-server", Spec{Kind: KindProxy, Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
+	RegisterLayer("test-packet-server", LayerSpec{Kind: KindProxy, Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-packet-server.newserver")
 		return &ServerFuncs{ServePacket: func(_ context.Context, _ net.PacketConn, upstream Network) error {
 			record("test-packet-server.servepacket upstream=%s", netName(upstream))
@@ -387,7 +387,7 @@ func init() {
 		}}, nil
 	}})
 	// test-relay's server binds through its upstream on the network its relay option names, a socket on a datagram one, returning the outcome.
-	RegisterLayer("test-relay", Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Options: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
+	RegisterLayer("test-relay", LayerSpec{Kind: KindProxy, Requires: Stream, Provides: Stream, Options: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
 		return &ServerFuncs{Serve: func(ctx context.Context, _ net.Listener, upstream Network) error {
 			network := opts["relay"]
 			var bound io.Closer
@@ -433,17 +433,17 @@ func TestRegisterRejects(t *testing.T) {
 	mustPanic(t, "alias named like layer", func() { RegisterAlias("test-tls", "test-http+test-tls") })
 	mustPanic(t, "name with plus", func() { RegisterLayer("a+b", adapter) })
 	mustPanic(t, "network without plane", func() { RegisterNetwork("np", NetworkSpec{}) })
-	mustPanic(t, "adapter without NewAdapter", func() { RegisterLayer("na", Spec{Requires: Stream, Provides: Stream}) })
+	mustPanic(t, "adapter without NewAdapter", func() { RegisterLayer("na", LayerSpec{Requires: Stream, Provides: Stream}) })
 	mustPanic(t, "proxy with NewAdapter", func() {
 		proxy := fakeProxy("pn", Stream, Stream, 0, "", "")
 		proxy.NewAdapter = adapter.NewAdapter
 		RegisterLayer("pn", proxy)
 	})
-	mustPanic(t, "layer consuming nothing", func() { RegisterLayer("ln", Spec{Provides: Stream, NewAdapter: adapter.NewAdapter}) })
+	mustPanic(t, "layer consuming nothing", func() { RegisterLayer("ln", LayerSpec{Provides: Stream, NewAdapter: adapter.NewAdapter}) })
 	mustPanic(t, "password without username", func() {
-		RegisterLayer("pw", Spec{Requires: Stream, Provides: Stream, PasswordOption: "p", NewAdapter: adapter.NewAdapter})
+		RegisterLayer("pw", LayerSpec{Requires: Stream, Provides: Stream, PasswordOption: "p", NewAdapter: adapter.NewAdapter})
 	})
-	for name, spec := range map[string]Spec{
+	for name, spec := range map[string]LayerSpec{
 		"requires":  {Requires: 4, Provides: Stream, NewAdapter: adapter.NewAdapter},
 		"provides":  {Requires: Stream, Provides: 4, NewAdapter: adapter.NewAdapter},
 		"preserves": {Requires: Stream, Provides: Stream, Preserves: 4, NewAdapter: adapter.NewAdapter},
@@ -474,7 +474,7 @@ func TestRegisterRejectsClientDeclarations(t *testing.T) {
 	unknown.Networks = []string{"tcp", "bogus"}
 	variant.Networks = []string{"udp", "tcp4"}
 	adapter.NewClient, adapter.Networks = proxy.NewClient, proxy.Networks
-	for name, spec := range map[string]Spec{
+	for name, spec := range map[string]LayerSpec{
 		"client-unlisted": unlisted,
 		"client-listed":   listed,
 		"client-unknown":  unknown,
@@ -492,7 +492,7 @@ func TestRegisterRejectsServerDeclarations(t *testing.T) {
 	proxy := fakeProxy("ps", Stream, Stream, 0, "", "")
 	adapter := fakeAdapter("as", Stream, Stream)
 	adapter.NewServer = proxy.NewServer
-	for name, spec := range map[string]Spec{
+	for name, spec := range map[string]LayerSpec{
 		"server-adapter": adapter,
 		"server-none":    {Kind: KindProxy, Requires: Stream, Provides: Stream},
 	} {
@@ -505,7 +505,7 @@ func TestRegisterRejectsServerDeclarations(t *testing.T) {
 
 func TestRegisterLossy(t *testing.T) {
 	newAdapter := fakeAdapter("x", Stream, Stream).NewAdapter
-	for name, spec := range map[string]Spec{
+	for name, spec := range map[string]LayerSpec{
 		"lossy-stream":    {Requires: Stream, Provides: Stream | Packet, Lossy: Stream, NewAdapter: newAdapter},
 		"lossy-both":      {Requires: Stream, Provides: Stream | Packet, Lossy: Stream | Packet, NewAdapter: newAdapter},
 		"lossy-bit":       {Requires: Stream, Provides: Packet, Lossy: 4, NewAdapter: newAdapter},
@@ -516,8 +516,8 @@ func TestRegisterLossy(t *testing.T) {
 			t.Fatalf("rejected layer %q was registered", name)
 		}
 	}
-	RegisterLayer(fresh("lossy-provided"), Spec{Requires: Stream, Provides: Packet, Lossy: Packet, NewAdapter: newAdapter})
-	RegisterLayer(fresh("lossy-preserved"), Spec{Requires: Stream, Provides: Stream, Preserves: Packet, Lossy: Packet, NewAdapter: newAdapter})
+	RegisterLayer(fresh("lossy-provided"), LayerSpec{Requires: Stream, Provides: Packet, Lossy: Packet, NewAdapter: newAdapter})
+	RegisterLayer(fresh("lossy-preserved"), LayerSpec{Requires: Stream, Provides: Stream, Preserves: Packet, Lossy: Packet, NewAdapter: newAdapter})
 }
 
 func TestRegisterCopiesNetworks(t *testing.T) {

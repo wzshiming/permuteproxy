@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	permuteproxy.RegisterLayer("quic", permuteproxy.Spec{
+	permuteproxy.RegisterLayer("quic", permuteproxy.LayerSpec{
 		Kind:       permuteproxy.KindAdapter,
 		Requires:   permuteproxy.Packet,
 		Provides:   permuteproxy.Stream,

@@ -19,7 +19,7 @@ type NetworkSpec struct {
 
 var (
 	registryMu sync.RWMutex
-	layers     = map[string]Spec{}
+	layers     = map[string]LayerSpec{}
 	networks   = map[string]NetworkSpec{}
 	aliases    = map[string][]string{}
 	// validName is what url.Parse yields for a lower-cased scheme token, minus the '+' separator.
@@ -87,7 +87,7 @@ func ImplementNetwork(name string, n Network) {
 }
 
 // RegisterLayer declares a layer by name, panicking on a malformed spec or a name already taken.
-func RegisterLayer(name string, spec Spec) {
+func RegisterLayer(name string, spec LayerSpec) {
 	// lookupBase takes the registry lock, so Networks are checked before RegisterLayer holds it.
 	for _, network := range spec.Networks {
 		if base, _, ok := lookupBase(network); !ok || base != network {
@@ -139,7 +139,7 @@ func RegisterAlias(alias, expansion string) {
 	aliases[alias] = tokens
 }
 
-func lookupLayer(name string) (Spec, bool) {
+func lookupLayer(name string) (LayerSpec, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	spec, ok := layers[name]

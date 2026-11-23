@@ -592,7 +592,7 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 func TestEngineBorrowsUpstream(t *testing.T) {
 	var got Network
 	name := fresh("borrowing")
-	RegisterLayer(name, Spec{
+	RegisterLayer(name, LayerSpec{
 		Kind:     KindProxy,
 		Requires: Stream,
 		Provides: Stream,
@@ -622,7 +622,7 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 func TestEngineBorrowsBaseForClient(t *testing.T) {
 	var got Network
 	name := fresh("borrowing-client")
-	RegisterLayer(name, Spec{
+	RegisterLayer(name, LayerSpec{
 		Kind:     KindProxy,
 		Requires: Stream,
 		Provides: Packet,

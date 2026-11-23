@@ -5,7 +5,7 @@ import (
 )
 
 func init() {
-	spec := permuteproxy.Spec{
+	spec := permuteproxy.LayerSpec{
 		Kind:           permuteproxy.KindProxy,
 		Preserves:      permuteproxy.Stream | permuteproxy.Packet,
 		Networks:       []string{"tcp", "udp"},

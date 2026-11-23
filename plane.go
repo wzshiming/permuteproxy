@@ -60,8 +60,8 @@ func (o Options) clone() Options {
 	return c
 }
 
-// Spec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
-type Spec struct {
+// LayerSpec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
+type LayerSpec struct {
 	Kind           Kind                                      // adapter or proxy
 	Requires       Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
 	Provides       Plane                                     // planes offered above whatever the carrier has

@@ -29,7 +29,7 @@ type Chain struct {
 type resolved struct {
 	layers []Layer // the chain's own layers, then its endpoint expression's
 	own    int     // how many of layers are the chain's own
-	specs  []Spec
+	specs  []LayerSpec
 	planes []Plane // what the chain exposes above each layer, to the next layer out or to its user
 	stream string
 	packet string
@@ -38,7 +38,7 @@ type resolved struct {
 	around *Endpoint // where listening goes around the expression's layers, for an expression without Listen
 }
 
-func (s Spec) accepts(key string) bool {
+func (s LayerSpec) accepts(key string) bool {
 	if key == "" {
 		return false
 	}
@@ -76,7 +76,7 @@ func (c Chain) resolve() (*resolved, error) {
 		r.layers = append(slices.Clip(c.Layers), inner.Layers...)
 		network, r.dial = inner.Endpoint.Network, inner.Endpoint.Address
 	}
-	r.specs, r.planes = make([]Spec, len(r.layers)), make([]Plane, len(r.layers))
+	r.specs, r.planes = make([]LayerSpec, len(r.layers)), make([]Plane, len(r.layers))
 	for i, l := range r.layers {
 		spec, ok := lookupLayer(l.Scheme)
 		if !ok {

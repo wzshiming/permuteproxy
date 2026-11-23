@@ -26,7 +26,7 @@ var framedBinds atomic.Int32
 
 func init() {
 	// test-ssh-framed stands in for a proxy whose datagrams need boundaries, as socks5's do.
-	permuteproxy.RegisterLayer("test-ssh-framed", permuteproxy.Spec{
+	permuteproxy.RegisterLayer("test-ssh-framed", permuteproxy.LayerSpec{
 		Kind:     permuteproxy.KindProxy,
 		Requires: permuteproxy.Stream,
 		Provides: permuteproxy.Stream | permuteproxy.Packet,

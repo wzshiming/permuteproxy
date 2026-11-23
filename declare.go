@@ -55,7 +55,7 @@ func (l *Link) fits(p, over Plane) bool {
 }
 
 // covers reports how funcs falls short of the planes s declares.
-func (s Spec) covers(funcs *AdapterFuncs) error {
+func (s LayerSpec) covers(funcs *AdapterFuncs) error {
 	for _, p := range []Plane{Stream, Packet} {
 		link := funcs.link(p)
 		if link == nil {
@@ -78,7 +78,7 @@ func (s Spec) covers(funcs *AdapterFuncs) error {
 }
 
 // adapt builds over inner the adapter s.NewAdapter declares.
-func (s Spec) adapt(inner Transport, opts Options) (Transport, error) {
+func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 	funcs, err := s.NewAdapter(opts)
 	switch {
 	case err != nil:
@@ -172,7 +172,7 @@ func apply[C, R any](ctx context.Context, before func() error, obtain func(conte
 	return f(carrier)
 }
 
-// ClientFuncs declares a proxy's client over the networks Spec.Networks lists or Derive expresses, its functions receiving one inner Transport for the client's life.
+// ClientFuncs declares a proxy's client over the networks LayerSpec.Networks lists or Derive expresses, its functions receiving one inner Transport for the client's life.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
@@ -182,7 +182,7 @@ type ClientFuncs struct {
 }
 
 // client builds over inner the client s.NewClient declares, binding its own end through local.
-func (s Spec) client(inner Transport, local Network, opts Options) (Network, error) {
+func (s LayerSpec) client(inner Transport, local Network, opts Options) (Network, error) {
 	funcs, err := s.NewClient(opts)
 	switch {
 	case err != nil:
@@ -245,7 +245,7 @@ type assembledNetwork struct {
 	mu      sync.RWMutex // a derived dial checks closed and joins dials under it for reading
 	closed  bool
 	dials   sync.WaitGroup // derived dials in flight
-	spec    Spec
+	spec    LayerSpec
 	derived map[string]derivation
 }
 
@@ -304,7 +304,7 @@ type derivation struct {
 }
 
 // derive checks each network exprs derives for a client of s.
-func (s Spec) derive(exprs map[string]string) (map[string]derivation, error) {
+func (s LayerSpec) derive(exprs map[string]string) (map[string]derivation, error) {
 	derived := map[string]derivation{}
 	for _, network := range slices.Sorted(maps.Keys(exprs)) {
 		switch {
@@ -404,7 +404,7 @@ type ServerFuncs struct {
 }
 
 // server builds over inner the server s.NewServer declares, reaching its targets through upstream.
-func (s Spec) server(inner Transport, upstream Network, opts Options) (Server, error) {
+func (s LayerSpec) server(inner Transport, upstream Network, opts Options) (Server, error) {
 	funcs, err := s.NewServer(opts)
 	switch {
 	case err != nil:
@@ -444,7 +444,7 @@ func (a assembledServer) Close() error {
 }
 
 // dgram is the built-in client-only adapter that dials its Stream carrier as best-effort datagrams to the carrier's peer.
-var dgram = Spec{
+var dgram = LayerSpec{
 	Kind:     KindAdapter,
 	Requires: Stream,
 	Provides: Packet,
