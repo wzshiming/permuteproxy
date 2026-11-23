@@ -1,7 +1,6 @@
 package permuteproxy
 
 import (
-	"context"
 	"errors"
 	"strings"
 )
@@ -40,11 +39,3 @@ const (
 
 // ErrInvalidChain is returned, before any I/O, for a chain or declaration the root package cannot build.
 var ErrInvalidChain = errors.New("invalid chain")
-
-// Server serves a proxy chain's outermost layer at the chain's endpoint.
-type Server interface {
-	// Run binds and serves until serving fails, Close is called or ctx ends, returning nil for the last two.
-	Run(ctx context.Context) error
-	// Close stops Run and releases the server; a Run after Close returns nil at once.
-	Close() error
-}

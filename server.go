@@ -9,6 +9,14 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/serverutils"
 )
 
+// Server serves a proxy chain's outermost layer at the chain's endpoint.
+type Server interface {
+	// Run binds and serves until serving fails, Close is called or ctx ends, returning nil for the last two.
+	Run(ctx context.Context) error
+	// Close stops Run and releases the server; a Run after Close returns nil at once.
+	Close() error
+}
+
 // ServerFuncs declares a proxy's server; the root package binds the carriers it serves and runs them.
 type ServerFuncs struct {
 	Serve       func(ctx context.Context, ln net.Listener, upstream Network) error   // serves the Stream carrier until it fails or ctx ends
