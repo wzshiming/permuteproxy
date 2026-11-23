@@ -1,7 +1,6 @@
 package permuteproxy
 
 import (
-	"errors"
 	"strings"
 )
 
@@ -27,6 +26,3 @@ func (p Plane) String() string {
 	}
 	return strings.Join(names, "|")
 }
-
-// ErrInvalidChain is returned, before any I/O, for a chain or declaration the root package cannot build.
-var ErrInvalidChain = errors.New("invalid chain")

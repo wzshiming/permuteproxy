@@ -72,17 +72,6 @@ func (e Engine) Transport(c Chain) (Transport, error) {
 	return e.build(r, 0)
 }
 
-func (c Chain) proxy() (*resolved, error) {
-	r, err := c.resolve()
-	if err != nil {
-		return nil, err
-	}
-	if len(r.specs) == 0 || r.specs[0].Kind != LayerProxy {
-		return nil, fmt.Errorf("outermost layer is not a proxy: %w", ErrInvalidChain)
-	}
-	return r, nil
-}
-
 // below builds the Transport under c's outermost layer, which must be a proxy declaring side.
 func (e Engine) below(c Chain, side string, declares func(LayerSpec) bool) (*resolved, Transport, error) {
 	r, err := c.proxy()

@@ -1,11 +1,15 @@
 package permuteproxy
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
 	"strings"
 )
+
+// ErrInvalidChain is returned, before any I/O, for a chain or declaration the root package cannot build.
+var ErrInvalidChain = errors.New("invalid chain")
 
 // Layer is one layer of a chain: a registered scheme and the options it is built with.
 type Layer struct {
@@ -145,6 +149,17 @@ func (r *resolved) offer(avail Plane) error {
 func (c Chain) Validate() error {
 	_, err := c.resolve()
 	return err
+}
+
+func (c Chain) proxy() (*resolved, error) {
+	r, err := c.resolve()
+	if err != nil {
+		return nil, err
+	}
+	if len(r.specs) == 0 || r.specs[0].Kind != LayerProxy {
+		return nil, fmt.Errorf("outermost layer is not a proxy: %w", ErrInvalidChain)
+	}
+	return r, nil
 }
 
 func addressKind(network string) AddressKind {
