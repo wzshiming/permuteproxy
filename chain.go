@@ -38,21 +38,6 @@ type resolved struct {
 	around *Endpoint // where listening goes around the expression's layers, for an expression without Listen
 }
 
-func (s LayerSpec) accepts(key string) bool {
-	if key == "" {
-		return false
-	}
-	if key == s.UsernameKey || key == s.PasswordKey {
-		return true
-	}
-	for _, o := range s.OptionKeys {
-		if o == key {
-			return true
-		}
-	}
-	return false
-}
-
 func (c Chain) resolve() (*resolved, error) {
 	if c.Endpoint.Address == "" {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
