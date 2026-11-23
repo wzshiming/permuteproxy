@@ -10,15 +10,15 @@ type Engine struct {
 	Upstream Network // what servers reach their targets through; nil resolves each call as a nil Base does
 }
 
-func (e Engine) network() Network {
-	if e.Base != nil {
-		return e.Base
+func orByName(n Network) Network {
+	if n != nil {
+		return n
 	}
 	return byName{}
 }
 
 func (e Engine) build(r *resolved, from int) (Transport, error) {
-	n, layered := e.network(), len(r.layers) > 0
+	n, layered := orByName(e.Base), len(r.layers) > 0
 	dial := bind(n, r.stream, r.packet, r.dial, layered)
 	// The layers get what the carrier offers once a lossy network took its datagrams, not what resolve assumed.
 	r.offer(dial.Planes())
@@ -105,7 +105,7 @@ func (e Engine) Client(c Chain) (Network, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := r.specs[0].client(inner, borrowed{e.network()}, c.Layers[0].Options.clone())
+	n, err := r.specs[0].client(inner, borrowed{orByName(e.Base)}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", c.Layers[0].Scheme, err)
@@ -124,11 +124,7 @@ func (e Engine) Server(c Chain) (Server, error) {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, p, ErrUnsupported)
 	}
-	upstream := e.Upstream
-	if upstream == nil {
-		upstream = byName{}
-	}
-	s, err := spec.server(inner, borrowed{upstream}, c.Layers[0].Options.clone())
+	s, err := spec.server(inner, borrowed{orByName(e.Upstream)}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
