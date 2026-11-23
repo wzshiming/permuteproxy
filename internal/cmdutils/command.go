@@ -14,13 +14,13 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-// Dial starts a command whose stdio becomes the connection. Closing the conn ends the command's
+// DialFunc starts a command whose stdio becomes the connection. Closing the conn ends the command's
 // input; a conn that also implements netutils.Process lets callers follow the command's exit.
-type Dial func(ctx context.Context, name string, args ...string) (net.Conn, error)
+type DialFunc func(ctx context.Context, name string, args ...string) (net.Conn, error)
 
 // DialContext starts the command; ctx only bounds the start, the conn then lives until Close
 // cancels the context the command was started with.
-func DialContext(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string) (net.Conn, error) {
+func DialContext(ctx context.Context, dial DialFunc, localAddr, remoteAddr net.Addr, command []string) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func discard(conn net.Conn) {
 
 // Listen prepares a listener; ctx only bounds the call, the listener lives until Close. exitGrace
 // bounds how long output a command wrote before exiting may take to arrive.
-func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, command []string, exitGrace time.Duration) (net.Listener, error) {
+func Listen(ctx context.Context, dial DialFunc, localAddr, remoteAddr net.Addr, command []string, exitGrace time.Duration) (net.Listener, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func Listen(ctx context.Context, dial Dial, localAddr, remoteAddr net.Addr, comm
 type listener struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
-	dial       Dial
+	dial       DialFunc
 	command    []string
 	localAddr  net.Addr
 	remoteAddr net.Addr
