@@ -473,7 +473,7 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 				"dial udp6":        "test-ss.listenpacket stream|packet local=base udp :0",
 				"listenpacket udp": "test-ss.listenpacket stream|packet local=base udp x:1",
 			},
-			[]string{"dial unix", "dial fakenet", "listenpacket unix", "listenpacket tcp4"},
+			[]string{"dial unix", "dial fakenet", "listenpacket unix", "listenpacket tcp4", "listen tcp", "listen tcp6", "listen unix", "listen fakenet", "listen udp", "listen bogus"},
 		},
 		{"test-peer://127.0.0.1:1", nil, []string{"listenpacket unixgram", "dial unixgram", "dial tcp"}},
 		// cmd is listed but no system network, so only its registration lets the plane gate admit it.
@@ -487,8 +487,12 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 			}
 			calls = nil
 			for _, op := range tt.refused {
-				if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
+				err := netOp(ctx, n, op)
+				if !errors.Is(err, ErrUnsupported) {
 					t.Fatalf("%q = %v, want ErrUnsupported", op, err)
+				}
+				if strings.HasPrefix(op, "listen ") && err.Error() != op+": unsupported" {
+					t.Fatalf("%q = %v, want %q", op, err, op+": unsupported")
 				}
 				assertCalls(t)
 			}
@@ -573,22 +577,6 @@ func TestClientAsksPeerOfUDPDial(t *testing.T) {
 		t.Fatal("udp dial to an address Peer refuses succeeded")
 	}
 	assertCalls(t, "test-peer.peer udp x")
-}
-
-func TestClientRefusesListen(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-ss"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	for _, network := range []string{"tcp", "tcp6", "unix", "fakenet", "udp", "bogus"} {
-		if _, err := n.Listen(ctx, network, "x:1"); !errors.Is(err, ErrUnsupported) || err.Error() != "listen "+network+": unsupported" {
-			t.Fatalf("Listen(%q) = %v, want ErrUnsupported", network, err)
-		}
-	}
-	assertCalls(t)
 }
 
 func TestClientRejectsDeclarations(t *testing.T) {
