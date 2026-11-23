@@ -81,10 +81,10 @@ func taint(name string, opts Options) {
 // fakeAdapter provides one plane over the plane it requires, recording each call of its link.
 func fakeAdapter(name string, requires, provides Plane, options ...string) LayerSpec {
 	return LayerSpec{
-		Kind:     LayerAdapter,
-		Requires: requires,
-		Provides: provides,
-		Options:  options,
+		Kind:       LayerAdapter,
+		Requires:   requires,
+		Provides:   provides,
+		OptionKeys: options,
 		NewAdapter: func(opts Options) (*AdapterFuncs, error) {
 			record("%s.new", name)
 			taint(name, opts)
@@ -117,14 +117,14 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Layer
 // fakeProxy declares a proxy whose client and server functions record each call with what they are handed.
 func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) LayerSpec {
 	return LayerSpec{
-		Kind:           LayerProxy,
-		Requires:       requires,
-		Provides:       provides,
-		Preserves:      preserves,
-		Options:        options,
-		UsernameOption: user,
-		PasswordOption: pass,
-		Networks:       []string{"tcp", "udp", "unixgram"},
+		Kind:        LayerProxy,
+		Requires:    requires,
+		Provides:    provides,
+		Preserves:   preserves,
+		OptionKeys:  options,
+		UsernameKey: user,
+		PasswordKey: pass,
+		Networks:    []string{"tcp", "udp", "unixgram"},
 		NewClient: func(opts Options) (*ClientFuncs, error) {
 			record("%s.new", name)
 			taint(name, opts)
@@ -387,7 +387,7 @@ func init() {
 		}}, nil
 	}})
 	// test-relay's server binds through its upstream on the network its relay option names, a socket on a datagram one, returning the outcome.
-	RegisterLayer("test-relay", LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Options: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
+	RegisterLayer("test-relay", LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, OptionKeys: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
 		return &ServerFuncs{Serve: func(ctx context.Context, _ net.Listener, upstream Network) error {
 			network := opts["relay"]
 			var bound io.Closer
@@ -441,7 +441,7 @@ func TestRegisterRejects(t *testing.T) {
 	})
 	mustPanic(t, "layer consuming nothing", func() { RegisterLayer("ln", LayerSpec{Provides: Stream, NewAdapter: adapter.NewAdapter}) })
 	mustPanic(t, "password without username", func() {
-		RegisterLayer("pw", LayerSpec{Requires: Stream, Provides: Stream, PasswordOption: "p", NewAdapter: adapter.NewAdapter})
+		RegisterLayer("pw", LayerSpec{Requires: Stream, Provides: Stream, PasswordKey: "p", NewAdapter: adapter.NewAdapter})
 	})
 	for name, spec := range map[string]LayerSpec{
 		"requires":  {Requires: 4, Provides: Stream, NewAdapter: adapter.NewAdapter},

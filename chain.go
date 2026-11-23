@@ -42,10 +42,10 @@ func (s LayerSpec) accepts(key string) bool {
 	if key == "" {
 		return false
 	}
-	if key == s.UsernameOption || key == s.PasswordOption {
+	if key == s.UsernameKey || key == s.PasswordKey {
 		return true
 	}
-	for _, o := range s.Options {
+	for _, o := range s.OptionKeys {
 		if o == key {
 			return true
 		}
@@ -215,15 +215,15 @@ func ParseURI(raw string) (Chain, error) {
 		c.Layers[i].set(k, vs[len(vs)-1])
 	}
 	if u.User != nil {
-		if r.own == 0 || r.specs[0].UsernameOption == "" {
+		if r.own == 0 || r.specs[0].UsernameKey == "" {
 			return Chain{}, fmt.Errorf("uri: %q does not accept credentials: %w", u.Scheme, ErrInvalidChain)
 		}
-		c.Layers[0].set(r.specs[0].UsernameOption, u.User.Username())
+		c.Layers[0].set(r.specs[0].UsernameKey, u.User.Username())
 		if password, ok := u.User.Password(); ok {
-			if r.specs[0].PasswordOption == "" {
+			if r.specs[0].PasswordKey == "" {
 				return Chain{}, fmt.Errorf("uri: %q does not accept a password: %w", u.Scheme, ErrInvalidChain)
 			}
-			c.Layers[0].set(r.specs[0].PasswordOption, password)
+			c.Layers[0].set(r.specs[0].PasswordKey, password)
 		}
 	}
 	return c, nil
@@ -268,11 +268,11 @@ func (c Chain) URI() (string, error) {
 	// url.URL drops userinfo when Opaque is set, so opaque endpoints keep credentials in the query.
 	if len(c.Layers) > 0 && kind != AddressOpaque {
 		spec, opts := r.specs[0], c.Layers[0].Options
-		if username, ok := opts[spec.UsernameOption]; ok {
-			query.Del(spec.UsernameOption)
+		if username, ok := opts[spec.UsernameKey]; ok {
+			query.Del(spec.UsernameKey)
 			u.User = url.User(username)
-			if password, ok := opts[spec.PasswordOption]; ok {
-				query.Del(spec.PasswordOption)
+			if password, ok := opts[spec.PasswordKey]; ok {
+				query.Del(spec.PasswordKey)
 				u.User = url.UserPassword(username, password)
 			}
 		}

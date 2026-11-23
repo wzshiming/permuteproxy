@@ -100,7 +100,7 @@ func RegisterLayer(name string, spec LayerSpec) {
 	switch {
 	case spec.Requires|spec.Preserves == 0, spec.Provides|spec.Preserves == 0,
 		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
-		spec.PasswordOption != "" && spec.UsernameOption == "":
+		spec.PasswordKey != "" && spec.UsernameKey == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
 	case spec.Lossy&^Packet != 0, spec.Lossy&^(spec.Provides|spec.Preserves) != 0:
 		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
@@ -113,7 +113,7 @@ func RegisterLayer(name string, spec LayerSpec) {
 	case (spec.NewClient == nil) != (len(spec.Networks) == 0):
 		panic(fmt.Sprintf("permuteproxy: layer %q must list Networks exactly when it declares NewClient", name))
 	}
-	spec.Options = append([]string(nil), spec.Options...)
+	spec.OptionKeys = append([]string(nil), spec.OptionKeys...)
 	spec.Networks = append([]string(nil), spec.Networks...)
 	layers[name] = spec
 }

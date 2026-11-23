@@ -6,11 +6,11 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("any", permuteproxy.LayerSpec{
-		Kind:           permuteproxy.LayerProxy,
-		Requires:       permuteproxy.Stream,
-		Provides:       permuteproxy.Stream,
-		UsernameOption: KeyUsername,
-		PasswordOption: KeyPassword,
-		NewServer:      NewServer,
+		Kind:        permuteproxy.LayerProxy,
+		Requires:    permuteproxy.Stream,
+		Provides:    permuteproxy.Stream,
+		UsernameKey: KeyUsername,
+		PasswordKey: KeyPassword,
+		NewServer:   NewServer,
 	})
 }

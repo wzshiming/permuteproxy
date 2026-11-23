@@ -23,7 +23,7 @@ func init() {
 	RegisterNetwork("test-cmd-packet", NetworkSpec{AddressKind: AddressOpaque, Dial: "dgram+cmd:%a"})
 	// test-auth takes an option and a username, which a URI must never hand to an expression's layer.
 	auth := fakeAdapter("test-auth", Stream, Stream, "opt")
-	auth.UsernameOption = "username"
+	auth.UsernameKey = "username"
 	RegisterLayer("test-auth", auth)
 	RegisterNetwork("test-auth-tcp", NetworkSpec{AddressKind: AddressHost, Dial: "test-auth+tcp://%h:%p", Listen: "test-auth+tcp://0.0.0.0:%p"})
 	RegisterNetwork("test-snappy-unix", NetworkSpec{AddressKind: AddressPath, Dial: "test-snappy+unix://%h"})

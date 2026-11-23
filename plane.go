@@ -62,18 +62,18 @@ func (o Options) clone() Options {
 
 // LayerSpec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
 type LayerSpec struct {
-	Kind           LayerKind                                 // adapter or proxy
-	Requires       Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
-	Provides       Plane                                     // planes offered above whatever the carrier has
-	Preserves      Plane                                     // carrier planes also offered above, but only those the carrier has
-	Lossy          Plane                                     // planes the layer provides without datagram boundaries
-	Options        []string                                  // names of the options the layer accepts
-	UsernameOption string                                    // optional; the option a URI's username fills
-	PasswordOption string                                    // optional; the option a URI's password fills, beside UsernameOption
-	NewAdapter     func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build
-	Networks       []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
-	NewClient      func(opts Options) (*ClientFuncs, error)  // declares a proxy's client per build
-	NewServer      func(opts Options) (*ServerFuncs, error)  // declares a proxy's server per build
+	Kind        LayerKind                                 // adapter or proxy
+	Requires    Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
+	Provides    Plane                                     // planes offered above whatever the carrier has
+	Preserves   Plane                                     // carrier planes also offered above, but only those the carrier has
+	Lossy       Plane                                     // planes the layer provides without datagram boundaries
+	OptionKeys  []string                                  // names of the options the layer accepts
+	UsernameKey string                                    // optional; the option a URI's username fills
+	PasswordKey string                                    // optional; the option a URI's password fills, beside UsernameKey
+	NewAdapter  func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build
+	Networks    []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
+	NewClient   func(opts Options) (*ClientFuncs, error)  // declares a proxy's client per build
+	NewServer   func(opts Options) (*ServerFuncs, error)  // declares a proxy's server per build
 }
 
 // Server serves a proxy chain's outermost layer at the chain's endpoint.

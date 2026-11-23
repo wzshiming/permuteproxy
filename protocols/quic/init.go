@@ -10,7 +10,7 @@ func init() {
 		Kind:       permuteproxy.LayerAdapter,
 		Requires:   permuteproxy.Packet,
 		Provides:   permuteproxy.Stream,
-		Options:    tlsutils.OptionKeysWithoutAcme(),
+		OptionKeys: tlsutils.OptionKeysWithoutAcme(),
 		NewAdapter: NewAdapter,
 	})
 }
