@@ -425,7 +425,7 @@ func (s LayerSpec) server(inner Transport, upstream Network, opts Options) (Serv
 	if planes&Packet != 0 {
 		listenPacket = inner.ListenPacket
 	}
-	srv := serverutils.NewPlaneServer(listen, listenPacket,
+	srv := serverutils.NewServer(listen, listenPacket,
 		func(ctx context.Context, ln net.Listener) error { return funcs.Serve(ctx, ln, upstream) },
 		func(ctx context.Context, pc net.PacketConn) error { return funcs.ServePacket(ctx, pc, upstream) },
 	)
