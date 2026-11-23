@@ -210,3 +210,37 @@ func TestClientReportsLossyFromLayerSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestLossyLocalRefusesClientPacket(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	n, err := e.Client(mk("", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := e.Client(mk("", "test-peer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	// A local answering for udp answers for its families too.
+	for _, op := range []string{"listenpacket udp", "dial udp", "dial udp4", "listenpacket udp4", "dial udp6", "listenpacket udp6"} {
+		if err := netOp(ctx, n, op); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%q with a lossy local = %v, want ErrUnsupported", op, err)
+		}
+		if err := netOp(ctx, peer, op); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%q with a lossy local and a Peer = %v, want ErrUnsupported", op, err)
+		}
+		assertCalls(t)
+	}
+	for op, want := range map[string]string{
+		"dial tcp":              "test-socks5.dial stream tcp x:1",
+		"listenpacket unixgram": "test-socks5.listenpacket stream local=base unixgram x:1",
+	} {
+		if err := netOp(ctx, n, op); err != nil {
+			t.Fatalf("%q = %v", op, err)
+		}
+		assertCalls(t, want)
+	}
+}
