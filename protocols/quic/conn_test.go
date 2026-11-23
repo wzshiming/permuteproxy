@@ -556,11 +556,11 @@ func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
-		end   func(*xquic.Stream)
+		end   func(*xquic.Stream) error
 		ended error // what the dialer's read ends with once the peer's end arrives
 	}{
 		{"close", (*xquic.Stream).CloseWrite, nil},
-		{"reset", func(s *xquic.Stream) { s.Reset(7) }, xquic.StreamErrorCode(7)},
+		{"reset", func(s *xquic.Stream) error { return s.Reset(7) }, xquic.StreamError(7)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			k := issue(t)
@@ -579,7 +579,9 @@ func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					tt.end(s)
+					if err := tt.end(s); err != nil {
+						return err
+					}
 					s.SetReadContext(ctx)
 					got, err := io.ReadAll(s)
 					switch {
