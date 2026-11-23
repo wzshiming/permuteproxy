@@ -306,24 +306,24 @@ func (s LayerSpec) derive(exprs map[string]string) (map[string]derivation, error
 	for _, network := range slices.Sorted(maps.Keys(exprs)) {
 		switch {
 		case !slices.Contains(derivable, network):
-			return nil, fmt.Errorf("Derive %q: not one of the base networks %q", network, derivable)
+			return nil, fmt.Errorf("network %q in Derive: not one of the base networks %q", network, derivable)
 		case slices.Contains(s.Networks, network):
-			return nil, fmt.Errorf("Derive %q: also listed in Networks", network)
+			return nil, fmt.Errorf("network %q in Derive: also listed in Networks", network)
 		}
 		ns, _ := lookupNetwork(network)
 		x, err := checkExpression(exprs[network], ns.AddressKind)
 		if err != nil {
-			return nil, fmt.Errorf("Derive %q: %w", network, err)
+			return nil, fmt.Errorf("network %q in Derive: %w", network, err)
 		}
 		if !slices.Contains(s.Networks, x.network) {
-			return nil, fmt.Errorf("Derive %q: %q is not listed in Networks", network, x.network)
+			return nil, fmt.Errorf("network %q in Derive: %q is not listed in Networks", network, x.network)
 		}
 		planes, lossy, err := x.offers()
 		switch {
 		case err != nil:
-			return nil, fmt.Errorf("Derive %q: %w", network, err)
+			return nil, fmt.Errorf("network %q in Derive: %w", network, err)
 		case planes&ns.Plane == 0:
-			return nil, fmt.Errorf("Derive %q: the expression offers %v, not %v", network, planes, ns.Plane)
+			return nil, fmt.Errorf("network %q in Derive: the expression offers %v, not %v", network, planes, ns.Plane)
 		}
 		derived[network] = derivation{network: network, kind: ns.AddressKind, plane: ns.Plane, lossy: lossy&ns.Plane != 0, x: x}
 	}

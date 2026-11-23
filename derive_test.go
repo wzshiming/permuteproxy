@@ -176,6 +176,23 @@ func TestClientRefusesDerivations(t *testing.T) {
 	}
 }
 
+func TestClientRefusalsNameTheDeriveEntry(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	for scheme, want := range map[string]string{
+		"test-derive-variant":    `network "udp4" in Derive: not one of the base networks`,
+		"test-derive-listed":     `network "udp" in Derive: also listed in Networks`,
+		"test-derive-unparsable": `network "udp" in Derive: `,
+		"test-derive-unlisted":   `network "udp" in Derive: "test-cmd" is not listed in Networks`,
+		"test-derive-unmet":      `network "udp" in Derive: `,
+		"test-derive-stream-udp": `network "udp" in Derive: the expression offers stream, not packet`,
+	} {
+		_, err := e.Client(mk("", scheme))
+		if want = fmt.Sprintf("layer %q: %s", scheme, want); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("Client(%s) = %v, want an error starting with %s", scheme, err, want)
+		}
+	}
+}
+
 func TestClientCoversPacketByDerivedDatagrams(t *testing.T) {
 	calls = nil
 	e := Engine{Base: &fakeNet{name: "base"}}
