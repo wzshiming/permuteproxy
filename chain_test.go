@@ -2,6 +2,7 @@ package permuteproxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 var (
@@ -515,5 +518,33 @@ func TestLossyPlaneNotOfferedAbove(t *testing.T) {
 			t.Fatalf("Planes() of %+v = %v, want %v", tt.chain.Layers, tr.Planes(), tt.planes)
 		}
 		assertCalls(t, tt.calls...)
+	}
+}
+
+func TestChainJSON(t *testing.T) {
+	c := Chain{
+		Layers: []Layer{
+			{Scheme: "http", Options: Options{"username": "u", "password": ""}},
+			{Scheme: "tls", Options: Options{"tls_skip_verify": "true"}},
+		},
+		Endpoint: Endpoint{Network: "tcp", Address: "127.0.0.1:1"},
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"layers":[{"scheme":"http","options":{"password":"","username":"u"}},{"scheme":"tls","options":{"tls_skip_verify":"true"}}],"endpoint":{"network":"tcp","address":"127.0.0.1:1"}}`
+	if string(data) != want {
+		t.Fatalf("json = %s\nwant %s", data, want)
+	}
+	var got Chain
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(c, got); diff != "" {
+		t.Fatalf("json roundtrip mismatch (-want +got):\n%s", diff)
+	}
+	if data, _ = json.Marshal(Chain{Layers: []Layer{{Scheme: "ss"}}, Endpoint: Endpoint{Address: "x:1"}}); string(data) != `{"layers":[{"scheme":"ss"}],"endpoint":{"address":"x:1"}}` {
+		t.Fatalf("auto network json = %s", data)
 	}
 }
