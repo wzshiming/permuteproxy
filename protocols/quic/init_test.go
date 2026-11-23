@@ -52,7 +52,7 @@ func TestQUICRequiresDatagramsWithBoundaries(t *testing.T) {
 }
 
 func TestQUICAcceptsTheTLSOptionsButACME(t *testing.T) {
-	for _, key := range tlsutils.OptionKeysWithoutAcme() {
+	for _, key := range tlsutils.OptionKeysWithoutACME() {
 		if _, err := permuteproxy.ParseURI("quic://127.0.0.1:1?" + key + "="); err != nil {
 			t.Errorf("quic URI with %s: %v", key, err)
 		}

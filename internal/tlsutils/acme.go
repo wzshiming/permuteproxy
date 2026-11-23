@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-func NewAcme(hosts []string, dir string) *tls.Config {
+func NewACME(hosts []string, dir string) *tls.Config {
 	m := &autocert.Manager{
 		Prompt: autocert.AcceptTOS,
 	}
