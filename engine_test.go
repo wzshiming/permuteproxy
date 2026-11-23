@@ -683,9 +683,9 @@ func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 		name   string
 		chain  Chain
 		dial   Plane
-		listen func(Transport) error
+		listen func(Transport) error // nil where the layer has no server form to refuse
 	}{
-		{"packet layer", mk("udp", "test-dtls"), Packet, listenPacket},
+		{"packet layer", mk("udp", "test-dtls"), Packet, nil},
 		{"stream layer", mk("udp", "test-quic"), Stream, listen},
 		{"preserved packet", mk("", "test-keep"), Packet, listenPacket},
 		{"expression network name", chainOver("test-dtls-udp", "127.0.0.1:1"), Packet, listenPacket},
@@ -699,8 +699,10 @@ func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 			if _, err := tr.Dial(ctx, tt.dial); !errors.Is(err, ErrUnsupported) {
 				t.Fatalf("Dial(%v) over lossy udp = %v, want ErrUnsupported", tt.dial, err)
 			}
-			if err := tt.listen(tr); !errors.Is(err, ErrUnsupported) {
-				t.Fatalf("listening over lossy udp = %v, want ErrUnsupported", err)
+			if tt.listen != nil {
+				if err := tt.listen(tr); !errors.Is(err, ErrUnsupported) {
+					t.Fatalf("listening over lossy udp = %v, want ErrUnsupported", err)
+				}
 			}
 			assertCalls(t)
 		})

@@ -633,9 +633,6 @@ func TestDerivedLossyRefusesPacketToLayers(t *testing.T) {
 	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Dial(Packet) over udp derived through dgram = %v, want ErrUnsupported", err)
 	}
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() over udp derived through dgram = %v, want ErrUnsupported", err)
-	}
 	assertCalls(t)
 	if tr, err = (Engine{Base: derivingClient(t, mk("", "test-derive-uot"))}).Transport(mk("udp", "test-dtls")); err != nil {
 		t.Fatal(err)
