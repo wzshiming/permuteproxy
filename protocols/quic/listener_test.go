@@ -243,7 +243,7 @@ func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failWrite = errors.New("carrier failed")
-	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
+	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	within(t, 2*time.Second, "Dial", func() {

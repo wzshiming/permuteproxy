@@ -2,16 +2,9 @@ package tls_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,62 +32,6 @@ func (p *closeProbe) DialContext(ctx context.Context, network, address string) (
 		return nil, err
 	}
 	return testutils.CountingConn{Conn: conn, Closes: &p.closed}, nil
-}
-
-func writePEM(t *testing.T, name, kind string, der []byte) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-// issue writes a CA and a leaf certificate for dnsName, returning ca, cert and key file paths.
-func issue(t *testing.T, dnsName string) (caFile, certFile, keyFile string) {
-	t.Helper()
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caTmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "permuteproxy test CA"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		DNSNames:     []string{dnsName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, ca, &leafKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalECPrivateKey(leafKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writePEM(t, "ca.pem", "CERTIFICATE", caDER), writePEM(t, "cert.pem", "CERTIFICATE", leafDER), writePEM(t, "key.pem", "EC PRIVATE KEY", keyDER)
 }
 
 func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Transport {
@@ -139,7 +76,7 @@ func serveEcho(t *testing.T, ln net.Listener) net.Addr {
 }
 
 func TestVerifiedHandshake(t *testing.T) {
-	caFile, certFile, keyFile := issue(t, "proxy.test")
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
 	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
@@ -166,7 +103,7 @@ func TestVerifiedHandshake(t *testing.T) {
 }
 
 func TestFailedHandshakeClosesSocket(t *testing.T) {
-	caFile, certFile, keyFile := issue(t, "proxy.test")
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
 	for name, query := range map[string]string{
 		"wrong server name": "?tls_server_name=other.test&tls_ca_file=" + caFile,
@@ -248,7 +185,7 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 	if _, err := tr.Listen(context.Background()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Listen before the key material exists = %v, want it missing", err)
 	}
-	caFile, certFile, keyFile := issue(t, "proxy.test")
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	install(t, certFile, keyFile, cert, key)
 	ln, err := tr.Listen(context.Background())
 	if err != nil {
@@ -264,7 +201,7 @@ func TestEachListenBuildsItsServerConfig(t *testing.T) {
 	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
 	for _, name := range []string{"first.test", "second.test"} {
-		caFile, certFile, keyFile := issue(t, name)
+		caFile, certFile, keyFile := testutils.Issue(t, name)
 		install(t, certFile, keyFile, cert, key)
 		ln, err := tr.Listen(context.Background())
 		if err != nil {
@@ -277,7 +214,7 @@ func TestEachListenBuildsItsServerConfig(t *testing.T) {
 }
 
 func TestClientConfigIsLazy(t *testing.T) {
-	_, certFile, keyFile := issue(t, "proxy.test")
+	_, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
 	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
 	addr := echoServer(t, uri)
