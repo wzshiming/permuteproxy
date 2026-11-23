@@ -134,35 +134,15 @@ func dialer(t *testing.T, base permuteproxy.Network, address string, opts permut
 	return n
 }
 
-func echo(t *testing.T) net.PacketConn {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], addr)
-		}
-	}()
-	return pc
-}
-
 func TestAssociationCloseEndsControlAndSocket(t *testing.T) {
 	upstream := newProbe(testutils.System{})
 	addr := serve(t, upstream, nil)
 	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
-	peer := echo(t)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+	conn, err := n.DialContext(ctx, "udp", peer.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,9 +274,9 @@ func TestAssociationSurvivesLaterCancel(t *testing.T) {
 	addr := serve(t, newProbe(testutils.System{}), nil)
 	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
-	peer := echo(t)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+	conn, err := n.DialContext(ctx, "udp", peer.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,10 +314,10 @@ func TestServerStopEndsAssociation(t *testing.T) {
 			}
 			base := newProbe(testutils.System{})
 			n := dialer(t, base, addr.String(), nil, true)
-			peer := echo(t)
+			peer := testutils.UDPEcho(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+			conn, err := n.DialContext(ctx, "udp", peer.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -389,7 +369,7 @@ func isTimeout(err error) bool {
 func TestAssociationConcurrentIO(t *testing.T) {
 	addr := serve(t, newProbe(testutils.System{}), nil)
 	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
-	peer := echo(t).LocalAddr()
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pc, err := n.ListenPacket(ctx, "udp", ":0")
@@ -527,7 +507,7 @@ func stray(t *testing.T, pc net.PacketConn, payload string) {
 func TestAssociationSkipsStrayDatagrams(t *testing.T) {
 	addr := serve(t, newProbe(testutils.System{}), nil)
 	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
-	peer := echo(t).LocalAddr()
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pc, err := n.ListenPacket(ctx, "udp", ":0")
@@ -648,7 +628,7 @@ func TestUDPDialDefaultPeer(t *testing.T) {
 		return client, nil
 	})
 	addr := serve(t, newProbe(testutils.System{}), nil)
-	port := strconv.Itoa(echo(t).LocalAddr().(*net.UDPAddr).Port)
+	port := strconv.Itoa(testutils.UDPEcho(t).(*net.UDPAddr).Port)
 	ip, name := net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("echo.test", port)
 	tests := []struct {
 		name         string

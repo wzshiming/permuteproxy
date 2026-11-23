@@ -147,26 +147,6 @@ func (c *faultyCarrier) fail() {
 	c.PacketConn.SetReadDeadline(time.Now())
 }
 
-func echo(t *testing.T) net.Addr {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], addr)
-		}
-	}()
-	return pc.LocalAddr()
-}
-
 func TestPacketServerStopsOnCarrierError(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -196,7 +176,7 @@ func TestPacketServerStopsOnCarrierError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			conn, err := n.DialContext(ctx, "udp", echo(t).String())
+			conn, err := n.DialContext(ctx, "udp", testutils.UDPEcho(t).String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -259,7 +239,7 @@ func TestListenPacketReportsIPPeerAsIPPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pc.Close()
-	peer := echo(t)
+	peer := testutils.UDPEcho(t)
 	if _, err := pc.WriteTo([]byte("ping"), peer); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +272,7 @@ func TestPacketTargetByNameReachesItsPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, port, _ := net.SplitHostPort(echo(t).String())
+	_, port, _ := net.SplitHostPort(testutils.UDPEcho(t).String())
 	// The client carries the name unresolved, so the server has to resolve it.
 	conn, err := n.DialContext(ctx, "udp", net.JoinHostPort("localhost", port))
 	if err != nil {

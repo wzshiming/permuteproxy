@@ -55,25 +55,6 @@ func listen(t *testing.T) net.Listener {
 	return ln
 }
 
-// echoTarget accepts tcp conns and echoes what each sends.
-func echoTarget(t *testing.T) string {
-	t.Helper()
-	ln := listen(t)
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				io.Copy(conn, conn)
-				conn.Close()
-			}()
-		}
-	}()
-	return ln.Addr().String()
-}
-
 // firehose accepts tcp conns and writes to each until it fails.
 func firehose(t *testing.T) string {
 	t.Helper()
@@ -175,7 +156,7 @@ func TestFuncsTunnelOverInnerToUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, ln := echoTarget(t), listen(t)
+	target, ln := testutils.ServeEcho(t, listen(t)).String(), listen(t)
 	dials := make(chan string, 1)
 	upstream := permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
 		dials <- network + " " + address
@@ -250,7 +231,7 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 		{ctx, "unix", filepath.Join(t.TempDir(), "absent.sock")},
 		{ctx, "tcp", "no-port"},
 		{ctx, "tcp", "127.0.0.1:x"},
-		{canceled, "tcp", echoTarget(t)},
+		{canceled, "tcp", testutils.ServeEcho(t, listen(t)).String()},
 	} {
 		if c, err := n.DialContext(d.ctx, d.network, d.address); err == nil {
 			c.Close()
@@ -265,7 +246,7 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 }
 
 func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	for _, tt := range []struct{ network, address, reply string }{
 		{"cmd", "relay x", "relay x|ping"},
 		{"tcp", target, "ping"},
@@ -454,7 +435,7 @@ func TestOversizedTargetsAreRefusedBeforeAnyIO(t *testing.T) {
 func TestClosedClientRefusesWithoutReconnecting(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	ctx, target := timeout(t), echoTarget(t)
+	ctx, target := timeout(t), testutils.ServeEcho(t, listen(t)).String()
 	conn, err := n.DialContext(ctx, "tcp", target)
 	if err != nil {
 		t.Fatal(err)

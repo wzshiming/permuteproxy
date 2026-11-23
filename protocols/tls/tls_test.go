@@ -47,37 +47,13 @@ func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Tra
 	return tr
 }
 
-// echoServer serves the TLS listener of a server chain, echoing one message per connection.
-func echoServer(t *testing.T, uri string) net.Addr {
-	t.Helper()
-	ln, err := transport(t, permuteproxy.Engine{}, uri).Listen(context.Background())
+func TestVerifiedHandshake(t *testing.T) {
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
+	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return serveEcho(t, ln)
-}
-
-// serveEcho echoes on each connection ln accepts until the test ends.
-func serveEcho(t *testing.T, ln net.Listener) net.Addr {
-	t.Cleanup(func() { ln.Close() })
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				io.Copy(conn, conn)
-			}()
-		}
-	}()
-	return ln.Addr()
-}
-
-func TestVerifiedHandshake(t *testing.T) {
-	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
-	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
+	addr := testutils.ServeEcho(t, ln)
 	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -104,7 +80,11 @@ func TestVerifiedHandshake(t *testing.T) {
 
 func TestFailedHandshakeClosesSocket(t *testing.T) {
 	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
-	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
+	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := testutils.ServeEcho(t, ln)
 	for name, query := range map[string]string{
 		"wrong server name": "?tls_server_name=other.test&tls_ca_file=" + caFile,
 		"untrusted issuer":  "?tls_server_name=proxy.test",
@@ -191,7 +171,7 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen once the key material exists = %v, want the failed build retried", err)
 	}
-	if err := verify(t, serveEcho(t, ln), "proxy.test", caFile); err != nil {
+	if err := verify(t, testutils.ServeEcho(t, ln), "proxy.test", caFile); err != nil {
 		t.Fatalf("handshake after the retried build = %v", err)
 	}
 }
@@ -207,7 +187,7 @@ func TestEachListenBuildsItsServerConfig(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := verify(t, serveEcho(t, ln), name, caFile); err != nil {
+		if err := verify(t, testutils.ServeEcho(t, ln), name, caFile); err != nil {
 			t.Fatalf("Listen after installing the %s certificate serves another: %v", name, err)
 		}
 	}
@@ -217,7 +197,11 @@ func TestClientConfigIsLazy(t *testing.T) {
 	_, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
 	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
-	addr := echoServer(t, uri)
+	ln, err := transport(t, permuteproxy.Engine{}, uri).Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := testutils.ServeEcho(t, ln)
 	base := &closeProbe{Network: testutils.System{}}
 	c, err := permuteproxy.ParseURI(uri)
 	if err != nil {

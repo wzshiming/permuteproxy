@@ -255,7 +255,7 @@ func TestCustomUDPCommandReachesServer(t *testing.T) {
 func TestSSHBaseRefusesPacketsOfLayersKeepingBoundaries(t *testing.T) {
 	up := newUpstream()
 	base := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
-	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-ssh-framed"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: echoTarget(t)}}
+	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-ssh-framed"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: testutils.ServeEcho(t, listen(t)).String()}}
 	n, err := permuteproxy.Engine{Base: base}.Client(c)
 	if err != nil {
 		t.Fatal(err)

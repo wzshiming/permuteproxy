@@ -486,7 +486,7 @@ func TestCmdFailsWhenServerCannotRunIt(t *testing.T) {
 }
 
 func TestDialConnectsAgainAfterConnectionDrops(t *testing.T) {
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	for _, tt := range []struct{ network, address, reply string }{
 		{"cmd", "relay x", "relay x|ping"},
 		{"tcp", target, "ping"},
@@ -862,7 +862,7 @@ func TestDialFailingOverAGivenUpConnectionKeepsItsReplacement(t *testing.T) {
 	}}
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, slow), withCredentials())
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	warm, err := n.DialContext(timeout(t), "tcp", target)
 	if err != nil {
 		t.Fatal(err)
@@ -944,7 +944,7 @@ func TestAbandonedCmdDialFindingItsConnectionDeadDropsIt(t *testing.T) {
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	warm, err := n.DialContext(timeout(t), "tcp", target)
 	if err != nil {
 		t.Fatal(err)
@@ -1240,7 +1240,7 @@ func TestExecOffRefusesSessionsAndKeepsTcp(t *testing.T) {
 			if _, err := udp.Write([]byte("hi")); !errors.As(err, &refused) || refused.Reason != ssh.Prohibited {
 				t.Fatalf("udp write = %v, want the session refused as prohibited", err)
 			}
-			conn, err := n.DialContext(ctx, "tcp", echoTarget(t))
+			conn, err := n.DialContext(ctx, "tcp", testutils.ServeEcho(t, listen(t)).String())
 			if err != nil {
 				t.Fatal(err)
 			}
