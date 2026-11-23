@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 func listenLoopback(ctx context.Context) (net.Listener, error) {
@@ -330,20 +332,10 @@ func (l *fakeListener) Addr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4zero}
 }
 
-type countingConn struct {
-	net.Conn
-	closes atomic.Int32
-}
-
-func (c *countingConn) Close() error {
-	c.closes.Add(1)
-	return c.Conn.Close()
-}
-
-func pipeConn() *countingConn {
+func pipeConn() testutils.CountingConn {
 	c1, c2 := net.Pipe()
 	c2.Close()
-	return &countingConn{Conn: c1}
+	return testutils.CountingConn{Conn: c1, Closes: new(atomic.Int32)}
 }
 
 func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
@@ -367,7 +359,7 @@ func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
 	if err := recv(t, accepted, "accept"); err == nil {
 		t.Fatal("Accept handed out a connection after Close")
 	}
-	if got := conn.closes.Load(); got != 1 {
+	if got := conn.Closes.Load(); got != 1 {
 		t.Fatalf("late connection closed %d times, want 1", got)
 	}
 	if err := wait(t, done); err != nil {
@@ -406,8 +398,8 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 		t.Fatalf("Run = %v", err)
 	}
 	recv(t, result, "serve")
-	if first.closes.Load() != 1 || second.closes.Load() != 1 || fake.closes.Load() != 1 {
-		t.Fatalf("closes: first %d second %d listener %d, want 1 each", first.closes.Load(), second.closes.Load(), fake.closes.Load())
+	if first.Closes.Load() != 1 || second.Closes.Load() != 1 || fake.closes.Load() != 1 {
+		t.Fatalf("closes: first %d second %d listener %d, want 1 each", first.Closes.Load(), second.Closes.Load(), fake.closes.Load())
 	}
 }
 

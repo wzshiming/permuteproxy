@@ -19,6 +19,7 @@ import (
 	"github.com/wzshiming/socks5"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 var system permuteproxy.Network = permuteproxy.NetworkFuncs{
@@ -38,16 +39,6 @@ type closeProbe struct {
 
 func newProbe(n permuteproxy.Network) *closeProbe {
 	return &closeProbe{Network: n, packetClosed: make(chan struct{}, 64)}
-}
-
-type countingConn struct {
-	net.Conn
-	closed *atomic.Int32
-}
-
-func (c countingConn) Close() error {
-	c.closed.Add(1)
-	return c.Conn.Close()
 }
 
 type countingPacket struct {
@@ -71,7 +62,7 @@ func (p *closeProbe) DialContext(ctx context.Context, network, address string) (
 	if err != nil {
 		return nil, err
 	}
-	return countingConn{conn, &p.closedConns}, nil
+	return testutils.CountingConn{Conn: conn, Closes: &p.closedConns}, nil
 }
 
 func (p *closeProbe) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {

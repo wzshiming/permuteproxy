@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 )
 
@@ -31,23 +32,13 @@ type closeProbe struct {
 	closed atomic.Int32
 }
 
-type countingConn struct {
-	net.Conn
-	closed *atomic.Int32
-}
-
-func (c countingConn) Close() error {
-	c.closed.Add(1)
-	return c.Conn.Close()
-}
-
 func (p *closeProbe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	p.dials.Add(1)
 	conn, err := p.Network.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
-	return countingConn{conn, &p.closed}, nil
+	return testutils.CountingConn{Conn: conn, Closes: &p.closed}, nil
 }
 
 var system permuteproxy.Network = permuteproxy.NetworkFuncs{
