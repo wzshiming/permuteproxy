@@ -3,6 +3,7 @@ package snappy_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -60,6 +61,14 @@ func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Tra
 		t.Fatal(err)
 	}
 	return tr
+}
+
+func TestDialTCPWithoutLocalIsUnsupported(t *testing.T) {
+	// These tests link no protocols/local, so nothing implements tcp.
+	_, err := transport(t, permuteproxy.Engine{}, "tcp://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
+	if !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("Dial tcp without a Base = %v, want ErrUnsupported", err)
+	}
 }
 
 func TestRoundTripThroughEngine(t *testing.T) {

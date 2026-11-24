@@ -12,7 +12,7 @@ import (
 type NetworkSpec struct {
 	Plane       Plane       // Stream or Packet, the one plane the network carries; left zero with Dial, which derives it
 	AddressKind AddressKind // how a URI writes the network's address
-	Network     Network     // its implementation; nil leaves tcp, udp, unix and unixgram to the system and others unimplemented
+	Network     Network     // its implementation; nil leaves it unimplemented until ImplementNetwork supplies one
 	Dial        string      // expression that dials this network through layers and another network, its values quoted for one parse, so a command parsing them again (ssh, sh -c) must not take a path %h
 	Listen      string      // optional expression for listening
 }

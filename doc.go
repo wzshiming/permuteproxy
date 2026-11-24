@@ -1,5 +1,7 @@
 // Package permuteproxy builds proxy chains from layers and networks registered by
-// name; importing protocols/all registers every bundled one.
+// name; importing protocols/all registers every bundled one. The system networks
+// tcp, udp, unix and unixgram are implemented by protocols/local; without it a nil
+// Engine.Base or Engine.Upstream refuses them with ErrUnsupported.
 //
 // A Chain lists layers outermost-first over an Endpoint; ParseURI reads one from a
 // URI such as socks5+tls://127.0.0.1:1080 and Chain.URI writes it back. An Engine

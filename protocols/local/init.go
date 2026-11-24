@@ -6,7 +6,9 @@ import (
 )
 
 func init() {
-	permuteproxy.ImplementNetwork("cmd", Network)
+	for _, name := range []string{"tcp", "udp", "unix", "unixgram", "cmd"} {
+		permuteproxy.ImplementNetwork(name, Network)
+	}
 	permuteproxy.RegisterNetwork("cmd-nc", permuteproxy.NetworkSpec{AddressKind: permuteproxy.AddressHost, Dial: "cmd:" + cmdutils.NetcatDialTCP, Listen: "cmd:" + cmdutils.NetcatListenTCP})
 	// Listening goes to Local under this name, as it removes the socket file nc leaves behind.
 	permuteproxy.RegisterNetwork("cmd-nc-unix", permuteproxy.NetworkSpec{AddressKind: permuteproxy.AddressPath, Dial: "cmd:" + cmdutils.NetcatDialUnix, Network: Network})
