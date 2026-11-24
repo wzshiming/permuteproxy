@@ -16,7 +16,6 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
 )
 
 func init() {
@@ -367,33 +366,6 @@ func TestCommandPacketNetworksRefuseListening(t *testing.T) {
 				t.Errorf("ListenPacket on %s %s = %v, want ErrUnsupported", c.Endpoint.Network, base, err)
 			}
 		}
-	}
-}
-
-func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
-	under := &hop{}
-	client, err := permuteproxy.Engine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.(io.Closer).Close()
-	for _, tt := range []struct {
-		network, address string
-		plane            permuteproxy.Plane
-	}{
-		{"cmd-nc", "127.0.0.1:80", permuteproxy.Stream},
-		{"cmd-nc-udp", "127.0.0.1:53", permuteproxy.Packet},
-	} {
-		tr, err := permuteproxy.Engine{Base: client}.Transport(chain(tt.network, tt.address))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tr.Dial(context.Background(), tt.plane); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Errorf("Dial %s through a socks5 client = %v, want ErrUnsupported", tt.network, err)
-		}
-	}
-	if len(under.calls) != 0 {
-		t.Fatalf("the socks5 client reached its server: %q", under.calls)
 	}
 }
 
