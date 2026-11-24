@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -151,6 +152,49 @@ func TestNetcatUnixListensWithoutABase(t *testing.T) {
 		t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
 	}
 	ln.Close()
+}
+
+func TestSystemNetworksWithoutABase(t *testing.T) {
+	ctx := context.Background()
+	for _, network := range []string{"tcp", "udp", "unix", "unixgram"} {
+		t.Run(network, func(t *testing.T) {
+			address := "127.0.0.1:0"
+			if strings.HasPrefix(network, "unix") {
+				if network == "unixgram" && runtime.GOOS == "windows" {
+					t.Skip("unixgram needs a POSIX system")
+				}
+				address = socketPath(t)
+			}
+			tr, err := permuteproxy.Engine{}.Transport(chain(network, address))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var peer net.Addr
+			if tr.Planes() == permuteproxy.Packet {
+				pc, err := tr.ListenPacket(ctx)
+				if err != nil {
+					t.Fatalf("ListenPacket without a Base = %v, want the registered Local binding", err)
+				}
+				peer = testutils.ServePacketEcho(t, pc)
+			} else {
+				ln, err := tr.Listen(ctx)
+				if err != nil {
+					t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
+				}
+				peer = testutils.ServeEcho(t, ln)
+			}
+			tr, err = permuteproxy.Engine{}.Transport(chain(network, peer.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn, err := tr.Dial(ctx, tr.Planes())
+			if err != nil {
+				t.Fatalf("Dial without a Base = %v, want the registered Local dialing", err)
+			}
+			defer conn.Close()
+			testutils.RoundTrip(t, conn, "ping", "ping")
+		})
+	}
 }
 
 func TestCommandNetworksRefuseInvalidValues(t *testing.T) {
