@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/local"
 )
 
 // pipeListener serves in-memory pipes, so each client write reaches the server as one read.
