@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 var (
@@ -279,10 +280,10 @@ var atRootInit struct {
 func init() {
 	atRootInit.networks, atRootInit.layers, atRootInit.aliases = maps.Clone(networks), maps.Clone(layers), maps.Clone(aliases)
 	// What protocols/local registers, which the root's tests cannot import.
-	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Network: system{}})
-	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost, Network: system{}})
-	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath, Network: system{}})
-	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath, Network: system{}})
+	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Network: testutils.System{}})
+	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost, Network: testutils.System{}})
+	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath, Network: testutils.System{}})
+	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath, Network: testutils.System{}})
 	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
 	RegisterLayer("dgram", dgram)
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
