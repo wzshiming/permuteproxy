@@ -1,4 +1,4 @@
-package permuteproxy_test
+package all_test
 
 import (
 	"context"
