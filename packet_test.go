@@ -236,8 +236,12 @@ func TestServerStopEndsDatagramSessions(t *testing.T) {
 			t.Run(scheme+"/"+stop, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				// An ss server binds tcp and udp at the declared address.
-				c := parse(t, scheme+"://"+testutils.ReservePort(t))
+				address := "127.0.0.1:0"
+				if scheme == "ss" {
+					// An ss server binds tcp and udp at the declared address.
+					address = testutils.ReservePort(t)
+				}
+				c := parse(t, scheme+"://"+address)
 				base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 				srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
 				if err != nil {
@@ -250,7 +254,7 @@ func TestServerStopEndsDatagramSessions(t *testing.T) {
 					srv.Close()
 					stopRun()
 				})
-				waitBound(t, base, done)
+				c.Endpoint.Address = waitBound(t, base, done).String()
 				if scheme == "ss" {
 					waitBoundPacket(t, base, done)
 				}
