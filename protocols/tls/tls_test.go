@@ -15,6 +15,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
+	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero Engine reaches tcp through Local
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 )
 

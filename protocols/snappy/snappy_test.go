@@ -12,6 +12,7 @@ import (
 	"github.com/golang/snappy"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/snappy"
 )
 
@@ -63,7 +64,7 @@ func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Tra
 
 func TestRoundTripThroughEngine(t *testing.T) {
 	const msg, reply = "hello snappy", "re: hello snappy"
-	ln, err := transport(t, permuteproxy.Engine{}, "snappy://127.0.0.1:0").Listen(context.Background())
+	ln, err := transport(t, permuteproxy.Engine{Base: testutils.System{}}, "snappy://127.0.0.1:0").Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
