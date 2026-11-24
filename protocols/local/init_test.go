@@ -55,12 +55,16 @@ func (h *hop) ListenPacket(_ context.Context, network, address string) (net.Pack
 	return nil, errHop
 }
 
-func TestCommandNetworkRegistrations(t *testing.T) {
+func TestNetworkRegistrations(t *testing.T) {
 	for _, tt := range []struct {
 		uri   string
 		want  permuteproxy.Endpoint // the address as the network's AddressKind reads it
 		plane permuteproxy.Plane
 	}{
+		{"tcp://127.0.0.1:80/p", permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:80"}, permuteproxy.Stream},
+		{"udp://127.0.0.1:53/p", permuteproxy.Endpoint{Network: "udp", Address: "127.0.0.1:53"}, permuteproxy.Packet},
+		{"unix://./s.sock", permuteproxy.Endpoint{Network: "unix", Address: "./s.sock"}, permuteproxy.Stream},
+		{"unixgram://./s.sock", permuteproxy.Endpoint{Network: "unixgram", Address: "./s.sock"}, permuteproxy.Packet},
 		{"cmd:nc host 1", permuteproxy.Endpoint{Network: "cmd", Address: "nc host 1"}, permuteproxy.Stream},
 		{"cmd-nc://127.0.0.1:80", permuteproxy.Endpoint{Network: "cmd-nc", Address: "127.0.0.1:80"}, permuteproxy.Stream},
 		{"cmd-nc-unix://./s.sock", permuteproxy.Endpoint{Network: "cmd-nc-unix", Address: "./s.sock"}, permuteproxy.Stream},

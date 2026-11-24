@@ -3,6 +3,8 @@ package permuteproxy
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 )
 
@@ -14,6 +16,12 @@ func mustPanic(t *testing.T, name string, f func()) {
 		}
 	}()
 	f()
+}
+
+func TestRootRegistersNothing(t *testing.T) {
+	if len(atRootInit.networks)+len(atRootInit.layers)+len(atRootInit.aliases) != 0 {
+		t.Fatalf("the root package itself registers networks %q, layers %q and aliases %q", slices.Sorted(maps.Keys(atRootInit.networks)), slices.Sorted(maps.Keys(atRootInit.layers)), slices.Sorted(maps.Keys(atRootInit.aliases)))
+	}
 }
 
 func TestRegisterRejects(t *testing.T) {

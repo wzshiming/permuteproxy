@@ -19,9 +19,15 @@ func (s system) DialContext(ctx context.Context, network, address string) (net.C
 	return s.System.DialContext(ctx, network, address)
 }
 
-// Runs after chain_test.go's init, so atRootInit still holds the networks unimplemented.
-func init() {
-	for _, name := range []string{"tcp", "udp", "unix", "unixgram"} {
-		ImplementNetwork(name, system{})
-	}
+// dgram is protocols/local's layer of that name, declared alike.
+var dgram = LayerSpec{
+	Kind:     LayerAdapter,
+	Requires: Stream,
+	Provides: Packet,
+	Lossy:    Packet,
+	NewAdapter: func(Options) (*AdapterFuncs, error) {
+		return &AdapterFuncs{Packet: &Link{Over: Stream, Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
+			return netutils.StreamPacket(carrier, carrier.RemoteAddr()), nil
+		}}}, nil
+	},
 }

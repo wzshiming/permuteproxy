@@ -269,17 +269,22 @@ var uncoveredServers = map[string]LayerSpec{
 	"test-server-kept-no-packet": declaredServer(0, Packet, &ServerFuncs{Serve: failServe}, nil),
 }
 
-// atRootInit is what the registry holds before any protocols package initializes, which imported packages do after this one.
+// atRootInit is what the registry holds once the root package has initialized, before any fixture registers.
 var atRootInit struct {
 	networks map[string]NetworkSpec
-	cmd      Chain
-	cmdErr   error
+	layers   map[string]LayerSpec
+	aliases  map[string][]string
 }
 
-// Fixtures carry a test- prefix so the root test binary can link the real protocol packages.
 func init() {
-	atRootInit.networks = maps.Clone(networks)
-	atRootInit.cmd, atRootInit.cmdErr = ParseURI("cmd:nc host 1")
+	atRootInit.networks, atRootInit.layers, atRootInit.aliases = maps.Clone(networks), maps.Clone(layers), maps.Clone(aliases)
+	// What protocols/local registers, which the root's tests cannot import.
+	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost, Network: system{}})
+	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost, Network: system{}})
+	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath, Network: system{}})
+	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath, Network: system{}})
+	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
+	RegisterLayer("dgram", dgram)
 	RegisterNetwork("test-cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
 	RegisterNetwork("fakenet", NetworkSpec{Plane: Stream, Network: &fakeNet{name: "impl"}})
 	RegisterNetwork("test-lossy-net", NetworkSpec{Plane: Packet, Network: &lossyNet{fakeNet{name: "lossy"}, []string{"test-lossy-net"}}})

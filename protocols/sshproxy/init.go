@@ -4,6 +4,7 @@ import (
 	"github.com/wzshiming/sshd"
 
 	"github.com/wzshiming/permuteproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/local" // registers the base networks Networks lists
 )
 
 func init() {
