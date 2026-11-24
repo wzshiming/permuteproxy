@@ -445,8 +445,8 @@ func TestEngineNilBaseReportsRegisteredLossy(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls = nil
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() over a registered lossy implementation = %v, want ErrUnsupported", err)
+	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Dial(Packet) over a registered lossy implementation = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
 }
