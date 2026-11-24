@@ -9,14 +9,14 @@ import (
 	"sync"
 )
 
-// ListenPacket is the Network.ListenPacket shape DialPacket binds its local socket through.
-type ListenPacket func(ctx context.Context, network, address string) (net.PacketConn, error)
+// ListenPacketFunc is the Network.ListenPacket shape DialPacket binds its local socket through.
+type ListenPacketFunc func(ctx context.Context, network, address string) (net.PacketConn, error)
 
 // DialPacket opens an unconnected datagram socket through listen with address as its default peer.
 // The conn is also a net.PacketConn: Write sends one datagram to the peer and Read yields the next
 // datagram from anyone, WriteTo and ReadFrom reach and report other peers. Networks are udp, udp4,
 // udp6 and unixgram; unixgram binds a private socket path that Close removes.
-func DialPacket(ctx context.Context, network, address string, listen ListenPacket) (net.Conn, error) {
+func DialPacket(ctx context.Context, network, address string, listen ListenPacketFunc) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

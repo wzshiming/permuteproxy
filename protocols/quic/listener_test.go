@@ -18,23 +18,8 @@ import (
 	xquic "golang.org/x/net/quic"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
-
-// serveEcho echoes each stream ln accepts until its peer closes it.
-func serveEcho(ln net.Listener) {
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer c.Close()
-				io.Copy(c, c)
-			}()
-		}
-	}()
-}
 
 // echoed dials tr and checks that n random bytes it writes come back.
 func echoed(tr permuteproxy.Transport, n int) error {
@@ -69,7 +54,7 @@ func echoed(tr permuteproxy.Transport, n int) error {
 func TestListenerAcceptsStreamsOfEveryConnection(t *testing.T) {
 	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
 		ln, k := listenQUIC(t, e)
-		serveEcho(ln)
+		testutils.ServeEcho(t, ln)
 		const clients, streams = 2, 4
 		errs := make(chan error, clients*streams)
 		for range clients {
@@ -137,7 +122,7 @@ func rawListen(t *testing.T, k keys) *xquic.Endpoint {
 
 func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
 	ln, k := listenQUIC(t, permuteproxy.Engine{})
-	serveEcho(ln)
+	testutils.ServeEcho(t, ln)
 	qc, err := rawDial(t, ln.Addr().String(), k.caFile, "permuteproxy")
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +228,7 @@ func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failWrite = errors.New("carrier failed")
-	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
+	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	within(t, 2*time.Second, "Dial", func() {

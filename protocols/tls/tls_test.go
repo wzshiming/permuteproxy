@@ -2,16 +2,9 @@ package tls_test
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -21,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 )
 
@@ -31,84 +25,13 @@ type closeProbe struct {
 	closed atomic.Int32
 }
 
-type countingConn struct {
-	net.Conn
-	closed *atomic.Int32
-}
-
-func (c countingConn) Close() error {
-	c.closed.Add(1)
-	return c.Conn.Close()
-}
-
 func (p *closeProbe) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	p.dials.Add(1)
 	conn, err := p.Network.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
-	return countingConn{conn, &p.closed}, nil
-}
-
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc: (&net.Dialer{}).DialContext,
-	ListenFunc:      (&net.ListenConfig{}).Listen,
-}
-
-func writePEM(t *testing.T, name, kind string, der []byte) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-// issue writes a CA and a leaf certificate for dnsName, returning ca, cert and key file paths.
-func issue(t *testing.T, dnsName string) (caFile, certFile, keyFile string) {
-	t.Helper()
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caTmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "permuteproxy test CA"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		DNSNames:     []string{dnsName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, ca, &leafKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalECPrivateKey(leafKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writePEM(t, "ca.pem", "CERTIFICATE", caDER), writePEM(t, "cert.pem", "CERTIFICATE", leafDER), writePEM(t, "key.pem", "EC PRIVATE KEY", keyDER)
+	return testutils.CountingConn{Conn: conn, Closes: &p.closed}, nil
 }
 
 func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Transport {
@@ -124,38 +47,14 @@ func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Tra
 	return tr
 }
 
-// echoServer serves the TLS listener of a server chain, echoing one message per connection.
-func echoServer(t *testing.T, uri string) net.Addr {
-	t.Helper()
-	ln, err := transport(t, permuteproxy.Engine{}, uri).Listen(context.Background())
+func TestVerifiedHandshake(t *testing.T) {
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
+	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return serveEcho(t, ln)
-}
-
-// serveEcho echoes on each connection ln accepts until the test ends.
-func serveEcho(t *testing.T, ln net.Listener) net.Addr {
-	t.Cleanup(func() { ln.Close() })
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer conn.Close()
-				io.Copy(conn, conn)
-			}()
-		}
-	}()
-	return ln.Addr()
-}
-
-func TestVerifiedHandshake(t *testing.T) {
-	caFile, certFile, keyFile := issue(t, "proxy.test")
-	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
-	base := &closeProbe{Network: system}
+	addr := testutils.ServeEcho(t, ln)
+	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -180,14 +79,18 @@ func TestVerifiedHandshake(t *testing.T) {
 }
 
 func TestFailedHandshakeClosesSocket(t *testing.T) {
-	caFile, certFile, keyFile := issue(t, "proxy.test")
-	addr := echoServer(t, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile)
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
+	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := testutils.ServeEcho(t, ln)
 	for name, query := range map[string]string{
 		"wrong server name": "?tls_server_name=other.test&tls_ca_file=" + caFile,
 		"untrusted issuer":  "?tls_server_name=proxy.test",
 	} {
 		t.Run(name, func(t *testing.T) {
-			base := &closeProbe{Network: system}
+			base := &closeProbe{Network: testutils.System{}}
 			tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+query)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -262,13 +165,13 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 	if _, err := tr.Listen(context.Background()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Listen before the key material exists = %v, want it missing", err)
 	}
-	caFile, certFile, keyFile := issue(t, "proxy.test")
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	install(t, certFile, keyFile, cert, key)
 	ln, err := tr.Listen(context.Background())
 	if err != nil {
 		t.Fatalf("Listen once the key material exists = %v, want the failed build retried", err)
 	}
-	if err := verify(t, serveEcho(t, ln), "proxy.test", caFile); err != nil {
+	if err := verify(t, testutils.ServeEcho(t, ln), "proxy.test", caFile); err != nil {
 		t.Fatalf("handshake after the retried build = %v", err)
 	}
 }
@@ -278,24 +181,28 @@ func TestEachListenBuildsItsServerConfig(t *testing.T) {
 	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
 	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
 	for _, name := range []string{"first.test", "second.test"} {
-		caFile, certFile, keyFile := issue(t, name)
+		caFile, certFile, keyFile := testutils.Issue(t, name)
 		install(t, certFile, keyFile, cert, key)
 		ln, err := tr.Listen(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := verify(t, serveEcho(t, ln), name, caFile); err != nil {
+		if err := verify(t, testutils.ServeEcho(t, ln), name, caFile); err != nil {
 			t.Fatalf("Listen after installing the %s certificate serves another: %v", name, err)
 		}
 	}
 }
 
 func TestClientConfigIsLazy(t *testing.T) {
-	_, certFile, keyFile := issue(t, "proxy.test")
+	_, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
 	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
-	addr := echoServer(t, uri)
-	base := &closeProbe{Network: system}
+	ln, err := transport(t, permuteproxy.Engine{}, uri).Listen(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := testutils.ServeEcho(t, ln)
+	base := &closeProbe{Network: testutils.System{}}
 	c, err := permuteproxy.ParseURI(uri)
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +242,7 @@ func TestCanceledHandshakeClosesSocketOnce(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	base := &closeProbe{Network: system}
+	base := &closeProbe{Network: testutils.System{}}
 	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+ln.Addr().String()+"?tls_skip_verify=true")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

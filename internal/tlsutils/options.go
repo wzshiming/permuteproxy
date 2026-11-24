@@ -14,10 +14,10 @@ const (
 
 // OptionKeys returns every tls layer option key.
 func OptionKeys() []string {
-	return append(OptionKeysWithoutAcme(), keyAcmeHost, keyAcmeCacheDir)
+	return append(OptionKeysWithoutACME(), keyAcmeHost, keyAcmeCacheDir)
 }
 
-// OptionKeysWithoutAcme returns the option keys minus the ACME ones, for carriers ACME's tls-alpn-01 challenge cannot reach.
-func OptionKeysWithoutAcme() []string {
+// OptionKeysWithoutACME returns the option keys minus the ACME ones, for carriers ACME's tls-alpn-01 challenge cannot reach.
+func OptionKeysWithoutACME() []string {
 	return []string{keySkipVerify, keyServerName, keyCAFile, keyCertFile, keyKeyFile, keySelfSigned}
 }

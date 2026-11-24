@@ -12,7 +12,7 @@ func NewServer(metadata url.Values) (*tls.Config, error) {
 	if metadata.Has(keyAcmeHost) {
 		hosts := strings.Split(strings.Join(metadata[keyAcmeHost], ","), ",")
 		cacheDir := metadata.Get(keyAcmeCacheDir)
-		return NewAcme(hosts, cacheDir), nil
+		return NewACME(hosts, cacheDir), nil
 	} else if certFile, keyFile := metadata.Get(keyCertFile), metadata.Get(keyKeyFile); certFile != "" && keyFile != "" {
 		cert, err := tls.LoadX509KeyPair(metadata.Get(keyCertFile), metadata.Get(keyKeyFile))
 		if err != nil {

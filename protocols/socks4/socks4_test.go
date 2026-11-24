@@ -7,32 +7,14 @@ import (
 	"net"
 	"reflect"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wzshiming/socks4"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
-
-// countingNetwork fails every call a chain makes on it and counts them.
-type countingNetwork struct{ calls atomic.Int32 }
-
-func (n *countingNetwork) DialContext(context.Context, string, string) (net.Conn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) Listen(context.Context, string, string) (net.Listener, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
 
 func TestURIKeepsNamesAndKeys(t *testing.T) {
 	for _, scheme := range []string{"socks4", "socks4a"} {
@@ -60,7 +42,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 	for _, scheme := range []string{"socks4", "socks4a"} {
 		for network, address := range map[string]string{"udp": "127.0.0.1:1", "unix": "./test.sock"} {
 			t.Run(scheme+"/"+network, func(t *testing.T) {
-				base := &countingNetwork{}
+				base := &testutils.CountingNetwork{}
 				c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: scheme}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
 				n, err := permuteproxy.Engine{Base: base}.Client(c)
 				if err != nil {
@@ -69,7 +51,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 				if _, err := n.DialContext(context.Background(), network, address); !errors.Is(err, permuteproxy.ErrUnsupported) {
 					t.Fatalf("DialContext(%s) = %v, want ErrUnsupported", network, err)
 				}
-				if got := base.calls.Load(); got != 0 {
+				if got := base.Calls.Load(); got != 0 {
 					t.Fatalf("base calls = %d, want 0", got)
 				}
 			})
@@ -147,32 +129,13 @@ func TestServerReachesTargetThroughUpstream(t *testing.T) {
 	}
 }
 
-func wait[T any](t *testing.T, ch <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-ch:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s: timed out", what)
-	}
-	panic("unreachable")
-}
-
-// freeAddress is a loopback tcp address nothing listens on.
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	ln := listen(t)
-	ln.Close()
-	return ln.Addr().String()
-}
-
 type accepted struct {
 	conn net.Conn
 	err  error
 }
 
 func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
-	target := freeAddress(t)
+	target := testutils.ReservePort(t)
 	proxies := make(chan string, 1)
 	base := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
 		ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
@@ -197,7 +160,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		ctx, stop := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- srv.Run(ctx) }()
-		dialer := &socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: wait(t, proxies, "the proxy's listener")}
+		dialer := &socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: testutils.Wait(t, proxies, "the proxy's listener")}
 		bind, err := dialer.Listen(ctx, "tcp", target)
 		if err != nil {
 			t.Fatal(err)
@@ -207,14 +170,14 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 			conn, err := bind.Accept()
 			replies <- accepted{conn, err}
 		}()
-		if err := wait(t, binds, "the BIND listen"); err != nil {
+		if err := testutils.Wait(t, binds, "the BIND listen"); err != nil {
 			t.Fatalf("run %d: BIND listen on %s = %v", run, target, err)
 		}
 		peer, err := net.Dial("tcp", target)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply := wait(t, replies, "the BIND reply")
+		reply := testutils.Wait(t, replies, "the BIND reply")
 		if reply.err != nil {
 			t.Fatalf("run %d: BIND = %v", run, reply.err)
 		}
@@ -224,7 +187,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		reply.conn.Close()
 		peer.Close()
 		stop()
-		if err := wait(t, done, "Run"); err != nil {
+		if err := testutils.Wait(t, done, "Run"); err != nil {
 			t.Fatalf("run %d: Run = %v", run, err)
 		}
 	}
@@ -261,16 +224,16 @@ func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
 	ln := listen(t)
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	go bind.Accept()
-	wait(t, entered, "the BIND listen")
+	testutils.Wait(t, entered, "the BIND listen")
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 	close(release)
-	wait(t, closed, "the close of a BIND listener opened after Serve returned")
+	testutils.Wait(t, closed, "the close of a BIND listener opened after Serve returned")
 }
 
 func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
@@ -284,7 +247,7 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 	ln := listen(t)
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks4.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,10 +256,10 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 		conn, err := bind.Accept()
 		replies <- accepted{conn, err}
 	}()
-	if reply := wait(t, replies, "the BIND reply"); reply.err == nil {
+	if reply := testutils.Wait(t, replies, "the BIND reply"); reply.err == nil {
 		reply.conn.Close()
 		t.Fatal("BIND succeeded without a listener")
 	}
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 }

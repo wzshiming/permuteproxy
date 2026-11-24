@@ -19,6 +19,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 func TestMain(m *testing.M) {
@@ -511,16 +512,6 @@ func TestDialSurvivesContextCancel(t *testing.T) {
 	}
 }
 
-func reservePort(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	return ln.Addr().String()
-}
-
 // socketPath stays under the unix socket path limit, which t.TempDir's test-named paths exceed.
 func socketPath(t *testing.T) string {
 	t.Helper()
@@ -609,7 +600,7 @@ func TestNetcatSequentialConnections(t *testing.T) {
 		network string
 		address func(t *testing.T) string
 	}{
-		{"cmd-nc", reservePort},
+		{"cmd-nc", func(t *testing.T) string { return testutils.ReservePort(t) }},
 		{"cmd-nc-unix", socketPath},
 	} {
 		t.Run(tt.network, func(t *testing.T) {
@@ -637,7 +628,7 @@ func TestFakeLinuxNetcatSequentialConnections(t *testing.T) {
 	n := fakeLinux(t, waitDelay)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	address := reservePort(t)
+	address := testutils.ReservePort(t)
 	ln, err := engineListen(ctx, n, "cmd-nc", address)
 	if err != nil {
 		t.Fatal(err)

@@ -6,11 +6,11 @@ import (
 )
 
 func init() {
-	permuteproxy.RegisterLayer("quic", permuteproxy.Spec{
-		Kind:       permuteproxy.KindAdapter,
+	permuteproxy.RegisterLayer("quic", permuteproxy.LayerSpec{
+		Kind:       permuteproxy.LayerAdapter,
 		Requires:   permuteproxy.Packet,
 		Provides:   permuteproxy.Stream,
-		Options:    tlsutils.OptionKeysWithoutAcme(),
+		OptionKeys: tlsutils.OptionKeysWithoutACME(),
 		NewAdapter: NewAdapter,
 	})
 }

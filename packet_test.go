@@ -10,44 +10,39 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
-// udpEcho answers every datagram to its sender until the test ends.
-func udpEcho(t *testing.T) net.Addr {
-	t.Helper()
-	addr, _ := watchedUDPEcho(t)
-	return addr
-}
-
-// watchedUDPEcho is udpEcho, also signaling each datagram it receives.
+// watchedUDPEcho is testutils.UDPEcho, also signaling each datagram it receives.
 func watchedUDPEcho(t *testing.T) (net.Addr, <-chan struct{}) {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { pc.Close() })
 	received := make(chan struct{}, 64)
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			select {
-			case received <- struct{}{}:
-			default:
-			}
-			pc.WriteTo(buf[:n], addr)
+	return testutils.ServePacketEcho(t, readSignal{pc, received}), received
+}
+
+// readSignal signals each datagram its socket reads.
+type readSignal struct {
+	net.PacketConn
+	read chan struct{}
+}
+
+func (c readSignal) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, from, err := c.PacketConn.ReadFrom(b)
+	if err == nil {
+		select {
+		case c.read <- struct{}{}:
+		default:
 		}
-	}()
-	return pc.LocalAddr(), received
+	}
+	return n, from, err
 }
 
 // dialPacket dials target over udp through n; the conn must also be a net.PacketConn.
@@ -67,24 +62,10 @@ func dialPacket(t *testing.T, ctx context.Context, n permuteproxy.Network, targe
 	return conn
 }
 
-// roundTrip sends msg to the conn's peer and expects it echoed back as one datagram.
-func roundTrip(t *testing.T, conn net.Conn, msg string) {
-	t.Helper()
-	if _, err := conn.Write([]byte(msg)); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 4096)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := conn.Read(buf)
-	if err != nil || string(buf[:n]) != msg {
-		t.Fatalf("Read = %d bytes, %v; want the %d-byte datagram back", n, err, len(msg))
-	}
-}
-
 // otherPeer sends to a second echo peer through WriteTo and expects ReadFrom to name it.
 func otherPeer(t *testing.T, conn net.Conn) {
 	t.Helper()
-	other := udpEcho(t)
+	other := testutils.UDPEcho(t)
 	pc := conn.(net.PacketConn)
 	if _, err := pc.WriteTo([]byte("other"), other); err != nil {
 		t.Fatal(err)
@@ -97,15 +78,6 @@ func otherPeer(t *testing.T, conn net.Conn) {
 	}
 }
 
-func signaled(t *testing.T, ch <-chan struct{}, what string) {
-	t.Helper()
-	select {
-	case <-ch:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s did not happen", what)
-	}
-}
-
 var packetMessages = []string{"one", strings.Repeat("2", 1200), "three"}
 
 func TestSOCKS5PacketEcho(t *testing.T) {
@@ -114,18 +86,18 @@ func TestSOCKS5PacketEcho(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			c := parse(t, uri)
-			base, upstream := newProbe(system), newProbe(system)
+			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 			c.Endpoint.Address = waitBound(t, base, done).String()
-			clientBase := newProbe(system)
+			clientBase := newProbe(testutils.System{})
 			n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer closeIf(n)
-			conn := dialPacket(t, ctx, n, udpEcho(t).String())
+			conn := dialPacket(t, ctx, n, testutils.UDPEcho(t).String())
 			for _, msg := range packetMessages {
-				roundTrip(t, conn, msg)
+				testutils.RoundTrip(t, conn, msg, msg)
 			}
 			otherPeer(t, conn)
 			if clientBase.dials.Load() != 1 || clientBase.packets.Load() != 1 {
@@ -137,18 +109,18 @@ func TestSOCKS5PacketEcho(t *testing.T) {
 			if err := conn.Close(); err != nil {
 				t.Fatal(err)
 			}
-			signaled(t, upstream.packetClosed, "outgoing socket close after the association closed")
+			testutils.Wait(t, upstream.packetClosed, "outgoing socket close after the association closed")
 		})
 	}
 }
 
 func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	c := parse(t, "socks5://u:p@127.0.0.1:0")
-	base, upstream := newProbe(system), newProbe(system)
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	c.Layers[0].Options = permuteproxy.Options{"username": "u", "password": "x"}
-	clientBase := newProbe(system)
+	clientBase := newProbe(testutils.System{})
 	n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +128,7 @@ func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	defer closeIf(n)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if conn, err := n.DialContext(ctx, "udp", udpEcho(t).String()); err == nil {
+	if conn, err := n.DialContext(ctx, "udp", testutils.UDPEcho(t).String()); err == nil {
 		conn.Close()
 		t.Fatal("association with bad credentials succeeded")
 	}
@@ -172,14 +144,14 @@ func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 func socks5TwoHops(t *testing.T) (hop2 permuteproxy.Network, clientBase, firstUpstream, secondUpstream *probe) {
 	t.Helper()
 	first := parse(t, "socks5://127.0.0.1:0")
-	firstBase, firstUpstream := newProbe(system), newProbe(system)
+	firstBase, firstUpstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: firstBase, Upstream: firstUpstream}, first)
 	first.Endpoint.Address = waitBound(t, firstBase, done).String()
 	second := parse(t, "socks5://u:p@127.0.0.1:0")
-	secondBase, secondUpstream := newProbe(system), newProbe(system)
+	secondBase, secondUpstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done = start(t, permuteproxy.Engine{Base: secondBase, Upstream: secondUpstream}, second)
 	second.Endpoint.Address = waitBound(t, secondBase, done).String()
-	clientBase = newProbe(system)
+	clientBase = newProbe(testutils.System{})
 	hop1, err := permuteproxy.Engine{Base: clientBase}.Client(first)
 	if err != nil {
 		t.Fatal(err)
@@ -197,9 +169,9 @@ func TestSOCKS5TwoHopPacket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	hop2, clientBase, firstUpstream, secondUpstream := socks5TwoHops(t)
-	conn := dialPacket(t, ctx, hop2, udpEcho(t).String())
+	conn := dialPacket(t, ctx, hop2, testutils.UDPEcho(t).String())
 	for _, msg := range packetMessages {
-		roundTrip(t, conn, msg)
+		testutils.RoundTrip(t, conn, msg, msg)
 	}
 	otherPeer(t, conn)
 	// The first hop carried the second hop's control conn and its socket; only the second hop egresses.
@@ -215,24 +187,24 @@ func TestSOCKS5TwoHopPacket(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
-	signaled(t, secondUpstream.packetClosed, "second hop outgoing socket close")
-	signaled(t, firstUpstream.packetClosed, "first hop outgoing socket close")
+	testutils.Wait(t, secondUpstream.packetClosed, "second hop outgoing socket close")
+	testutils.Wait(t, firstUpstream.packetClosed, "first hop outgoing socket close")
 }
 
 func TestNativePacketDialOverSOCKS5(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c := parse(t, "socks5://127.0.0.1:0")
-	base, upstream := newProbe(system), newProbe(system)
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
-	clientBase := newProbe(system)
+	clientBase := newProbe(testutils.System{})
 	proxy, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeIf(proxy)
-	echo := udpEcho(t)
+	echo := testutils.UDPEcho(t)
 	tr, err := permuteproxy.Engine{Base: proxy}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: echo.String()}})
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +218,7 @@ func TestNativePacketDialOverSOCKS5(t *testing.T) {
 		t.Fatalf("RemoteAddr() = %v, want %v", conn.RemoteAddr(), echo)
 	}
 	for _, msg := range packetMessages {
-		roundTrip(t, conn, msg)
+		testutils.RoundTrip(t, conn, msg, msg)
 	}
 	otherPeer(t, conn)
 	if clientBase.dials.Load() != 1 || clientBase.packets.Load() != 1 || upstream.packets.Load() != 1 {
@@ -255,53 +227,70 @@ func TestNativePacketDialOverSOCKS5(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
-	signaled(t, upstream.packetClosed, "outgoing socket close")
+	testutils.Wait(t, upstream.packetClosed, "outgoing socket close")
 }
 
-func TestSOCKS5ServerStopEndsAssociations(t *testing.T) {
-	for _, stop := range []string{"close", "cancel"} {
-		t.Run(stop, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			c := parse(t, "socks5://127.0.0.1:0")
-			base, upstream := newProbe(system), newProbe(system)
-			srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			runCtx, stopRun := context.WithCancel(ctx)
-			done := make(chan error, 1)
-			go func() { done <- srv.Run(runCtx) }()
-			t.Cleanup(func() {
-				srv.Close()
-				stopRun()
-			})
-			c.Endpoint.Address = waitBound(t, base, done).String()
-			n, err := permuteproxy.Engine{}.Client(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeIf(n)
-			conn := dialPacket(t, ctx, n, udpEcho(t).String())
-			roundTrip(t, conn, "before")
-			if stop == "close" {
-				if err := srv.Close(); err != nil {
+func TestServerStopEndsDatagramSessions(t *testing.T) {
+	for _, scheme := range []string{"socks5", "ss"} {
+		for _, stop := range []string{"close", "cancel"} {
+			t.Run(scheme+"/"+stop, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				address := "127.0.0.1:0"
+				if scheme == "ss" {
+					// An ss server binds tcp and udp at the declared address.
+					address = testutils.ReservePort(t)
+				}
+				c := parse(t, scheme+"://"+address)
+				base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
+				srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+				if err != nil {
 					t.Fatal(err)
 				}
-			} else {
-				stopRun()
-			}
-			waitDone(t, done)
-			signaled(t, upstream.packetClosed, "outgoing socket close")
-			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			var ne net.Error
-			if _, err := conn.Read(make([]byte, 16)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
-				t.Fatalf("client Read after the server stopped = %v, want the closed association", err)
-			}
-			if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
-				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
-			}
-		})
+				runCtx, stopRun := context.WithCancel(ctx)
+				done := make(chan error, 1)
+				go func() { done <- srv.Run(runCtx) }()
+				t.Cleanup(func() {
+					srv.Close()
+					stopRun()
+				})
+				c.Endpoint.Address = waitBound(t, base, done).String()
+				if scheme == "ss" {
+					waitBoundPacket(t, base, done)
+				}
+				n, err := permuteproxy.Engine{}.Client(c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer closeIf(n)
+				conn := dialPacket(t, ctx, n, testutils.UDPEcho(t).String())
+				testutils.RoundTrip(t, conn, "before", "before")
+				if stop == "close" {
+					if err := srv.Close(); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					stopRun()
+				}
+				waitDone(t, done)
+				testutils.Wait(t, upstream.packetClosed, "session socket close")
+				if scheme == "ss" {
+					testutils.Wait(t, base.packetClosed, "listening socket close")
+				} else {
+					conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+					var ne net.Error
+					if _, err := conn.Read(make([]byte, 16)); err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+						t.Fatalf("client Read after the server stopped = %v, want the closed association", err)
+					}
+				}
+				if err := srv.Close(); err != nil {
+					t.Fatalf("Close after stop = %v", err)
+				}
+				if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
+					t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
+				}
+			})
+		}
 	}
 }
 
@@ -320,22 +309,22 @@ func TestShadowsocksPacketEcho(t *testing.T) {
 		t.Run(uri, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			c := parse(t, uri+reservePort(t))
-			base, upstream := newProbe(system), newProbe(system)
+			c := parse(t, uri+testutils.ReservePort(t))
+			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 			tcp, udp := waitBound(t, base, done), waitBoundPacket(t, base, done)
 			if tcp.String() != udp.String() {
 				t.Fatalf("bound tcp %v and udp %v, want the declared address on both", tcp, udp)
 			}
-			clientBase := newProbe(system)
+			clientBase := newProbe(testutils.System{})
 			n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer closeIf(n)
-			conn := dialPacket(t, ctx, n, udpEcho(t).String())
+			conn := dialPacket(t, ctx, n, testutils.UDPEcho(t).String())
 			for _, msg := range packetMessages {
-				roundTrip(t, conn, msg)
+				testutils.RoundTrip(t, conn, msg, msg)
 			}
 			otherPeer(t, conn)
 			if body, err := fetch(ctx, n, okTarget(t)); err != nil || body != "OK" {
@@ -352,64 +341,18 @@ func TestShadowsocksPacketEcho(t *testing.T) {
 	}
 }
 
-func TestShadowsocksServerStopClosesSessions(t *testing.T) {
-	for _, stop := range []string{"close", "cancel"} {
-		t.Run(stop, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			c := parse(t, "ss://"+reservePort(t))
-			base, upstream := newProbe(system), newProbe(system)
-			srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			runCtx, stopRun := context.WithCancel(ctx)
-			done := make(chan error, 1)
-			go func() { done <- srv.Run(runCtx) }()
-			t.Cleanup(func() {
-				srv.Close()
-				stopRun()
-			})
-			waitBound(t, base, done)
-			waitBoundPacket(t, base, done)
-			n, err := permuteproxy.Engine{}.Client(c)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer closeIf(n)
-			roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "before")
-			if stop == "close" {
-				if err := srv.Close(); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				stopRun()
-			}
-			waitDone(t, done)
-			signaled(t, base.packetClosed, "listening socket close")
-			signaled(t, upstream.packetClosed, "session socket close")
-			if err := srv.Close(); err != nil {
-				t.Fatalf("Close after stop = %v", err)
-			}
-			if base.closes.Load() != 0 || upstream.closes.Load() != 0 {
-				t.Fatalf("borrowed networks closed: base %d upstream %d", base.closes.Load(), upstream.closes.Load())
-			}
-		})
-	}
-}
-
 func TestShadowsocksExplicitPlanes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	t.Run("udp", func(t *testing.T) {
 		c := parse(t, "ss+udp://127.0.0.1:0")
-		base, upstream := newProbe(system), newProbe(system)
+		base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 		c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 		if base.listens.Load() != 0 {
 			t.Fatalf("base listens = %d for a udp-only server", base.listens.Load())
 		}
-		clientBase := newProbe(system)
+		clientBase := newProbe(testutils.System{})
 		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
@@ -418,17 +361,17 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 		if _, err := n.DialContext(ctx, "tcp", "127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 			t.Fatalf("DialContext(tcp) over ss+udp = %v, want ErrUnsupported", err)
 		}
-		roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "udp only")
+		testutils.RoundTrip(t, dialPacket(t, ctx, n, testutils.UDPEcho(t).String()), "udp only", "udp only")
 		if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {
 			t.Fatalf("client base dials %d packets %d, want 0 and 1", clientBase.dials.Load(), clientBase.packets.Load())
 		}
 	})
 	t.Run("tls", func(t *testing.T) {
 		c := parse(t, "ss+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
-		base, upstream := newProbe(system), newProbe(system)
+		base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 		c.Endpoint.Address = waitBound(t, base, done).String()
-		clientBase := newProbe(system)
+		clientBase := newProbe(testutils.System{})
 		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
@@ -449,56 +392,11 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 	})
 }
 
-type closeCountListener struct {
-	net.Listener
-	closes *atomic.Int32
-}
-
-func (l closeCountListener) Close() error {
-	l.closes.Add(1)
-	return l.Listener.Close()
-}
-
-func TestShadowsocksBindFailureReleasesListener(t *testing.T) {
-	bindErr := errors.New("udp bind refused")
-	var closes atomic.Int32
-	base := permuteproxy.NetworkFuncs{
-		ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
-			ln, err := system.Listen(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			return closeCountListener{ln, &closes}, nil
-		},
-		ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, bindErr },
-	}
-	srv, err := permuteproxy.Engine{Base: base}.Server(parse(t, "ss://127.0.0.1:0"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(context.Background()) }()
-	select {
-	case err := <-done:
-		if !errors.Is(err, bindErr) {
-			t.Fatalf("Run = %v, want the udp bind error", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run kept serving with only the listener bound")
-	}
-	if closes.Load() != 1 {
-		t.Fatalf("listener closed %d times after the udp bind failed, want 1", closes.Load())
-	}
-	if err := srv.Close(); err != nil {
-		t.Fatalf("Close after the failed bind = %v", err)
-	}
-}
-
 func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c := parse(t, "ss://aes-256-gcm:p@"+reservePort(t))
-	base, upstream := newProbe(system), newProbe(system)
+	c := parse(t, "ss://aes-256-gcm:p@"+testutils.ReservePort(t))
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	udp := waitBoundPacket(t, base, done)
@@ -515,7 +413,7 @@ func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeIf(n)
-	roundTrip(t, dialPacket(t, ctx, n, udpEcho(t).String()), "after garbage")
+	testutils.RoundTrip(t, dialPacket(t, ctx, n, testutils.UDPEcho(t).String()), "after garbage", "after garbage")
 	select {
 	case err := <-done:
 		t.Fatalf("server stopped after a garbage datagram: %v", err)
@@ -526,9 +424,9 @@ func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	addr := reservePort(t)
+	addr := testutils.ReservePort(t)
 	c := parse(t, "ss://aes-256-gcm:p@"+addr)
-	base, upstream := newProbe(system), newProbe(system)
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	waitBoundPacket(t, base, done)
@@ -537,7 +435,7 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeIf(intruder)
-	echo := udpEcho(t)
+	echo := testutils.UDPEcho(t)
 	// A well-formed datagram under another key fails authentication; it must not reach the target.
 	wrong := dialPacket(t, ctx, intruder, echo.String())
 	if _, err := wrong.Write([]byte("wrong key")); err != nil {
@@ -548,7 +446,7 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeIf(n)
-	roundTrip(t, dialPacket(t, ctx, n, echo.String()), "after wrong key")
+	testutils.RoundTrip(t, dialPacket(t, ctx, n, echo.String()), "after wrong key", "after wrong key")
 	if upstream.packets.Load() != 1 {
 		t.Fatalf("upstream sockets = %d, want only the valid client's", upstream.packets.Load())
 	}
@@ -566,8 +464,8 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 func TestShadowsocksPacketServerSurvivesAnUnresolvableTarget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	c := parse(t, "ss://aes-256-gcm:p@"+reservePort(t))
-	base, upstream := newProbe(system), newProbe(system)
+	c := parse(t, "ss://aes-256-gcm:p@"+testutils.ReservePort(t))
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	waitBoundPacket(t, base, done)
@@ -633,20 +531,6 @@ func echoed(t *testing.T, conn net.Conn, payload []byte) {
 	}
 }
 
-// echoAll echoes what each conn ln accepts sends, until ln closes.
-func echoAll(ln net.Listener) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		go func() {
-			io.Copy(conn, conn)
-			conn.Close()
-		}()
-	}
-}
-
 // tcpEcho echoes each tcp conn until the test ends, returning its address and a signal per conn it accepted.
 func tcpEcho(t *testing.T) (string, <-chan struct{}) {
 	t.Helper()
@@ -654,10 +538,8 @@ func tcpEcho(t *testing.T) (string, <-chan struct{}) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
 	accepted := make(chan struct{}, 64)
-	go echoAll(acceptProbe{ln, accepted})
-	return ln.Addr().String(), accepted
+	return testutils.ServeEcho(t, acceptProbe{ln, accepted}).String(), accepted
 }
 
 // quicChain is the quic layer over udp at address, with a self-signed certificate.
@@ -676,9 +558,7 @@ func quicEcho(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
-	go echoAll(ln)
-	return ln.Addr().String()
+	return testutils.ServeEcho(t, ln).String()
 }
 
 func TestQUICOverSOCKS5TwoHops(t *testing.T) {
@@ -711,10 +591,10 @@ func TestQUICOverShadowsocksPacket(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c := parse(t, "ss+udp://aes-256-gcm:p@127.0.0.1:0")
-	base, upstream := newProbe(system), newProbe(system)
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
-	clientBase := newProbe(system)
+	clientBase := newProbe(testutils.System{})
 	ss, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
@@ -743,10 +623,10 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	c := parse(t, "ss+quic://aes-256-gcm:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
-	base, upstream := newProbe(system), newProbe(system)
+	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
-	clientBase := newProbe(system)
+	clientBase := newProbe(testutils.System{})
 	n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
@@ -760,7 +640,7 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 	defer conn.Close()
 	echoed(t, conn, streamPayload)
 	// quic offers ss a stream only, so the client has no datagrams to give.
-	if _, err := n.DialContext(ctx, "udp", udpEcho(t).String()); !errors.Is(err, permuteproxy.ErrUnsupported) {
+	if _, err := n.DialContext(ctx, "udp", testutils.UDPEcho(t).String()); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("DialContext(udp) over ss+quic = %v, want ErrUnsupported", err)
 	}
 	if clientBase.dials.Load() != 0 || clientBase.packets.Load() != 1 {

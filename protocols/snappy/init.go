@@ -5,8 +5,8 @@ import (
 )
 
 func init() {
-	permuteproxy.RegisterLayer("snappy", permuteproxy.Spec{
-		Kind:       permuteproxy.KindAdapter,
+	permuteproxy.RegisterLayer("snappy", permuteproxy.LayerSpec{
+		Kind:       permuteproxy.LayerAdapter,
 		Requires:   permuteproxy.Stream,
 		Provides:   permuteproxy.Stream,
 		NewAdapter: NewAdapter,

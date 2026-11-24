@@ -22,7 +22,7 @@ func TestWrappersKeepProcess(t *testing.T) {
 		"closer": ConnWithCloser(inner, local.Close),
 		"addr":   ConnWithAddr(inner, nil, nil),
 		"nested": ConnWithAddr(ConnWithCloser(inner, local.Close), nil, nil),
-		"with":   WithProcess(plain, inner),
+		"with":   ConnWithProcess(plain, inner),
 	} {
 		p, ok := conn.(Process)
 		if !ok || p.Done() != inner.done {

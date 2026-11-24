@@ -21,6 +21,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // hostKeyPEM is the host key of the servers under test, so that none generates an RSA key.
@@ -52,25 +53,6 @@ func listen(t *testing.T) net.Listener {
 	}
 	t.Cleanup(func() { ln.Close() })
 	return ln
-}
-
-// echoTarget accepts tcp conns and echoes what each sends.
-func echoTarget(t *testing.T) string {
-	t.Helper()
-	ln := listen(t)
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				io.Copy(conn, conn)
-				conn.Close()
-			}()
-		}
-	}()
-	return ln.Addr().String()
 }
 
 // firehose accepts tcp conns and writes to each until it fails.
@@ -127,24 +109,6 @@ func roundTrip(t *testing.T, conn net.Conn, msg, want string) {
 	}
 }
 
-// countingNetwork fails every call a chain makes on it and counts them.
-type countingNetwork struct{ calls atomic.Int32 }
-
-func (n *countingNetwork) DialContext(context.Context, string, string) (net.Conn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) Listen(context.Context, string, string) (net.Listener, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
-func (n *countingNetwork) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
-	n.calls.Add(1)
-	return nil, net.ErrClosed
-}
-
 func TestURIKeepsNameAndKeys(t *testing.T) {
 	uri := "ssh://u:p@127.0.0.1:1?authorized_data=a&authorized_file=b&hostkey_data=c&hostkey_file=d&identity_data=e&identity_file=f"
 	c, err := permuteproxy.ParseURI(uri)
@@ -168,7 +132,7 @@ func TestURIKeepsNameAndKeys(t *testing.T) {
 
 func TestClientRefusesUnixgramAndListen(t *testing.T) {
 	ctx := context.Background()
-	base := &countingNetwork{}
+	base := &testutils.CountingNetwork{}
 	n, err := permuteproxy.Engine{Base: base}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +145,7 @@ func TestClientRefusesUnixgramAndListen(t *testing.T) {
 			t.Fatalf("Listen(%s) = %v, want ErrUnsupported", network, err)
 		}
 	}
-	if got := base.calls.Load(); got != 0 {
+	if got := base.Calls.Load(); got != 0 {
 		t.Fatalf("base calls = %d, want 0", got)
 	}
 }
@@ -192,7 +156,7 @@ func TestFuncsTunnelOverInnerToUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, ln := echoTarget(t), listen(t)
+	target, ln := testutils.ServeEcho(t, listen(t)).String(), listen(t)
 	dials := make(chan string, 1)
 	upstream := permuteproxy.NetworkFuncs{DialContextFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
 		dials <- network + " " + address
@@ -267,7 +231,7 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 		{ctx, "unix", filepath.Join(t.TempDir(), "absent.sock")},
 		{ctx, "tcp", "no-port"},
 		{ctx, "tcp", "127.0.0.1:x"},
-		{canceled, "tcp", echoTarget(t)},
+		{canceled, "tcp", testutils.ServeEcho(t, listen(t)).String()},
 	} {
 		if c, err := n.DialContext(d.ctx, d.network, d.address); err == nil {
 			c.Close()
@@ -282,7 +246,7 @@ func TestFailedTargetsKeepTheConnection(t *testing.T) {
 }
 
 func TestSilentConnectionIsReplacedAfterADialTimesOut(t *testing.T) {
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	for _, tt := range []struct{ network, address, reply string }{
 		{"cmd", "relay x", "relay x|ping"},
 		{"tcp", target, "ping"},
@@ -471,7 +435,7 @@ func TestOversizedTargetsAreRefusedBeforeAnyIO(t *testing.T) {
 func TestClosedClientRefusesWithoutReconnecting(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	ctx, target := timeout(t), echoTarget(t)
+	ctx, target := timeout(t), testutils.ServeEcho(t, listen(t)).String()
 	conn, err := n.DialContext(ctx, "tcp", target)
 	if err != nil {
 		t.Fatal(err)

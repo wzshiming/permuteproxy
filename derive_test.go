@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // relay is the carrier a deriving proxy dials: its far end answers each read with the command dialed and what it read, and hangs up on "eof".
@@ -57,9 +58,9 @@ func (r *relay) Close() error {
 }
 
 // derivingProxy is a Stream proxy listing networks and deriving derive without a ListenPacket; its Dial records and returns dial's conn.
-func derivingProxy(name string, provides, preserves Plane, networks []string, derive map[string]string, dial func(string) net.Conn) Spec {
-	return Spec{
-		Kind:      KindProxy,
+func derivingProxy(name string, provides, preserves Plane, networks []string, derive map[string]string, dial func(string) net.Conn) LayerSpec {
+	return LayerSpec{
+		Kind:      LayerProxy,
 		Requires:  Stream,
 		Provides:  provides,
 		Preserves: preserves,
@@ -148,20 +149,6 @@ func derivingClient(t *testing.T, c Chain) Network {
 	return n
 }
 
-// echoes writes msg to conn and expects want back in one read.
-func echoes(t *testing.T, conn net.Conn, msg, want string) {
-	t.Helper()
-	if _, err := conn.Write([]byte(msg)); err != nil {
-		t.Fatal(err)
-	}
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	buf := make([]byte, 256)
-	n, err := conn.Read(buf)
-	if err != nil || string(buf[:n]) != want {
-		t.Fatalf("Read = %q, %v; want %q", buf[:n], err, want)
-	}
-}
-
 func TestClientRefusesDerivations(t *testing.T) {
 	e := Engine{Base: &fakeNet{name: "base"}}
 	for name := range underived {
@@ -173,6 +160,23 @@ func TestClientRefusesDerivations(t *testing.T) {
 			}
 			assertCalls(t, name+".close")
 		})
+	}
+}
+
+func TestClientRefusalsNameTheDeriveEntry(t *testing.T) {
+	e := Engine{Base: &fakeNet{name: "base"}}
+	for scheme, want := range map[string]string{
+		"test-derive-variant":    `network "udp4" in Derive: not one of the base networks`,
+		"test-derive-listed":     `network "udp" in Derive: also listed in Networks`,
+		"test-derive-unparsable": `network "udp" in Derive: `,
+		"test-derive-unlisted":   `network "udp" in Derive: "test-cmd" is not listed in Networks`,
+		"test-derive-unmet":      `network "udp" in Derive: `,
+		"test-derive-stream-udp": `network "udp" in Derive: the expression offers stream, not packet`,
+	} {
+		_, err := e.Client(mk("", scheme))
+		if want = fmt.Sprintf("layer %q: %s", scheme, want); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("Client(%s) = %v, want an error starting with %s", scheme, err, want)
+		}
 	}
 }
 
@@ -239,23 +243,6 @@ func TestClientAdmitsDerivedNetworks(t *testing.T) {
 	assertCalls(t)
 }
 
-func TestClientWithoutListenPacketRefusesListedDatagrams(t *testing.T) {
-	calls = nil
-	ctx := context.Background()
-	// The engine refuses datagrams to a proxy without Packet first, so this one is assembled directly.
-	n, err := derivingProxy("test-derive", Stream, 0, []string{"tcp", "udp", "unixgram"}, nil, dialRelay).client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := n.DialContext(ctx, "udp", "127.0.0.1:1"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("dial udp without ListenPacket = %v, want ErrUnsupported", err)
-	}
-	if _, err := n.ListenPacket(ctx, "unixgram", "/tmp/x"); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("listen packet unixgram without ListenPacket = %v, want ErrUnsupported", err)
-	}
-	assertCalls(t)
-}
-
 func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 	ctx := context.Background()
 	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("tcp", "test-derive", "closable"))
@@ -268,7 +255,7 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-derive.dial stream cmd relay -U '/tmp/a b.sock'", "test-held.client")
-	echoes(t, conn, "hi", "relay -U '/tmp/a b.sock'|hi")
+	testutils.RoundTrip(t, conn, "hi", "relay -U '/tmp/a b.sock'|hi")
 	// The conn releases what the expression built over the client, never the client.
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
@@ -283,14 +270,14 @@ func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCalls(t, "test-derive.close", "closable.close")
-	echoes(t, open, "still", "relay -U /tmp/open.sock|still")
+	testutils.RoundTrip(t, open, "still", "relay -U /tmp/open.sock|still")
 	open.Close()
 	assertCalls(t, "relay.close relay -U /tmp/open.sock", "test-held.close")
 }
 
 func TestFailedDerivedDialReleasesWhatItBuilt(t *testing.T) {
 	calls = nil
-	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Dial:   func(context.Context, Transport, string, string) (net.Conn, error) { return nil, errLink },
 			Derive: map[string]string{"unix": relayed["unix"]},
@@ -347,7 +334,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 			return nil
 		},
 	}, nil))
-	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Dial: func(_ context.Context, _ Transport, network, address string) (net.Conn, error) {
 				record("dial %s %s", network, address)
@@ -368,10 +355,10 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 		conn, err = n.DialContext(ctx, "unix", "/tmp/x.sock")
 		dialed <- err
 	}()
-	recv(t, entered, "the derived dial reaching its layer")
+	testutils.Wait(t, entered, "the derived dial reaching its layer")
 	done := make(chan error, 1)
 	go func() { done <- n.(io.Closer).Close() }()
-	if err := recv(t, done, "the client's Close"); err != nil {
+	if err := testutils.Wait(t, done, "the client's Close"); err != nil {
 		t.Fatal(err)
 	}
 	// The dial in flight went on once ClientFuncs.Close had run, and Close returned after it.
@@ -380,7 +367,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 		t.Fatalf("derived dial after the client's Close = %v, want net.ErrClosed", err)
 	}
 	assertCalls(t)
-	if err := recv(t, dialed, "the derived dial"); err != nil {
+	if err := testutils.Wait(t, dialed, "the derived dial"); err != nil {
 		t.Fatal(err)
 	}
 	conn.Close()
@@ -390,7 +377,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 func TestDerivedDialBlockedInDialDoesNotHangClientClose(t *testing.T) {
 	calls = nil
 	entered, closed := make(chan struct{}), make(chan struct{})
-	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			// Dial stands for I/O that only the client's Close ends.
 			Dial: func(context.Context, Transport, string, string) (net.Conn, error) {
@@ -411,13 +398,13 @@ func TestDerivedDialBlockedInDialDoesNotHangClientClose(t *testing.T) {
 		_, err := n.DialContext(context.Background(), "unix", "/tmp/x.sock")
 		dialed <- err
 	}()
-	recv(t, entered, "the derived dial reaching ClientFuncs.Dial")
+	testutils.Wait(t, entered, "the derived dial reaching ClientFuncs.Dial")
 	done := make(chan error, 1)
 	go func() { done <- n.(io.Closer).Close() }()
-	if err := recv(t, done, "the client's Close"); err != nil {
+	if err := testutils.Wait(t, done, "the client's Close"); err != nil {
 		t.Fatal(err)
 	}
-	if err := recv(t, dialed, "the derived dial"); !errors.Is(err, net.ErrClosed) {
+	if err := testutils.Wait(t, dialed, "the derived dial"); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("derived dial ended by the client's Close = %v, want net.ErrClosed", err)
 	}
 	assertCalls(t, "close")
@@ -538,8 +525,8 @@ func TestDerivedDialOpensSessionOnWrite(t *testing.T) {
 	if remote := conn.RemoteAddr(); remote.Network() != "udp" || remote.String() != "peer.invalid:53" {
 		t.Fatalf("RemoteAddr() = %s %v, want the udp address carried verbatim", remote.Network(), remote)
 	}
-	echoes(t, conn, "ping", "relay peer.invalid 53|ping")
-	echoes(t, conn, "again", "relay peer.invalid 53|again")
+	testutils.RoundTrip(t, conn, "ping", "relay peer.invalid 53|ping")
+	testutils.RoundTrip(t, conn, "again", "relay peer.invalid 53|again")
 	assertCalls(t, "test-derive.dial stream cmd relay peer.invalid 53")
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
@@ -569,22 +556,22 @@ func TestDerivedDialReopensEndedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	echoes(t, conn, "one", "relay peer.invalid 53|one")
-	first := recv(t, relays, "the first dial")
+	testutils.RoundTrip(t, conn, "one", "relay peer.invalid 53|one")
+	first := testutils.Wait(t, relays, "the first dial")
 	// The relay hangs up on eof, which ends the session.
 	if _, err := conn.Write([]byte("eof")); err != nil {
 		t.Fatal(err)
 	}
-	recv(t, first.closed, "the ended session's close")
-	echoes(t, conn, "two", "relay peer.invalid 53|two")
-	recv(t, relays, "the second dial")
+	testutils.Wait(t, first.closed, "the ended session's close")
+	testutils.RoundTrip(t, conn, "two", "relay peer.invalid 53|two")
+	testutils.Wait(t, relays, "the second dial")
 	assertCalls(t, "test-derive.dial stream cmd relay peer.invalid 53", "relay.close relay peer.invalid 53", "test-derive.dial stream cmd relay peer.invalid 53")
 }
 
 func TestClientRefusesDerivationOverNetworkWithoutDial(t *testing.T) {
 	calls = nil
 	// A layer offering only datagrams lists cmd for its derivation alone, so nothing else has it declare a Dial.
-	spec := Spec{Kind: KindProxy, Requires: Stream, Provides: Packet, Networks: []string{"cmd"}, NewClient: func(Options) (*ClientFuncs, error) {
+	spec := LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Packet, Networks: []string{"cmd"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			Derive: map[string]string{"udp": "dgram+cmd:relay %h %p"},
 			Close:  func() error { record("test-dialless.close"); return nil },
@@ -628,9 +615,6 @@ func TestDerivedLossyRefusesPacketToLayers(t *testing.T) {
 	calls = nil
 	if _, err := tr.Dial(ctx, Packet); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("Dial(Packet) over udp derived through dgram = %v, want ErrUnsupported", err)
-	}
-	if _, err := tr.ListenPacket(ctx); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("ListenPacket() over udp derived through dgram = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
 	if tr, err = (Engine{Base: derivingClient(t, mk("", "test-derive-uot"))}).Transport(mk("udp", "test-dtls")); err != nil {

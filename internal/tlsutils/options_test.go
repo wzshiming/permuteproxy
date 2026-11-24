@@ -14,9 +14,9 @@ func sorted(keys []string) []string {
 	return slices.Sorted(slices.Values(keys))
 }
 
-func TestOptionKeysWithoutAcmeHoldTheNonAcmeKeys(t *testing.T) {
-	if got, want := sorted(OptionKeysWithoutAcme()), sorted(otherKeys); !slices.Equal(got, want) {
-		t.Fatalf("OptionKeysWithoutAcme() = %q, want %q", got, want)
+func TestOptionKeysWithoutACMEHoldTheNonAcmeKeys(t *testing.T) {
+	if got, want := sorted(OptionKeysWithoutACME()), sorted(otherKeys); !slices.Equal(got, want) {
+		t.Fatalf("OptionKeysWithoutACME() = %q, want %q", got, want)
 	}
 }
 

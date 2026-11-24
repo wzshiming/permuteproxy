@@ -19,13 +19,8 @@ import (
 	"github.com/wzshiming/socks5"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
-
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc:  (&net.Dialer{}).DialContext,
-	ListenFunc:       (&net.ListenConfig{}).Listen,
-	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
-}
 
 // closeProbe counts what a client or server takes from a network and how often each is closed;
 // packetClosed signals every socket close for closes the libraries perform asynchronously.
@@ -38,16 +33,6 @@ type closeProbe struct {
 
 func newProbe(n permuteproxy.Network) *closeProbe {
 	return &closeProbe{Network: n, packetClosed: make(chan struct{}, 64)}
-}
-
-type countingConn struct {
-	net.Conn
-	closed *atomic.Int32
-}
-
-func (c countingConn) Close() error {
-	c.closed.Add(1)
-	return c.Conn.Close()
 }
 
 type countingPacket struct {
@@ -71,7 +56,7 @@ func (p *closeProbe) DialContext(ctx context.Context, network, address string) (
 	if err != nil {
 		return nil, err
 	}
-	return countingConn{conn, &p.closedConns}, nil
+	return testutils.CountingConn{Conn: conn, Closes: &p.closedConns}, nil
 }
 
 func (p *closeProbe) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
@@ -149,35 +134,15 @@ func dialer(t *testing.T, base permuteproxy.Network, address string, opts permut
 	return n
 }
 
-func echo(t *testing.T) net.PacketConn {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], addr)
-		}
-	}()
-	return pc
-}
-
 func TestAssociationCloseEndsControlAndSocket(t *testing.T) {
-	upstream := newProbe(system)
+	upstream := newProbe(testutils.System{})
 	addr := serve(t, upstream, nil)
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
-	peer := echo(t)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+	conn, err := n.DialContext(ctx, "udp", peer.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,12 +185,12 @@ func TestAssociationFailuresCloseControl(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			upstream := newProbe(system)
+			upstream := newProbe(testutils.System{})
 			addr := serve(t, upstream, tt.server)
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			if tt.noSocket {
 				base.Network = permuteproxy.NetworkFuncs{
-					DialContextFunc:  system.DialContext,
+					DialContextFunc:  testutils.System{}.DialContext,
 					ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, bindErr },
 				}
 			}
@@ -273,7 +238,7 @@ func TestAssociationCanceledHandshakeClosesControl(t *testing.T) {
 			accepted <- conn
 		}
 	}()
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, ln.Addr().String(), nil, true)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -306,12 +271,12 @@ func TestAssociationCanceledHandshakeClosesControl(t *testing.T) {
 }
 
 func TestAssociationSurvivesLaterCancel(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	base := newProbe(system)
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	base := newProbe(testutils.System{})
 	n := dialer(t, base, addr, nil, true)
-	peer := echo(t)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+	conn, err := n.DialContext(ctx, "udp", peer.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +298,7 @@ func TestAssociationSurvivesLaterCancel(t *testing.T) {
 func TestServerStopEndsAssociation(t *testing.T) {
 	for _, stop := range []string{"close", "cancel"} {
 		t.Run(stop, func(t *testing.T) {
-			upstream := newProbe(system)
+			upstream := newProbe(testutils.System{})
 			bound := make(chan net.Addr, 1)
 			srv := server(t, upstream, nil, bound)
 			runCtx, stopRun := context.WithCancel(context.Background())
@@ -347,12 +312,12 @@ func TestServerStopEndsAssociation(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("server did not bind")
 			}
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			n := dialer(t, base, addr.String(), nil, true)
-			peer := echo(t)
+			peer := testutils.UDPEcho(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			conn, err := n.DialContext(ctx, "udp", peer.LocalAddr().String())
+			conn, err := n.DialContext(ctx, "udp", peer.String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -402,9 +367,9 @@ func isTimeout(err error) bool {
 }
 
 func TestAssociationConcurrentIO(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	n := dialer(t, newProbe(system), addr, nil, true)
-	peer := echo(t).LocalAddr()
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pc, err := n.ListenPacket(ctx, "udp", ":0")
@@ -540,9 +505,9 @@ func stray(t *testing.T, pc net.PacketConn, payload string) {
 }
 
 func TestAssociationSkipsStrayDatagrams(t *testing.T) {
-	addr := serve(t, newProbe(system), nil)
-	n := dialer(t, newProbe(system), addr, nil, true)
-	peer := echo(t).LocalAddr()
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	n := dialer(t, newProbe(testutils.System{}), addr, nil, true)
+	peer := testutils.UDPEcho(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	pc, err := n.ListenPacket(ctx, "udp", ":0")
@@ -602,10 +567,10 @@ func TestAssociationNameResolution(t *testing.T) {
 		lookups.Add(1)
 		return nil, errors.New("no dns")
 	})
-	addr := serve(t, newProbe(system), nil)
+	addr := serve(t, newProbe(testutils.System{}), nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	base := newProbe(system)
+	base := newProbe(testutils.System{})
 	if conn, err := dialer(t, base, addr, nil, true).DialContext(ctx, "udp", "proxy.invalid:9"); err == nil {
 		conn.Close()
 		t.Fatal("socks5 dialed a name that does not resolve")
@@ -614,7 +579,7 @@ func TestAssociationNameResolution(t *testing.T) {
 		t.Fatalf("socks5: %d lookups, %d control conns; want a local lookup before any conn", lookups.Load(), base.dials.Load())
 	}
 	lookups.Store(0)
-	base = newProbe(system)
+	base = newProbe(testutils.System{})
 	conn, err := dialer(t, base, addr, nil, false).DialContext(ctx, "udp", "proxy.invalid:9")
 	if err != nil {
 		t.Fatalf("socks5h: %v", err)
@@ -662,8 +627,8 @@ func TestUDPDialDefaultPeer(t *testing.T) {
 		go answerDNS(server, "echo.test")
 		return client, nil
 	})
-	addr := serve(t, newProbe(system), nil)
-	port := strconv.Itoa(echo(t).LocalAddr().(*net.UDPAddr).Port)
+	addr := serve(t, newProbe(testutils.System{}), nil)
+	port := strconv.Itoa(testutils.UDPEcho(t).(*net.UDPAddr).Port)
 	ip, name := net.JoinHostPort("127.0.0.1", port), net.JoinHostPort("echo.test", port)
 	tests := []struct {
 		name         string
@@ -683,7 +648,7 @@ func TestUDPDialDefaultPeer(t *testing.T) {
 			lookups.Store(0)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			conn, err := dialer(t, newProbe(system), addr, nil, tt.resolve).DialContext(ctx, "udp", tt.target)
+			conn, err := dialer(t, newProbe(testutils.System{}), addr, nil, tt.resolve).DialContext(ctx, "udp", tt.target)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -728,7 +693,7 @@ func TestSchemesTakeOnlyCredentials(t *testing.T) {
 
 func TestClientRefusesUnlistedNetworks(t *testing.T) {
 	for _, resolve := range []bool{true, false} {
-		base := newProbe(system)
+		base := newProbe(testutils.System{})
 		n := dialer(t, base, "127.0.0.1:1", nil, resolve)
 		ctx := context.Background()
 		if _, err := n.DialContext(ctx, "unix", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
@@ -793,38 +758,16 @@ func TestRelayAddress(t *testing.T) {
 	}
 }
 
-func wait[T any](t *testing.T, ch <-chan T, what string) T {
-	t.Helper()
-	select {
-	case v := <-ch:
-		return v
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s: timed out", what)
-	}
-	panic("unreachable")
-}
-
-// freeAddress is a loopback tcp address nothing listens on.
-func freeAddress(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln.Close()
-	return ln.Addr().String()
-}
-
 type accepted struct {
 	conn net.Conn
 	err  error
 }
 
 func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
-	target := freeAddress(t)
+	target := testutils.ReservePort(t)
 	binds := make(chan error, 1)
 	upstream := permuteproxy.NetworkFuncs{ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
-		ln, err := system.Listen(ctx, network, address)
+		ln, err := testutils.System{}.Listen(ctx, network, address)
 		binds <- err
 		return ln, err
 	}}
@@ -835,7 +778,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		ctx, stop := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- srv.Run(ctx) }()
-		dialer := &socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: wait(t, bound, "the proxy's listener").String()}
+		dialer := &socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: testutils.Wait(t, bound, "the proxy's listener").String()}
 		bind, err := dialer.Listen(ctx, "tcp", target)
 		if err != nil {
 			t.Fatal(err)
@@ -845,14 +788,14 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 			conn, err := bind.Accept()
 			replies <- accepted{conn, err}
 		}()
-		if err := wait(t, binds, "the BIND listen"); err != nil {
+		if err := testutils.Wait(t, binds, "the BIND listen"); err != nil {
 			t.Fatalf("run %d: BIND listen on %s = %v", run, target, err)
 		}
 		peer, err := net.Dial("tcp", target)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reply := wait(t, replies, "the BIND reply")
+		reply := testutils.Wait(t, replies, "the BIND reply")
 		if reply.err != nil {
 			t.Fatalf("run %d: BIND = %v", run, reply.err)
 		}
@@ -862,7 +805,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		reply.conn.Close()
 		peer.Close()
 		stop()
-		if err := wait(t, done, "Run"); err != nil {
+		if err := testutils.Wait(t, done, "Run"); err != nil {
 			t.Fatalf("run %d: Run = %v", run, err)
 		}
 	}
@@ -903,16 +846,16 @@ func TestABindListenerOpenedAfterServeReturnedIsClosed(t *testing.T) {
 	defer ln.Close()
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	go bind.Accept()
-	wait(t, entered, "the BIND listen")
+	testutils.Wait(t, entered, "the BIND listen")
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 	close(release)
-	wait(t, closed, "the close of a BIND listener opened after Serve returned")
+	testutils.Wait(t, closed, "the close of a BIND listener opened after Serve returned")
 }
 
 func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
@@ -930,7 +873,7 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 	defer ln.Close()
 	done := make(chan error, 1)
 	go func() { done <- funcs.Serve(context.Background(), ln, upstream) }()
-	bind, err := (&socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", freeAddress(t))
+	bind, err := (&socks5.Dialer{ProxyNetwork: "tcp", ProxyAddress: ln.Addr().String()}).Listen(context.Background(), "tcp", testutils.ReservePort(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -939,10 +882,10 @@ func TestABindTheUpstreamCannotListenForIsRefused(t *testing.T) {
 		conn, err := bind.Accept()
 		replies <- accepted{conn, err}
 	}()
-	if reply := wait(t, replies, "the BIND reply"); reply.err == nil {
+	if reply := testutils.Wait(t, replies, "the BIND reply"); reply.err == nil {
 		reply.conn.Close()
 		t.Fatal("BIND succeeded without a listener")
 	}
 	ln.Close()
-	wait(t, done, "Serve")
+	testutils.Wait(t, done, "Serve")
 }

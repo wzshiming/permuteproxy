@@ -641,7 +641,7 @@ func TestListenerCloseDuringAdmission(t *testing.T) {
 }
 
 // pipeDial stands in for a subprocess: the peer end is handed to the test, the dial ctx recorded.
-func pipeDial(peers chan<- net.Conn, ctxs chan<- context.Context) Dial {
+func pipeDial(peers chan<- net.Conn, ctxs chan<- context.Context) DialFunc {
 	return func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		if name != "fake" || len(args) != 2 || args[1] != "b" {
 			return nil, errors.New("unexpected command")
@@ -756,7 +756,7 @@ func TestDialCloseLetsCommandExitBeforeCancel(t *testing.T) {
 
 // exitDial wraps pipeDial so each conn's Close blocks until exit is closed, like a command that
 // is still running; every start is reported on dials.
-func exitDial(peers chan<- net.Conn, ctxs chan<- context.Context, dials chan<- struct{}, exit <-chan struct{}) Dial {
+func exitDial(peers chan<- net.Conn, ctxs chan<- context.Context, dials chan<- struct{}, exit <-chan struct{}) DialFunc {
 	dial := pipeDial(peers, ctxs)
 	return func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		dials <- struct{}{}

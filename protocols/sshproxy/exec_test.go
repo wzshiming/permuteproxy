@@ -23,6 +23,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // exitCode is the error a fake command exits with to report a status.
@@ -485,7 +486,7 @@ func TestCmdFailsWhenServerCannotRunIt(t *testing.T) {
 }
 
 func TestDialConnectsAgainAfterConnectionDrops(t *testing.T) {
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	for _, tt := range []struct{ network, address, reply string }{
 		{"cmd", "relay x", "relay x|ping"},
 		{"tcp", target, "ping"},
@@ -861,7 +862,7 @@ func TestDialFailingOverAGivenUpConnectionKeepsItsReplacement(t *testing.T) {
 	}}
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, slow), withCredentials())
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	warm, err := n.DialContext(timeout(t), "tcp", target)
 	if err != nil {
 		t.Fatal(err)
@@ -943,7 +944,7 @@ func TestAbandonedCmdDialFindingItsConnectionDeadDropsIt(t *testing.T) {
 func TestAbandonedCmdDialFailingLateKeepsTheNextConnection(t *testing.T) {
 	base := &clientBase{}
 	n := dialServer(t, base, serveExec(t, newUpstream()), withCredentials())
-	target := echoTarget(t)
+	target := testutils.ServeEcho(t, listen(t)).String()
 	warm, err := n.DialContext(timeout(t), "tcp", target)
 	if err != nil {
 		t.Fatal(err)
@@ -1239,7 +1240,7 @@ func TestExecOffRefusesSessionsAndKeepsTcp(t *testing.T) {
 			if _, err := udp.Write([]byte("hi")); !errors.As(err, &refused) || refused.Reason != ssh.Prohibited {
 				t.Fatalf("udp write = %v, want the session refused as prohibited", err)
 			}
-			conn, err := n.DialContext(ctx, "tcp", echoTarget(t))
+			conn, err := n.DialContext(ctx, "tcp", testutils.ServeEcho(t, listen(t)).String())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1270,11 +1271,11 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 		"malformed":                  withCredentials("allow_exec", "maybe", "hostkey_data", hostKey),
 	} {
 		t.Run(name, func(t *testing.T) {
-			base := &countingNetwork{}
+			base := &testutils.CountingNetwork{}
 			if _, err := (permuteproxy.Engine{Base: base, Upstream: base}).Server(chain(opts, "127.0.0.1:0")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 				t.Fatalf("Server() = %v, want ErrInvalidChain", err)
 			}
-			if got := base.calls.Load(); got != 0 {
+			if got := base.Calls.Load(); got != 0 {
 				t.Fatalf("network calls = %d, want none", got)
 			}
 		})
@@ -1284,7 +1285,7 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 		"authorized keys": {"allow_exec": "true", "hostkey_data": hostKey, "authorized_data": authorizedKey},
 	} {
 		t.Run(name, func(t *testing.T) {
-			srv, err := permuteproxy.Engine{Base: &countingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
+			srv, err := permuteproxy.Engine{Base: &testutils.CountingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
 			if err != nil {
 				t.Fatal(err)
 			}

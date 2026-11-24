@@ -23,7 +23,7 @@ func unsent(t *testing.T, s *memSocket, what string) {
 
 func TestUnixgramCarrierIsUnsupported(t *testing.T) {
 	mem := newMemNet()
-	k := issue(t)
+	k := newKeys(t)
 	over := func(opts permuteproxy.Options) permuteproxy.Transport {
 		return build(t, permuteproxy.Engine{Base: mem}, permuteproxy.Chain{
 			Layers:   []permuteproxy.Layer{{Scheme: "quic", Options: opts}},
@@ -75,7 +75,7 @@ func reaches(t *testing.T, c net.Conn, accepted <-chan net.Conn) {
 }
 
 func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
-	k := issue(t)
+	k := newKeys(t)
 	t.Run("quic://:port", func(t *testing.T) {
 		ln, err := build(t, permuteproxy.Engine{}, quicChain(":0", k.server)).Listen(context.Background())
 		if err != nil {

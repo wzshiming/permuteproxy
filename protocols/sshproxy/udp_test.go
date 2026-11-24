@@ -19,6 +19,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 // framedBinds counts the sockets test-ssh-framed binds through its local network.
@@ -26,8 +27,8 @@ var framedBinds atomic.Int32
 
 func init() {
 	// test-ssh-framed stands in for a proxy whose datagrams need boundaries, as socks5's do.
-	permuteproxy.RegisterLayer("test-ssh-framed", permuteproxy.Spec{
-		Kind:     permuteproxy.KindProxy,
+	permuteproxy.RegisterLayer("test-ssh-framed", permuteproxy.LayerSpec{
+		Kind:     permuteproxy.LayerProxy,
 		Requires: permuteproxy.Stream,
 		Provides: permuteproxy.Stream | permuteproxy.Packet,
 		Networks: []string{"tcp", "udp"},
@@ -221,17 +222,17 @@ func TestUDPRefusesInvalidPeersBeforeAnyChannel(t *testing.T) {
 }
 
 func TestMalformedUDPCommandFailsClientBuild(t *testing.T) {
-	n, err := permuteproxy.Engine{Base: &countingNetwork{}}.Client(chain(permuteproxy.Options{"udp_command": "socat - UDP:%h:%p"}, "127.0.0.1:1"))
+	n, err := permuteproxy.Engine{Base: &testutils.CountingNetwork{}}.Client(chain(permuteproxy.Options{"udp_command": "socat - UDP:%h:%p"}, "127.0.0.1:1"))
 	if err != nil {
 		t.Fatalf("Client() with a well-formed udp_command = %v", err)
 	}
 	n.(io.Closer).Close()
 	for _, command := range []string{"", "nc -u '%h' %p", "nc -u %h %x", "nc -u %h %p 'oops", `nc -u %h %p \`, " ", "# %h %p"} {
-		base := &countingNetwork{}
+		base := &testutils.CountingNetwork{}
 		if _, err := (permuteproxy.Engine{Base: base}).Client(chain(permuteproxy.Options{"udp_command": command}, "127.0.0.1:1")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 			t.Errorf("Client() with udp_command %q = %v, want ErrInvalidChain", command, err)
 		}
-		if got := base.calls.Load(); got != 0 {
+		if got := base.Calls.Load(); got != 0 {
 			t.Errorf("udp_command %q: network calls = %d, want none", command, got)
 		}
 	}
@@ -254,7 +255,7 @@ func TestCustomUDPCommandReachesServer(t *testing.T) {
 func TestSSHBaseRefusesPacketsOfLayersKeepingBoundaries(t *testing.T) {
 	up := newUpstream()
 	base := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
-	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-ssh-framed"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: echoTarget(t)}}
+	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-ssh-framed"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: testutils.ServeEcho(t, listen(t)).String()}}
 	n, err := permuteproxy.Engine{Base: base}.Client(c)
 	if err != nil {
 		t.Fatal(err)

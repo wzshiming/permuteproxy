@@ -5,15 +5,15 @@ import (
 )
 
 func init() {
-	spec := permuteproxy.Spec{
-		Kind:           permuteproxy.KindProxy,
-		Requires:       permuteproxy.Stream,
-		Provides:       permuteproxy.Stream | permuteproxy.Packet,
-		UsernameOption: KeyUsername,
-		PasswordOption: KeyPassword,
-		Networks:       []string{"tcp", "udp"},
-		NewClient:      NewClient,
-		NewServer:      NewServer,
+	spec := permuteproxy.LayerSpec{
+		Kind:        permuteproxy.LayerProxy,
+		Requires:    permuteproxy.Stream,
+		Provides:    permuteproxy.Stream | permuteproxy.Packet,
+		UsernameKey: KeyUsername,
+		PasswordKey: KeyPassword,
+		Networks:    []string{"tcp", "udp"},
+		NewClient:   NewClient,
+		NewServer:   NewServer,
 	}
 	permuteproxy.RegisterLayer("socks5", spec)
 	spec.NewClient = NewClientH

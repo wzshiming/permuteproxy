@@ -14,13 +14,14 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
 )
 
 func init() {
 	// test-datagrams needs datagram boundaries, as a QUIC or DTLS layer does.
-	permuteproxy.RegisterLayer("test-datagrams", permuteproxy.Spec{
-		Kind:     permuteproxy.KindAdapter,
+	permuteproxy.RegisterLayer("test-datagrams", permuteproxy.LayerSpec{
+		Kind:     permuteproxy.LayerAdapter,
 		Requires: permuteproxy.Packet,
 		Provides: permuteproxy.Packet,
 		NewAdapter: func(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
@@ -188,27 +189,6 @@ func TestCommandNetworksRefuseInvalidValues(t *testing.T) {
 	}
 }
 
-// udpEcho answers each datagram with itself and returns its address.
-func udpEcho(t *testing.T) net.Addr {
-	t.Helper()
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 64<<10)
-		for {
-			n, from, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], from)
-		}
-	}()
-	return pc.LocalAddr()
-}
-
 // echoes sends msg as one datagram to conn's fixed peer and wants it back from that peer.
 func echoes(t *testing.T, conn net.Conn, msg string) {
 	t.Helper()
@@ -254,7 +234,7 @@ func spawning(t *testing.T) (*Local, *[]net.Conn) {
 func TestNetcatUDPEcho(t *testing.T) {
 	requireCommand(t, "nc")
 	n, _ := spawning(t)
-	peer := udpEcho(t)
+	peer := testutils.UDPEcho(t)
 	tr, err := permuteproxy.Engine{Base: n}.Transport(chain("cmd-nc-udp", peer.String()))
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +255,7 @@ func TestNetcatUDPCommandPerDial(t *testing.T) {
 	requireCommand(t, "nc")
 	ctx := context.Background()
 	n, started := spawning(t)
-	tr, err := permuteproxy.Engine{Base: n}.Transport(chain("cmd-nc-udp", udpEcho(t).String()))
+	tr, err := permuteproxy.Engine{Base: n}.Transport(chain("cmd-nc-udp", testutils.UDPEcho(t).String()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +292,7 @@ func TestCommandPacketRunsItsAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PERMUTEPROXY_FAKE_SOCAT", "1")
-	address := cmdutils.Quote([]string{exe, "socat", "-", "UDP:" + udpEcho(t).String()})
+	address := cmdutils.Quote([]string{exe, "socat", "-", "UDP:" + testutils.UDPEcho(t).String()})
 	tr, err := permuteproxy.Engine{}.Transport(chain("cmd-packet", address))
 	if err != nil {
 		t.Fatal(err)

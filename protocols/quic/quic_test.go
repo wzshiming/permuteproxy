@@ -3,15 +3,9 @@ package quic_test
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	"github.com/wzshiming/permuteproxy/protocols/quic"
 )
 
@@ -28,64 +23,11 @@ type keys struct {
 	caFile         string
 }
 
-func writePEM(t *testing.T, name, kind string, der []byte) string {
+func newKeys(t *testing.T) keys {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: kind, Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func issue(t *testing.T) keys {
-	t.Helper()
-	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caTmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "permuteproxy test CA"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign,
-	}
-	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ca, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		DNSNames:     []string{"proxy.test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, ca, &leafKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalECPrivateKey(leafKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	caFile := writePEM(t, "ca.pem", "CERTIFICATE", caDER)
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	return keys{
-		server: permuteproxy.Options{
-			"tls_cert_file": writePEM(t, "cert.pem", "CERTIFICATE", leafDER),
-			"tls_key_file":  writePEM(t, "key.pem", "EC PRIVATE KEY", keyDER),
-		},
+		server: permuteproxy.Options{"tls_cert_file": certFile, "tls_key_file": keyFile},
 		client: permuteproxy.Options{"tls_server_name": "proxy.test", "tls_ca_file": caFile},
 		caFile: caFile,
 	}
@@ -107,7 +49,7 @@ func build(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) permutepro
 // listenQUIC listens through quic on e and returns the listener and the keys to dial it with.
 func listenQUIC(t *testing.T, e permuteproxy.Engine) (net.Listener, keys) {
 	t.Helper()
-	k := issue(t)
+	k := newKeys(t)
 	ln, err := build(t, e, quicChain("127.0.0.1:0", k.server)).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -288,7 +230,7 @@ func TestListenBuildsItsTLSConfigBeforeTheBind(t *testing.T) {
 }
 
 func TestFailedServerConfigIsRetried(t *testing.T) {
-	k := issue(t)
+	k := newKeys(t)
 	dir := t.TempDir()
 	opts := permuteproxy.Options{"tls_cert_file": filepath.Join(dir, "cert.pem"), "tls_key_file": filepath.Join(dir, "key.pem")}
 	tr := build(t, permuteproxy.Engine{}, quicChain("127.0.0.1:0", opts))

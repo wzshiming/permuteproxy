@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 func listenLoopback(ctx context.Context) (net.Listener, error) {
@@ -32,17 +34,6 @@ func run(s *Server, ctx context.Context) <-chan error {
 	return done
 }
 
-func wait(t *testing.T, done <-chan error) error {
-	t.Helper()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return")
-		return nil
-	}
-}
-
 func assertClosed(t *testing.T, addr net.Addr) {
 	t.Helper()
 	if conn, err := net.DialTimeout("tcp", addr.String(), time.Second); err == nil {
@@ -55,7 +46,7 @@ func TestServerCloseStopsRun(t *testing.T) {
 	bound := make(chan net.Addr, 1)
 	started := make(chan struct{})
 	var served atomic.Int32
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
@@ -72,7 +63,7 @@ func TestServerCloseStopsRun(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after Close, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -87,7 +78,7 @@ func TestServerCloseStopsRun(t *testing.T) {
 func TestServerCancelStopsRun(t *testing.T) {
 	bound := make(chan net.Addr, 1)
 	serveCtx := make(chan context.Context, 1)
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
@@ -102,7 +93,7 @@ func TestServerCancelStopsRun(t *testing.T) {
 	addr := <-bound
 	inner := <-serveCtx
 	cancel()
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after cancel, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -113,14 +104,14 @@ func TestServerCancelStopsRun(t *testing.T) {
 
 func TestServerCloseCancelsServeContext(t *testing.T) {
 	serveCtx := make(chan context.Context, 1)
-	s := NewPlaneServer(listenLoopback, nil, func(ctx context.Context, ln net.Listener) error {
+	s := NewServer(listenLoopback, nil, func(ctx context.Context, ln net.Listener) error {
 		serveCtx <- ctx
 		return acceptLoop(ctx, ln)
 	}, nil)
 	done := run(s, context.Background())
 	inner := <-serveCtx
 	s.Close()
-	wait(t, done)
+	testutils.Wait(t, done, "Run")
 	if inner.Err() == nil {
 		t.Fatal("Close left the serve context alive")
 	}
@@ -128,14 +119,14 @@ func TestServerCloseCancelsServeContext(t *testing.T) {
 
 func TestServerCloseBeforeRun(t *testing.T) {
 	var listens atomic.Int32
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		return listenLoopback(ctx)
 	}, nil, acceptLoop, nil)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, run(s, context.Background())); err != nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err != nil {
 		t.Fatalf("Run after Close = %v, want nil", err)
 	}
 	if listens.Load() != 0 {
@@ -145,21 +136,21 @@ func TestServerCloseBeforeRun(t *testing.T) {
 
 func TestServerReportsErrors(t *testing.T) {
 	bindErr := errors.New("bind failed")
-	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return nil, bindErr }, nil, acceptLoop, nil)
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
+	s := NewServer(func(context.Context) (net.Listener, error) { return nil, bindErr }, nil, acceptLoop, nil)
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, bindErr) {
 		t.Fatalf("Run = %v, want bind error", err)
 	}
 
 	serveErr := errors.New("serve failed")
 	bound := make(chan net.Addr, 1)
-	s = NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s = NewServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
 		}
 		return ln, err
 	}, nil, func(context.Context, net.Listener) error { return serveErr }, nil)
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want serve error", err)
 	}
 	assertClosed(t, <-bound)
@@ -228,7 +219,7 @@ func TestServerStopReleasesAcceptedConns(t *testing.T) {
 			bound := make(chan net.Addr, 1)
 			accepted := make(chan struct{}, 1)
 			reads := make(chan error, 1)
-			s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+			s := NewServer(func(ctx context.Context) (net.Listener, error) {
 				ln, err := listenLoopback(ctx)
 				if err == nil {
 					bound <- ln.Addr()
@@ -254,7 +245,7 @@ func TestServerStopReleasesAcceptedConns(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 			if err := recv(t, reads, "server read"); err == nil {
@@ -273,7 +264,7 @@ func TestServerServeExitClosesConns(t *testing.T) {
 	accepted := make(chan struct{}, 1)
 	reads := make(chan error, 1)
 	release := make(chan struct{})
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		ln, err := listenLoopback(ctx)
 		if err == nil {
 			bound <- ln.Addr()
@@ -300,7 +291,7 @@ func TestServerServeExitClosesConns(t *testing.T) {
 	defer client.Close()
 	recv(t, accepted, "accept")
 	close(release)
-	if err := wait(t, done); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, done, "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want serve error", err)
 	}
 	if err := recv(t, reads, "server read"); err == nil {
@@ -330,27 +321,17 @@ func (l *fakeListener) Addr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4zero}
 }
 
-type countingConn struct {
-	net.Conn
-	closes atomic.Int32
-}
-
-func (c *countingConn) Close() error {
-	c.closes.Add(1)
-	return c.Conn.Close()
-}
-
-func pipeConn() *countingConn {
+func pipeConn() testutils.CountingConn {
 	c1, c2 := net.Pipe()
 	c2.Close()
-	return &countingConn{Conn: c1}
+	return testutils.CountingConn{Conn: c1, Closes: new(atomic.Int32)}
 }
 
 func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
 	fake := &fakeListener{conns: make(chan net.Conn)}
 	entered := make(chan struct{}, 1)
 	accepted := make(chan error, 1)
-	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
+	s := NewServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
 		func(_ context.Context, ln net.Listener) error {
 			entered <- struct{}{}
 			_, err := ln.Accept()
@@ -367,10 +348,10 @@ func TestServerAcceptAfterCloseClosesConn(t *testing.T) {
 	if err := recv(t, accepted, "accept"); err == nil {
 		t.Fatal("Accept handed out a connection after Close")
 	}
-	if got := conn.closes.Load(); got != 1 {
+	if got := conn.Closes.Load(); got != 1 {
 		t.Fatalf("late connection closed %d times, want 1", got)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 	if got := fake.closes.Load(); got != 1 {
@@ -384,7 +365,7 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 	fake.conns <- first
 	fake.conns <- second
 	result := make(chan error, 1)
-	s := NewPlaneServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
+	s := NewServer(func(context.Context) (net.Listener, error) { return fake, nil }, nil,
 		func(_ context.Context, ln net.Listener) error {
 			c1, err := ln.Accept()
 			if err != nil {
@@ -402,24 +383,24 @@ func TestServerCloseIsIdempotent(t *testing.T) {
 			result <- nil
 			return nil
 		}, nil)
-	if err := wait(t, run(s, context.Background())); err != nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err != nil {
 		t.Fatalf("Run = %v", err)
 	}
 	recv(t, result, "serve")
-	if first.closes.Load() != 1 || second.closes.Load() != 1 || fake.closes.Load() != 1 {
-		t.Fatalf("closes: first %d second %d listener %d, want 1 each", first.closes.Load(), second.closes.Load(), fake.closes.Load())
+	if first.Closes.Load() != 1 || second.Closes.Load() != 1 || fake.closes.Load() != 1 {
+		t.Fatalf("closes: first %d second %d listener %d, want 1 each", first.Closes.Load(), second.Closes.Load(), fake.closes.Load())
 	}
 }
 
 func TestServerCanceledContextDoesNotBind(t *testing.T) {
 	var listens atomic.Int32
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		return listenLoopback(ctx)
 	}, nil, acceptLoop, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := wait(t, run(s, ctx)); err != nil {
+	if err := testutils.Wait(t, run(s, ctx), "Run"); err != nil {
 		t.Fatalf("Run = %v, want nil", err)
 	}
 	if listens.Load() != 0 {
@@ -435,7 +416,7 @@ func TestServerBindFailingOnStopReturnsNil(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			entered := make(chan struct{}, 1)
-			s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+			s := NewServer(func(ctx context.Context) (net.Listener, error) {
 				entered <- struct{}{}
 				<-ctx.Done()
 				return nil, fmt.Errorf("bind: %w", ctx.Err())
@@ -449,7 +430,7 @@ func TestServerBindFailingOnStopReturnsNil(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil for a bind that failed because of the stop", err)
 			}
 		})
@@ -467,7 +448,7 @@ func TestServerStopDuringBind(t *testing.T) {
 			entered := make(chan struct{}, 1)
 			fake := &fakeListener{conns: make(chan net.Conn)}
 			var served atomic.Int32
-			s := NewPlaneServer(func(context.Context) (net.Listener, error) {
+			s := NewServer(func(context.Context) (net.Listener, error) {
 				entered <- struct{}{}
 				<-release
 				return fake, nil
@@ -485,7 +466,7 @@ func TestServerStopDuringBind(t *testing.T) {
 				t.Fatal(err)
 			}
 			close(release)
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 			if served.Load() != 0 {
@@ -501,7 +482,7 @@ func TestServerStopDuringBind(t *testing.T) {
 func TestServerRunIsExclusive(t *testing.T) {
 	bound := make(chan net.Addr, 2)
 	var listens atomic.Int32
-	s := NewPlaneServer(func(ctx context.Context) (net.Listener, error) {
+	s := NewServer(func(ctx context.Context) (net.Listener, error) {
 		listens.Add(1)
 		ln, err := listenLoopback(ctx)
 		if err == nil {
@@ -513,7 +494,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	defer cancel()
 	first := run(s, ctx)
 	recv(t, bound, "bind")
-	if err := wait(t, run(s, context.Background())); err == nil {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); err == nil {
 		t.Fatal("second Run while running = nil, want an error")
 	}
 	select {
@@ -522,7 +503,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	default:
 	}
 	cancel()
-	if err := wait(t, first); err != nil {
+	if err := testutils.Wait(t, first, "Run"); err != nil {
 		t.Fatalf("first Run = %v, want nil", err)
 	}
 	again := run(s, context.Background())
@@ -530,7 +511,7 @@ func TestServerRunIsExclusive(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, again); err != nil {
+	if err := testutils.Wait(t, again, "Run"); err != nil {
 		t.Fatalf("Run after cancel = %v, want nil", err)
 	}
 	assertClosed(t, addr)
@@ -568,7 +549,7 @@ func TestPlaneServerBindsBothBeforeServing(t *testing.T) {
 	seen := make(chan int32, 2)
 	var pc *countingPacketConn
 	bound := make(chan net.Addr, 1)
-	s := NewPlaneServer(
+	s := NewServer(
 		func(ctx context.Context) (net.Listener, error) {
 			binds.Add(1)
 			ln, err := listenLoopback(ctx)
@@ -597,7 +578,7 @@ func TestPlaneServerBindsBothBeforeServing(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := wait(t, done); err != nil {
+	if err := testutils.Wait(t, done, "Run"); err != nil {
 		t.Fatalf("Run = %v after Close, want nil", err)
 	}
 	assertClosed(t, recv(t, bound, "bind"))
@@ -613,12 +594,12 @@ func TestPlaneServerBindFailureReleasesFirst(t *testing.T) {
 	bindErr := errors.New("packet bind failed")
 	fake := &fakeListener{conns: make(chan net.Conn)}
 	var served atomic.Int32
-	s := NewPlaneServer(
+	s := NewServer(
 		func(context.Context) (net.Listener, error) { return fake, nil },
 		func(context.Context) (net.PacketConn, error) { return nil, bindErr },
 		func(context.Context, net.Listener) error { served.Add(1); return nil },
 		func(context.Context, net.PacketConn) error { served.Add(1); return nil })
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, bindErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, bindErr) {
 		t.Fatalf("Run = %v, want the packet bind error", err)
 	}
 	if got := fake.closes.Load(); got != 1 {
@@ -637,7 +618,7 @@ func TestPlaneServerServeErrorStopsBoth(t *testing.T) {
 	var pc *countingPacketConn
 	bound := make(chan net.Addr, 1)
 	streamDone := make(chan error, 1)
-	s := NewPlaneServer(
+	s := NewServer(
 		func(ctx context.Context) (net.Listener, error) {
 			ln, err := listenLoopback(ctx)
 			if err == nil {
@@ -659,7 +640,7 @@ func TestPlaneServerServeErrorStopsBoth(t *testing.T) {
 			return err
 		},
 		func(context.Context, net.PacketConn) error { return serveErr })
-	if err := wait(t, run(s, context.Background())); !errors.Is(err, serveErr) {
+	if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, serveErr) {
 		t.Fatalf("Run = %v, want the packet serve error", err)
 	}
 	if err := recv(t, streamDone, "stream serve exit"); err == nil {
@@ -704,7 +685,7 @@ func TestPlaneServerFirstReturnCancelsOther(t *testing.T) {
 				}
 			}
 			stream, packet := report(tt.stream), report(tt.packet)
-			s := NewPlaneServer(
+			s := NewServer(
 				func(ctx context.Context) (net.Listener, error) {
 					ln, err := listenLoopback(ctx)
 					if err == nil {
@@ -722,7 +703,7 @@ func TestPlaneServerFirstReturnCancelsOther(t *testing.T) {
 				},
 				func(ctx context.Context, _ net.Listener) error { return stream(ctx) },
 				func(ctx context.Context, _ net.PacketConn) error { return packet(ctx) })
-			if err := wait(t, run(s, context.Background())); !errors.Is(err, tt.want) {
+			if err := testutils.Wait(t, run(s, context.Background()), "Run"); !errors.Is(err, tt.want) {
 				t.Fatalf("Run = %v, want %v", err, tt.want)
 			}
 			first, second := recv(t, exits, "serve exit"), recv(t, exits, "serve exit")
@@ -748,7 +729,7 @@ func TestPlaneServerStopReachesWaitingServes(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			started := make(chan struct{}, 2)
-			s := NewPlaneServer(listenLoopback, listenPacketLoopback,
+			s := NewServer(listenLoopback, listenPacketLoopback,
 				func(ctx context.Context, _ net.Listener) error { started <- struct{}{}; return waitCtx(ctx) },
 				func(ctx context.Context, _ net.PacketConn) error { started <- struct{}{}; return waitCtx(ctx) })
 			ctx, cancel := context.WithCancel(context.Background())
@@ -761,7 +742,7 @@ func TestPlaneServerStopReachesWaitingServes(t *testing.T) {
 			} else if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 		})
@@ -780,7 +761,7 @@ func TestPlaneServerBindsOnlyWhatIsSet(t *testing.T) {
 				listen = nil
 			}
 			started := make(chan string, 2)
-			s := NewPlaneServer(listen, listenPacket,
+			s := NewServer(listen, listenPacket,
 				func(ctx context.Context, ln net.Listener) error { started <- "stream"; return acceptLoop(ctx, ln) },
 				func(ctx context.Context, pc net.PacketConn) error { started <- "packet"; return readLoop(ctx, pc) })
 			done := run(s, context.Background())
@@ -790,7 +771,7 @@ func TestPlaneServerBindsOnlyWhatIsSet(t *testing.T) {
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := wait(t, done); err != nil {
+			if err := testutils.Wait(t, done, "Run"); err != nil {
 				t.Fatalf("Run = %v after Close, want nil", err)
 			}
 			if got := binds.Load(); got != 1 {

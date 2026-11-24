@@ -18,15 +18,10 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/all"
 	"github.com/wzshiming/permuteproxy/protocols/local"
 )
-
-var system permuteproxy.Network = permuteproxy.NetworkFuncs{
-	DialContextFunc:  (&net.Dialer{}).DialContext,
-	ListenFunc:       (&net.ListenConfig{}).Listen,
-	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
-}
 
 // probe counts the operations a chain performs on an injected network, reports bound addresses and
 // accepted connections, signals closes of the sockets it handed out, and counts the Close calls a
@@ -164,13 +159,8 @@ func waitBoundPacket(t *testing.T, base *probe, done <-chan error) net.Addr {
 
 func waitDone(t *testing.T, done <-chan error) {
 	t.Helper()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("Run returned %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after Close")
+	if err := testutils.Wait(t, done, "Run to return"); err != nil {
+		t.Fatalf("Run returned %v", err)
 	}
 }
 
@@ -188,50 +178,6 @@ func fetch(ctx context.Context, n permuteproxy.Network, url string) (string, err
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	return string(body), err
-}
-
-// reservePort returns a 127.0.0.1 address whose port was free for tcp and udp alike, as an ss server binds both.
-func reservePort(t *testing.T) string {
-	t.Helper()
-	for range 100 {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		addr := ln.Addr().String()
-		pc, err := net.ListenPacket("udp", addr)
-		ln.Close()
-		if err == nil {
-			pc.Close()
-			return addr
-		}
-	}
-	t.Fatal("no 127.0.0.1 port was free for both tcp and udp in 100 tries")
-	return ""
-}
-
-func TestReservePortSkipsHeldUDPPorts(t *testing.T) {
-	sink, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sink.Close() })
-	held := map[string]bool{}
-	// Connected to sink, the held sockets keep their ports without taking datagrams meant for other sockets.
-	for range 256 {
-		conn, err := net.DialUDP("udp", nil, sink.LocalAddr().(*net.UDPAddr))
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { conn.Close() })
-		held[conn.LocalAddr().String()] = true
-	}
-	// 256 held of about 16k ephemeral ports meet some 15 of 1000 tcp picks.
-	for range 1000 {
-		if addr := reservePort(t); held[addr] {
-			t.Fatalf("reservePort returned %s, whose udp port is held", addr)
-		}
-	}
 }
 
 func parse(t *testing.T, uri string) permuteproxy.Chain {
@@ -360,11 +306,11 @@ func TestProxy(t *testing.T) {
 			case "unix", "cmd-nc-unix":
 				c.Endpoint.Address = filepath.Join(dir, fmt.Sprintf("%d.sock", i))
 			case "cmd-nc":
-				c.Endpoint.Address = reservePort(t)
+				c.Endpoint.Address = testutils.ReservePort(t)
 			}
 			// A quic row's server binds a udp socket at port 0, not a listener.
 			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
-			base, upstream := newProbe(local.Network), newProbe(system)
+			base, upstream := newProbe(local.Network), newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
 			bound := waitBound
 			if overUDP {
@@ -431,7 +377,7 @@ func TestServerLifecycle(t *testing.T) {
 		t.Run(uri, func(t *testing.T) {
 			c := parse(t, uri)
 			t.Run("cancel", func(t *testing.T) {
-				base := newProbe(system)
+				base := newProbe(testutils.System{})
 				srv, err := permuteproxy.Engine{Base: base}.Server(c)
 				if err != nil {
 					t.Fatal(err)
@@ -444,7 +390,7 @@ func TestServerLifecycle(t *testing.T) {
 				waitDone(t, done)
 			})
 			t.Run("close", func(t *testing.T) {
-				base := newProbe(system)
+				base := newProbe(testutils.System{})
 				srv, done := start(t, permuteproxy.Engine{Base: base}, c)
 				addr := waitBound(t, base, done)
 				if err := srv.Close(); err != nil {
@@ -460,7 +406,7 @@ func TestServerLifecycle(t *testing.T) {
 				}
 			})
 			t.Run("close before run", func(t *testing.T) {
-				base := newProbe(system)
+				base := newProbe(testutils.System{})
 				srv, err := permuteproxy.Engine{Base: base}.Server(c)
 				if err != nil {
 					t.Fatal(err)
@@ -596,7 +542,7 @@ func TestServerStopReleasesConns(t *testing.T) {
 				t.Run(uri+"/"+state+"/"+stop, func(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
-					base, upstream := newProbe(system), newProbe(system)
+					base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
 					srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
 					if err != nil {
 						t.Fatal(err)
@@ -656,7 +602,7 @@ func TestProxyRejectsBadCredentials(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.server+"/"+tt.client["username"], func(t *testing.T) {
 			c := parse(t, tt.server)
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.Engine{Base: base}, c)
 			c.Endpoint.Address = waitBound(t, base, done).String()
 			c.Layers[0].Options = tt.client
@@ -677,7 +623,7 @@ func TestProxyRejectsBadCredentials(t *testing.T) {
 func TestClientRefusesPacket(t *testing.T) {
 	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1"} {
 		t.Run(uri, func(t *testing.T) {
-			base := newProbe(system)
+			base := newProbe(testutils.System{})
 			n, err := permuteproxy.Engine{Base: base}.Client(parse(t, uri))
 			if err != nil {
 				t.Fatal(err)

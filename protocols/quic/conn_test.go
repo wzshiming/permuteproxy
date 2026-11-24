@@ -318,7 +318,7 @@ func TestCancelingADialInItsHandshakeReleasesEverything(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	// Nothing listens at the endpoint, so the handshake waits.
-	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", issue(t).client))
+	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
@@ -563,7 +563,7 @@ func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
 		{"reset", func(s *xquic.Stream) error { return s.Reset(7) }, xquic.StreamError(7)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			k := issue(t)
+			k := newKeys(t)
 			ep := rawListen(t, k)
 			data := random(t, 300<<10)
 			arrived := make(chan error, 1)

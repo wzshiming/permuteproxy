@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 var systemListen = (&net.ListenConfig{}).ListenPacket
@@ -32,25 +34,14 @@ func peerAddress(t *testing.T, network string) string {
 	return "127.0.0.1:0"
 }
 
-// echo answers every datagram to its sender until the test ends.
-func echo(t *testing.T, network string) net.Addr {
+// listenPeer binds a socket for a peer on the network, skipping the test where the network is unavailable.
+func listenPeer(t *testing.T, network string) net.PacketConn {
 	t.Helper()
 	pc, err := net.ListenPacket(network, peerAddress(t, network))
 	if err != nil {
 		t.Skipf("%s unavailable: %v", network, err)
 	}
-	t.Cleanup(func() { pc.Close() })
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, addr, err := pc.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			pc.WriteTo(buf[:n], addr)
-		}
-	}()
-	return pc.LocalAddr()
+	return pc
 }
 
 func datagram(size int) []byte {
@@ -69,7 +60,7 @@ func sameSource(seen, local net.Addr) bool {
 func TestDialPacketEcho(t *testing.T) {
 	for _, network := range packetNetworks {
 		t.Run(network, func(t *testing.T) {
-			peer := echo(t, network)
+			peer := testutils.ServePacketEcho(t, listenPeer(t, network))
 			conn, err := DialPacket(context.Background(), network, peer.String(), systemListen)
 			if err != nil {
 				t.Fatal(err)
@@ -105,7 +96,7 @@ func TestDialPacketEcho(t *testing.T) {
 func TestDialPacketOtherPeer(t *testing.T) {
 	for _, network := range packetNetworks {
 		t.Run(network, func(t *testing.T) {
-			peer := echo(t, network)
+			peer := testutils.ServePacketEcho(t, listenPeer(t, network))
 			other, err := net.ListenPacket(network, peerAddress(t, network))
 			if err != nil {
 				t.Fatal(err)
@@ -151,7 +142,7 @@ func TestDialPacketOtherPeer(t *testing.T) {
 
 func TestDialPacketFamilies(t *testing.T) {
 	for network, v4 := range map[string]bool{"udp4": true, "udp6": false} {
-		peer := echo(t, network)
+		peer := testutils.ServePacketEcho(t, listenPeer(t, network))
 		conn, err := DialPacket(context.Background(), network, peer.String(), systemListen)
 		if err != nil {
 			t.Fatal(err)
@@ -176,7 +167,7 @@ func TestDialPacketFamilies(t *testing.T) {
 func TestDialPacketLifecycle(t *testing.T) {
 	for _, network := range packetNetworks {
 		t.Run(network, func(t *testing.T) {
-			peer := echo(t, network)
+			peer := testutils.ServePacketEcho(t, listenPeer(t, network))
 			conn, err := DialPacket(context.Background(), network, peer.String(), systemListen)
 			if err != nil {
 				t.Fatal(err)
@@ -362,7 +353,7 @@ func TestDialPacketLiterals(t *testing.T) {
 }
 
 func TestDialPacketUnixgramPath(t *testing.T) {
-	peer := echo(t, "unixgram")
+	peer := testutils.ServePacketEcho(t, listenPeer(t, "unixgram"))
 	var offered string
 	conn, err := DialPacket(context.Background(), "unixgram", peer.String(), func(_ context.Context, _, address string) (net.PacketConn, error) {
 		offered = address
@@ -401,7 +392,7 @@ func TestDialPacketUnixgramPath(t *testing.T) {
 }
 
 func TestWrapPacket(t *testing.T) {
-	peer := echo(t, "udp")
+	peer := testutils.ServePacketEcho(t, listenPeer(t, "udp"))
 	raw, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

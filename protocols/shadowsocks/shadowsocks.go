@@ -17,14 +17,14 @@ import (
 )
 
 const (
-	KeyUsername = "encrypto"
+	KeyEncrypto = "encrypto"
 	KeyPassword = "password"
 )
 
 // cipher resolves the encryption from the options, defaulting to the plaintext dummy cipher
 // and accepting the legacy base64 "method:password" username form.
 func cipher(opts permuteproxy.Options) (shadowsocks.ConnCipher, error) {
-	method := opts[KeyUsername]
+	method := opts[KeyEncrypto]
 	if method == "" {
 		method = "dummy"
 	}

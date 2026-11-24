@@ -25,7 +25,7 @@ func splitCommand(address string) ([]string, error) {
 	return args, nil
 }
 
-func (l *Local) dial() (cmdutils.Dial, error) {
+func (l *Local) dial() (cmdutils.DialFunc, error) {
 	if l.WaitDelay < 0 {
 		return nil, errNegativeWaitDelay
 	}

@@ -36,8 +36,8 @@ func newServer[R io.Closer](bind func(ctx context.Context) (R, error), serve fun
 	}
 }
 
-// NewPlaneServer binds each of listen and listenPacket that is set, all or none, then serves them until the first serve returns.
-func NewPlaneServer(listen func(ctx context.Context) (net.Listener, error), listenPacket func(ctx context.Context) (net.PacketConn, error), serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
+// NewServer binds each of listen and listenPacket that is set, all or none, then serves them until the first serve returns.
+func NewServer(listen func(ctx context.Context) (net.Listener, error), listenPacket func(ctx context.Context) (net.PacketConn, error), serveStream func(ctx context.Context, ln net.Listener) error, servePacket func(ctx context.Context, pc net.PacketConn) error) *Server {
 	return newServer(func(ctx context.Context) (*resources, error) {
 		res := &resources{}
 		if listen != nil {

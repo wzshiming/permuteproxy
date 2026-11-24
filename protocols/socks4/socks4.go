@@ -3,13 +3,13 @@ package socks4
 import (
 	"context"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/wzshiming/socks4"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/pool"
+	"github.com/wzshiming/permuteproxy/internal/serverutils"
 )
 
 const (
@@ -39,7 +39,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	username := opts[KeyUsername]
 	return &permuteproxy.ServerFuncs{
 		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
-			owned := &listeners{listen: upstream.Listen}
+			owned := serverutils.NewListeners(upstream.Listen)
 			defer owned.Close()
 			srv := socks4.NewServer()
 			srv.Context = ctx
@@ -52,37 +52,4 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			return srv.Serve(ln)
 		},
 	}, nil
-}
-
-// listeners owns the BIND listeners the library keeps open after its server stops.
-type listeners struct {
-	listen func(ctx context.Context, network, address string) (net.Listener, error)
-	mu     sync.Mutex
-	closed bool
-	lns    []net.Listener
-}
-
-func (l *listeners) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	ln, err := l.listen(ctx, network, address)
-	if err != nil {
-		return nil, err
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		ln.Close()
-		return nil, net.ErrClosed
-	}
-	l.lns = append(l.lns, ln)
-	return ln, nil
-}
-
-func (l *listeners) Close() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.closed = true
-	for _, ln := range l.lns {
-		ln.Close()
-	}
-	l.lns = nil
 }

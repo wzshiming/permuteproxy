@@ -17,23 +17,23 @@ type NetworkSpec struct {
 	Listen      string      // optional expression for listening
 }
 
+// AddressKind says how a URI writes a network's address.
+type AddressKind uint8
+
+const (
+	AddressHost   AddressKind = iota // host:port in the authority, as tcp://127.0.0.1:1080
+	AddressPath                      // a path across the authority and path, as unix://./proxy.sock
+	AddressOpaque                    // free text after the scheme, as cmd:nc host 1080
+)
+
 var (
 	registryMu sync.RWMutex
-	layers     = map[string]Spec{}
+	layers     = map[string]LayerSpec{}
 	networks   = map[string]NetworkSpec{}
 	aliases    = map[string][]string{}
 	// validName is what url.Parse yields for a lower-cased scheme token, minus the '+' separator.
 	validName = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 )
-
-func init() {
-	RegisterNetwork("tcp", NetworkSpec{Plane: Stream, AddressKind: AddressHost})
-	RegisterNetwork("udp", NetworkSpec{Plane: Packet, AddressKind: AddressHost})
-	RegisterNetwork("unix", NetworkSpec{Plane: Stream, AddressKind: AddressPath})
-	RegisterNetwork("unixgram", NetworkSpec{Plane: Packet, AddressKind: AddressPath})
-	RegisterNetwork("cmd", NetworkSpec{Plane: Stream, AddressKind: AddressOpaque})
-	RegisterLayer("dgram", dgram)
-}
 
 func checkName(name string) {
 	if !validName.MatchString(name) {
@@ -87,7 +87,7 @@ func ImplementNetwork(name string, n Network) {
 }
 
 // RegisterLayer declares a layer by name, panicking on a malformed spec or a name already taken.
-func RegisterLayer(name string, spec Spec) {
+func RegisterLayer(name string, spec LayerSpec) {
 	// lookupBase takes the registry lock, so Networks are checked before RegisterLayer holds it.
 	for _, network := range spec.Networks {
 		if base, _, ok := lookupBase(network); !ok || base != network {
@@ -100,20 +100,20 @@ func RegisterLayer(name string, spec Spec) {
 	switch {
 	case spec.Requires|spec.Preserves == 0, spec.Provides|spec.Preserves == 0,
 		(spec.Requires|spec.Provides|spec.Preserves)&^(Stream|Packet) != 0,
-		spec.PasswordOption != "" && spec.UsernameOption == "":
+		spec.PasswordKey != "" && spec.UsernameKey == "":
 		panic(fmt.Sprintf("permuteproxy: malformed layer %q", name))
 	case spec.Lossy&^Packet != 0, spec.Lossy&^(spec.Provides|spec.Preserves) != 0:
 		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
-	case spec.Kind == KindAdapter && (spec.NewAdapter == nil || spec.NewClient != nil || spec.NewServer != nil):
+	case spec.Kind == LayerAdapter && (spec.NewAdapter == nil || spec.NewClient != nil || spec.NewServer != nil):
 		panic(fmt.Sprintf("permuteproxy: adapter %q must declare NewAdapter and neither NewClient nor NewServer", name))
-	case spec.Kind == KindProxy && (spec.NewAdapter != nil || (spec.NewClient == nil && spec.NewServer == nil)):
+	case spec.Kind == LayerProxy && (spec.NewAdapter != nil || (spec.NewClient == nil && spec.NewServer == nil)):
 		panic(fmt.Sprintf("permuteproxy: proxy %q must declare NewClient or NewServer, not NewAdapter", name))
-	case spec.Kind > KindProxy:
+	case spec.Kind > LayerProxy:
 		panic(fmt.Sprintf("permuteproxy: unknown kind of layer %q", name))
 	case (spec.NewClient == nil) != (len(spec.Networks) == 0):
 		panic(fmt.Sprintf("permuteproxy: layer %q must list Networks exactly when it declares NewClient", name))
 	}
-	spec.Options = append([]string(nil), spec.Options...)
+	spec.OptionKeys = append([]string(nil), spec.OptionKeys...)
 	spec.Networks = append([]string(nil), spec.Networks...)
 	layers[name] = spec
 }
@@ -139,7 +139,7 @@ func RegisterAlias(alias, expansion string) {
 	aliases[alias] = tokens
 }
 
-func lookupLayer(name string) (Spec, bool) {
+func lookupLayer(name string) (LayerSpec, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	spec, ok := layers[name]

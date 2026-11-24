@@ -17,8 +17,8 @@ type processConn struct {
 	Process
 }
 
-// WithProcess makes the Process of inner visible again on a wrapper that embeds only net.Conn.
-func WithProcess(conn, inner net.Conn) net.Conn {
+// ConnWithProcess makes the Process of inner visible again on a wrapper that embeds only net.Conn.
+func ConnWithProcess(conn, inner net.Conn) net.Conn {
 	if p, ok := inner.(Process); ok {
 		return &processConn{Conn: conn, Process: p}
 	}
@@ -26,7 +26,7 @@ func WithProcess(conn, inner net.Conn) net.Conn {
 }
 
 func ConnWithCloser(conn net.Conn, closer func() error) net.Conn {
-	return WithProcess(&connCloser{Conn: conn, closer: closer}, conn)
+	return ConnWithProcess(&connCloser{Conn: conn, closer: closer}, conn)
 }
 
 type connCloser struct {
@@ -39,7 +39,7 @@ func (w *connCloser) Close() error {
 }
 
 func ConnWithAddr(conn net.Conn, localAddr, remoteAddr net.Addr) net.Conn {
-	return WithProcess(&connAddr{Conn: conn, localAddr: localAddr, remoteAddr: remoteAddr}, conn)
+	return ConnWithProcess(&connAddr{Conn: conn, localAddr: localAddr, remoteAddr: remoteAddr}, conn)
 }
 
 type connAddr struct {
