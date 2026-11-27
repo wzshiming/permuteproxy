@@ -50,7 +50,7 @@ func (c recorded) Write(b []byte) (int, error) {
 	return c.Conn.Write(b)
 }
 
-func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Transport {
+func transport(t *testing.T, e permuteproxy.TransportEngine, uri string) permuteproxy.Transport {
 	t.Helper()
 	c, err := permuteproxy.ParseURI(uri)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestDialTCPWithoutLocalIsUnsupported(t *testing.T) {
 	if _, err := permuteproxy.ParseURI("tcp://127.0.0.1:1"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 		t.Errorf("ParseURI naming tcp = %v, want ErrInvalidChain", err)
 	}
-	_, err := transport(t, permuteproxy.Engine{}, "snappy://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
+	_, err := transport(t, permuteproxy.TransportEngine{}, "snappy://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
 	if !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("Dial over the default tcp without a Base = %v, want ErrUnsupported", err)
 	}
@@ -76,7 +76,7 @@ func TestDialTCPWithoutLocalIsUnsupported(t *testing.T) {
 
 func TestRoundTripThroughEngine(t *testing.T) {
 	const msg, reply = "hello snappy", "re: hello snappy"
-	ln, err := transport(t, permuteproxy.Engine{Base: testutils.System{}}, "snappy://127.0.0.1:0").Listen(context.Background())
+	ln, err := transport(t, permuteproxy.TransportEngine{Base: testutils.System{}}, "snappy://127.0.0.1:0").Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestRoundTripThroughEngine(t *testing.T) {
 	base := &wire{}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := transport(t, permuteproxy.Engine{Base: base}, "snappy://"+ln.Addr().String()).Dial(ctx, permuteproxy.Stream)
+	conn, err := transport(t, permuteproxy.TransportEngine{Base: base}, "snappy://"+ln.Addr().String()).Dial(ctx, permuteproxy.Stream)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestConcurrentWritesStayWhole(t *testing.T) {
 	client, server := net.Pipe()
 	defer server.Close()
 	base := permuteproxy.NetworkFuncs{DialContextFunc: func(context.Context, string, string) (net.Conn, error) { return client, nil }}
-	conn, err := transport(t, permuteproxy.Engine{Base: base}, "snappy://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
+	conn, err := transport(t, permuteproxy.TransportEngine{Base: base}, "snappy://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -363,9 +363,9 @@ func TestExpandRefusesEmptyValues(t *testing.T) {
 
 func TestEngineDialsExpressionNetwork(t *testing.T) {
 	ctx := context.Background()
-	base := Engine{Base: &carrierNet{fakeNet{name: "base"}}}
+	base := TransportEngine{Base: &carrierNet{fakeNet{name: "base"}}}
 	tests := []struct {
-		engine  Engine
+		engine  TransportEngine
 		network string
 		address string
 		plane   Plane
@@ -381,7 +381,7 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 		{base, "test-snappy-unix", "/tmp/a b.sock", Stream, []string{"test-snappy.new", "base.dial unix /tmp/a b.sock", "test-snappy.client"}},
 		{base, "test-percent", "127.0.0.1:1", Stream, []string{"base.dial cmd printf %h:%p 127.0.0.1:1"}},
 		{base, "test-abs-nc", "127.0.0.1:1", Stream, []string{"base.dial cmd /usr/bin/nc 127.0.0.1 1 #?"}},
-		{Engine{}, "test-via-fakenet", "127.0.0.1:1", Stream, []string{"impl.dial fakenet 127.0.0.1:1"}},
+		{TransportEngine{}, "test-via-fakenet", "127.0.0.1:1", Stream, []string{"impl.dial fakenet 127.0.0.1:1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.network+" "+tt.address, func(t *testing.T) {
@@ -407,7 +407,7 @@ func TestEngineDialsExpressionNetwork(t *testing.T) {
 
 func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {
 	ctx := context.Background()
-	client, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))
+	client, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {
 		network string
 		plane   Plane
 	}{{"test-nc", Stream}, {"test-nc-udp", Packet}} {
-		tr, err := Engine{Base: client}.Transport(Chain{Endpoint: Endpoint{Network: tt.network, Address: "127.0.0.1:1"}})
+		tr, err := TransportEngine{Base: client}.Transport(Chain{Endpoint: Endpoint{Network: tt.network, Address: "127.0.0.1:1"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -428,7 +428,7 @@ func TestExpressionNetworkRefusedByHopWithoutIt(t *testing.T) {
 }
 
 func TestEngineClosesExpressionLayers(t *testing.T) {
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	tr, err := e.Transport(Chain{Endpoint: Endpoint{Network: "test-closable-tcp", Address: "127.0.0.1:1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -459,20 +459,20 @@ func chainOver(network, address string, schemes ...string) Chain {
 
 func TestEngineListensOnExpressionNetwork(t *testing.T) {
 	ctx := context.Background()
-	base := Engine{Base: &fakeNet{name: "base"}}
+	base := TransportEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		name   string
-		engine Engine
+		engine TransportEngine
 		chain  Chain
 		calls  []string // what listening on the network's plane calls; nil when it is refused
 	}{
 		{"at the Listen template", base, chainOver("test-nc", "127.0.0.1:1"), []string{"base.listen cmd nc -l 127.0.0.1 1"}},
 		{"at the Listen template for any host", base, chainOver("test-nc", ":8080"), []string{"base.listen cmd nc -l  8080"}},
 		{"under the declared name", base, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"base.listen test-nc-unix /tmp/a b.sock"}},
-		{"under the declared name through its implementation", Engine{}, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"impl.listen test-nc-unix /tmp/a b.sock"}},
+		{"under the declared name through its implementation", TransportEngine{}, chainOver("test-nc-unix", "/tmp/a b.sock"), []string{"impl.listen test-nc-unix /tmp/a b.sock"}},
 		{"under the declared name around dgram", base, chainOver("test-nc-udp", "127.0.0.1:1"), []string{"base.listenpacket test-nc-udp 127.0.0.1:1"}},
 		{"under the declared name below the chain's layer", base, chainOver("test-dtls-udp", "127.0.0.1:1", "test-quic"), []string{"base.listenpacket test-dtls-udp 127.0.0.1:1", "test-quic.packetlistener"}},
-		{"refused under a declared name the hop reports lossy", Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"test-dtls-udp"}}}, chainOver("test-dtls-udp", "127.0.0.1:1", "test-quic"), nil},
+		{"refused under a declared name the hop reports lossy", TransportEngine{Base: &lossyNet{fakeNet{name: "base"}, []string{"test-dtls-udp"}}}, chainOver("test-dtls-udp", "127.0.0.1:1", "test-quic"), nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -502,7 +502,7 @@ func TestEngineListensOnExpressionNetwork(t *testing.T) {
 func TestListenExpressionSharesTheDialLayers(t *testing.T) {
 	ctx := context.Background()
 	calls = nil
-	tr, err := Engine{Base: &carrierNet{fakeNet{name: "base"}}}.Transport(chainOver("test-auth-tcp", "127.0.0.1:1"))
+	tr, err := TransportEngine{Base: &carrierNet{fakeNet{name: "base"}}}.Transport(chainOver("test-auth-tcp", "127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestListenExpressionSharesTheDialLayers(t *testing.T) {
 
 func TestServerListensUnderTheDeclaredName(t *testing.T) {
 	calls = nil
-	srv, err := Engine{Base: &fakeNet{name: "base"}}.Server(chainOver("test-nc-unix", "/tmp/a b.sock", "test-socks5"))
+	srv, err := ServerEngine{Base: &fakeNet{name: "base"}}.Server(chainOver("test-nc-unix", "/tmp/a b.sock", "test-socks5"))
 	if err != nil {
 		t.Fatal(err)
 	}

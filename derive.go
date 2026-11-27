@@ -105,7 +105,7 @@ func (d derivation) dial(ctx context.Context, a *assembledNetwork, address strin
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
 	}
-	tr, err := Engine{Base: a}.Transport(d.x.over(text))
+	tr, err := TransportEngine{Base: a}.Transport(d.x.over(text))
 	if err != nil {
 		return nil, err
 	}

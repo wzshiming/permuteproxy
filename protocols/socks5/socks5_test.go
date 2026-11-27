@@ -83,7 +83,7 @@ func server(t *testing.T, upstream permuteproxy.Network, opts permuteproxy.Optio
 		}
 		return ln, err
 	}}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(chain("socks5", "127.0.0.1:0", opts))
+	srv, err := permuteproxy.ServerEngine{Base: base, Upstream: upstream}.Server(chain("socks5", "127.0.0.1:0", opts))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func dialer(t *testing.T, base permuteproxy.Network, address string, opts permut
 	if resolve {
 		scheme = "socks5"
 	}
-	n, err := permuteproxy.Engine{Base: base}.Client(chain(scheme, address, opts))
+	n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(chain(scheme, address, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

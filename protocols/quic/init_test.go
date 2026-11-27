@@ -26,7 +26,7 @@ func TestQUICProvidesStreamOverUDP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := permuteproxy.Engine{}.Transport(c)
+	tr, err := permuteproxy.TransportEngine{}.Transport(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSOCKS5OverQUICBindsAUDPCarrier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	n, err := permuteproxy.Engine{Base: base}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: base}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}

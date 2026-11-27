@@ -11,7 +11,7 @@ import (
 func TestClientDialsStream(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5", "test-quic"))
+	n, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5", "test-quic"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,8 @@ func TestClientDialsStream(t *testing.T) {
 func TestClientAdmitsListedNetworks(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: &fakeNet{name: "base"}}
+	base := &fakeNet{name: "base"}
+	e := ClientEngine{Base: base, Local: base}
 	tests := []struct {
 		uri     string
 		allowed map[string]string
@@ -95,15 +96,16 @@ func TestClientAdmitsListedNetworks(t *testing.T) {
 func TestClientListensPacketThroughLocal(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	base := &fakeNet{name: "base"}
+	base, local := &fakeNet{name: "base"}, &fakeNet{name: "local"}
 	tests := []struct {
-		engine Engine
+		engine ClientEngine
 		chain  Chain
 		local  string
 	}{
-		{Engine{Base: base}, mk("fakenet", "test-socks5"), "base"},
-		{Engine{}, mk("fakenet", "test-socks5"), "default"},
-		{Engine{}, mk("tcp", "test-socks5"), "default"},
+		{ClientEngine{Base: base, Local: local}, mk("fakenet", "test-socks5"), "local"},
+		{ClientEngine{Base: base}, mk("fakenet", "test-socks5"), "default"},
+		{ClientEngine{}, mk("fakenet", "test-socks5"), "default"},
+		{ClientEngine{}, mk("tcp", "test-socks5"), "default"},
 	}
 	for _, tt := range tests {
 		n, err := tt.engine.Client(tt.chain)
@@ -121,7 +123,8 @@ func TestClientListensPacketThroughLocal(t *testing.T) {
 func TestClientDerivesUDPDial(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-socks5"))
+	base := &fakeNet{name: "base"}
+	n, err := ClientEngine{Base: base, Local: base}.Client(mk("", "test-socks5"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +149,7 @@ func TestClientDerivesUDPDial(t *testing.T) {
 func TestClientAsksPeerOfUDPDial(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	n, err := Engine{}.Client(mk("", "test-peer"))
+	n, err := ClientEngine{}.Client(mk("", "test-peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +170,7 @@ func TestClientAsksPeerOfUDPDial(t *testing.T) {
 
 func TestClientRejectsDeclarations(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ClientEngine{Base: &fakeNet{name: "base"}}
 	schemes := []string{"nilproxy", "test-client-broken"}
 	for name := range uncoveredClients {
 		schemes = append(schemes, name)
@@ -186,7 +189,7 @@ func TestClientRejectsDeclarations(t *testing.T) {
 }
 
 func TestClientReportsLossyFromLayerSpec(t *testing.T) {
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ClientEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		scheme string
 		lossy  map[string]bool
@@ -214,7 +217,8 @@ func TestClientReportsLossyFromLayerSpec(t *testing.T) {
 func TestLossyLocalRefusesClientPacket(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	base := &lossyNet{fakeNet{name: "base"}, []string{"udp"}}
+	e := ClientEngine{Base: base, Local: base}
 	n, err := e.Client(mk("", "test-socks5"))
 	if err != nil {
 		t.Fatal(err)

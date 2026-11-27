@@ -18,10 +18,10 @@ func sshExec(t *testing.T, upstream permuteproxy.Network) permuteproxy.Network {
 	t.Helper()
 	c := parse(t, "ssh://u:p@127.0.0.1:0?allow_exec=true")
 	base := newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	c.Layers[0].Options = permuteproxy.Options{"username": "u", "password": "p"}
-	n, err := permuteproxy.Engine{}.Client(c)
+	n, err := permuteproxy.ClientEngine{}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestNetcatUDPOverSSHExec(t *testing.T) {
 	defer cancel()
 	commands := newProbe(local.Network)
 	echo, received := watchedUDPEcho(t)
-	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: echo.String()}})
+	tr, err := permuteproxy.TransportEngine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: echo.String()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +73,9 @@ func TestSOCKS5AssociationOverSSHUpstream(t *testing.T) {
 	upstream := newProbe(sshExec(t, commands))
 	c := parse(t, "socks5://127.0.0.1:0")
 	base := newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
-	n, err := permuteproxy.Engine{}.Client(c)
+	n, err := permuteproxy.ClientEngine{}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestNetcatOverSSHExecCarriesAStream(t *testing.T) {
 	defer cancel()
 	commands := newProbe(local.Network)
 	echo, accepted := tcpEcho(t)
-	tr, err := permuteproxy.Engine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc", Address: echo}})
+	tr, err := permuteproxy.TransportEngine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc", Address: echo}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	ssh := sshExec(t, newProbe(local.Network))
 	t.Run("ss+udp", func(t *testing.T) {
 		base := &lossyCalls{Network: ssh}
-		n, err := permuteproxy.Engine{Base: base}.Client(parse(t, "ss+udp://127.0.0.1:1"))
+		n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(parse(t, "ss+udp://127.0.0.1:1"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +172,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	})
 	t.Run("quic+udp", func(t *testing.T) {
 		base := &lossyCalls{Network: ssh}
-		tr, err := permuteproxy.Engine{Base: base}.Transport(parse(t, "quic+udp://127.0.0.1:1?tls_skip_verify=true&tls_self_signed=true"))
+		tr, err := permuteproxy.TransportEngine{Base: base}.Transport(parse(t, "quic+udp://127.0.0.1:1?tls_skip_verify=true&tls_self_signed=true"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,10 +184,10 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	t.Run("socks5", func(t *testing.T) {
 		c := parse(t, "socks5://127.0.0.1:0")
 		proxyBase := newProbe(testutils.System{})
-		_, done := start(t, permuteproxy.Engine{Base: proxyBase}, c)
+		_, done := start(t, permuteproxy.ServerEngine{Base: proxyBase}, c)
 		c.Endpoint.Address = waitBound(t, proxyBase, done).String()
 		base := &lossyCalls{Network: ssh}
-		n, err := permuteproxy.Engine{Base: base}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -10,7 +10,7 @@ import (
 func TestAdapterPairs(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		scheme string
 		plane  Plane
@@ -59,7 +59,7 @@ func TestAdapterPacketCarrier(t *testing.T) {
 			calls = nil
 			target := datagramPeer(t, network)
 			c := Chain{Layers: []Layer{{Scheme: "test-quic"}}, Endpoint: Endpoint{Network: network, Address: target.LocalAddr().String()}}
-			tr, err := Engine{}.Transport(c)
+			tr, err := TransportEngine{}.Transport(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -86,7 +86,7 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 			return held, nil
 		},
 	}
-	tr, err := Engine{Base: base}.Transport(mk("", "test-keep"))
+	tr, err := TransportEngine{Base: base}.Transport(mk("", "test-keep"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestAdapterPreservesWithoutLink(t *testing.T) {
 func TestAdapterLeavesCarrierToLink(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: recordedCloses}
+	e := TransportEngine{Base: recordedCloses}
 	for scheme := range failingLinks {
 		t.Run(scheme, func(t *testing.T) {
 			calls = nil
@@ -167,7 +167,7 @@ func TestAdapterLeavesCarrierToLink(t *testing.T) {
 
 func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 	ctx := context.Background()
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		scheme string
 		err    error
@@ -207,7 +207,7 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 
 func TestAdapterOpenObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
 	ctx := context.Background()
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-open"))
+	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-open"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestAdapterOpenObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
 }
 
 func TestAdapterHookRunsBeforeOpen(t *testing.T) {
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-openfail"))
+	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-openfail"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.scheme, func(t *testing.T) {
-			tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", tt.scheme))
+			tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", tt.scheme))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -275,7 +275,7 @@ func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
 func TestAdapterRefusesMissingFunctions(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	for _, scheme := range []string{"test-bare-ss", "test-bare-sp", "test-bare-pp", "test-bare-ps"} {
 		t.Run(scheme, func(t *testing.T) {
 			tr, err := e.Transport(mk("", scheme))
@@ -300,7 +300,7 @@ func TestAdapterRefusesMissingFunctions(t *testing.T) {
 
 func TestAdapterRejectsDeclarations(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	base := &fakeNet{name: "base"}
 	schemes := []string{"niladapter", "test-broken"}
 	for name := range uncovered {
 		schemes = append(schemes, name)
@@ -311,20 +311,20 @@ func TestAdapterRejectsDeclarations(t *testing.T) {
 			if err := c.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := e.Transport(c); !errors.Is(err, ErrInvalidChain) {
+			if _, err := (TransportEngine{Base: base}).Transport(c); !errors.Is(err, ErrInvalidChain) {
 				t.Fatalf("Transport() = %v, want ErrInvalidChain", err)
 			}
 			assertCalls(t)
 		})
 	}
-	if _, err := e.Transport(mk("", "test-broken")); !errors.Is(err, errDeclare) {
+	if _, err := (TransportEngine{Base: base}).Transport(mk("", "test-broken")); !errors.Is(err, errDeclare) {
 		t.Fatalf("Transport() = %v, want the NewAdapter error kept", err)
 	}
 	c := mk("", "test-http", "test-bad-missing")
-	if _, err := e.Client(c); !errors.Is(err, ErrInvalidChain) {
+	if _, err := (ClientEngine{Base: base}).Client(c); !errors.Is(err, ErrInvalidChain) {
 		t.Fatalf("Client() = %v, want ErrInvalidChain", err)
 	}
-	if _, err := e.Server(c); !errors.Is(err, ErrInvalidChain) {
+	if _, err := (ServerEngine{Base: base}).Server(c); !errors.Is(err, ErrInvalidChain) {
 		t.Fatalf("Server() = %v, want ErrInvalidChain", err)
 	}
 	assertCalls(t)

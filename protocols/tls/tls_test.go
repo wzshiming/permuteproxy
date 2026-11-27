@@ -15,7 +15,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero Engine reaches tcp through Local
+	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero TransportEngine reaches tcp through Local
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
 )
 
@@ -35,7 +35,7 @@ func (p *closeProbe) DialContext(ctx context.Context, network, address string) (
 	return testutils.CountingConn{Conn: conn, Closes: &p.closed}, nil
 }
 
-func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Transport {
+func transport(t *testing.T, e permuteproxy.TransportEngine, uri string) permuteproxy.Transport {
 	t.Helper()
 	c, err := permuteproxy.ParseURI(uri)
 	if err != nil {
@@ -50,13 +50,13 @@ func transport(t *testing.T, e permuteproxy.Engine, uri string) permuteproxy.Tra
 
 func TestVerifiedHandshake(t *testing.T) {
 	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
-	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
+	ln, err := transport(t, permuteproxy.TransportEngine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	addr := testutils.ServeEcho(t, ln)
 	base := &closeProbe{Network: testutils.System{}}
-	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
+	tr := transport(t, permuteproxy.TransportEngine{Base: base}, "tls://"+addr.String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	conn, err := tr.Dial(ctx, permuteproxy.Stream)
@@ -81,7 +81,7 @@ func TestVerifiedHandshake(t *testing.T) {
 
 func TestFailedHandshakeClosesSocket(t *testing.T) {
 	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
-	ln, err := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
+	ln, err := transport(t, permuteproxy.TransportEngine{}, "tls://127.0.0.1:0?tls_cert_file="+certFile+"&tls_key_file="+keyFile).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestFailedHandshakeClosesSocket(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			base := &closeProbe{Network: testutils.System{}}
-			tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+addr.String()+query)
+			tr := transport(t, permuteproxy.TransportEngine{Base: base}, "tls://"+addr.String()+query)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			conn, err := tr.Dial(ctx, permuteproxy.Stream)
@@ -120,7 +120,7 @@ func TestServerConfigIsLazy(t *testing.T) {
 			return (&net.ListenConfig{}).Listen(ctx, network, address)
 		},
 	}
-	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://127.0.0.1:0?tls_skip_verify=true")
+	tr := transport(t, permuteproxy.TransportEngine{Base: base}, "tls://127.0.0.1:0?tls_skip_verify=true")
 	if tr.Planes() != permuteproxy.Stream {
 		t.Fatalf("Planes() = %v", tr.Planes())
 	}
@@ -149,7 +149,7 @@ func install(t *testing.T, certFile, keyFile, cert, key string) {
 // verify dials addr through tls, verifying its certificate for name against caFile.
 func verify(t *testing.T, addr net.Addr, name, caFile string) error {
 	t.Helper()
-	tr := transport(t, permuteproxy.Engine{}, "tls://"+addr.String()+"?tls_server_name="+name+"&tls_ca_file="+caFile)
+	tr := transport(t, permuteproxy.TransportEngine{}, "tls://"+addr.String()+"?tls_server_name="+name+"&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	conn, err := tr.Dial(ctx, permuteproxy.Stream)
@@ -162,7 +162,7 @@ func verify(t *testing.T, addr net.Addr, name, caFile string) error {
 func TestFailedServerConfigIsRetried(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
-	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
+	tr := transport(t, permuteproxy.TransportEngine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
 	if _, err := tr.Listen(context.Background()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Listen before the key material exists = %v, want it missing", err)
 	}
@@ -180,7 +180,7 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 func TestEachListenBuildsItsServerConfig(t *testing.T) {
 	dir := t.TempDir()
 	cert, key := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
-	tr := transport(t, permuteproxy.Engine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
+	tr := transport(t, permuteproxy.TransportEngine{}, "tls://127.0.0.1:0?tls_cert_file="+cert+"&tls_key_file="+key)
 	for _, name := range []string{"first.test", "second.test"} {
 		caFile, certFile, keyFile := testutils.Issue(t, name)
 		install(t, certFile, keyFile, cert, key)
@@ -198,7 +198,7 @@ func TestClientConfigIsLazy(t *testing.T) {
 	_, certFile, keyFile := testutils.Issue(t, "proxy.test")
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
 	uri := "tls://127.0.0.1:0?tls_ca_file=" + missing + "&tls_cert_file=" + certFile + "&tls_key_file=" + keyFile
-	ln, err := transport(t, permuteproxy.Engine{}, uri).Listen(context.Background())
+	ln, err := transport(t, permuteproxy.TransportEngine{}, uri).Listen(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestClientConfigIsLazy(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Endpoint.Address = addr.String()
-	tr, err := permuteproxy.Engine{Base: base}.Transport(c)
+	tr, err := permuteproxy.TransportEngine{Base: base}.Transport(c)
 	if err != nil {
 		t.Fatalf("Transport with an unreadable client CA = %v, want the server side to build", err)
 	}
@@ -244,7 +244,7 @@ func TestCanceledHandshakeClosesSocketOnce(t *testing.T) {
 		}
 	}()
 	base := &closeProbe{Network: testutils.System{}}
-	tr := transport(t, permuteproxy.Engine{Base: base}, "tls://"+ln.Addr().String()+"?tls_skip_verify=true")
+	tr := transport(t, permuteproxy.TransportEngine{Base: base}, "tls://"+ln.Addr().String()+"?tls_skip_verify=true")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		conn := <-accepted
@@ -291,7 +291,7 @@ func TestLaterDialsResumeTheSession(t *testing.T) {
 			conn.Close()
 		}
 	}()
-	tr := transport(t, permuteproxy.Engine{}, "tls://"+ln.Addr().String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
+	tr := transport(t, permuteproxy.TransportEngine{}, "tls://"+ln.Addr().String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for i, want := range []bool{false, true} {

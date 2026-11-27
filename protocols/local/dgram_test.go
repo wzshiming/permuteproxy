@@ -43,7 +43,7 @@ func TestDgramDialsStreamCarrierAsDatagrams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, err := permuteproxy.Engine{Base: base}.Transport(c)
+	tr, err := permuteproxy.TransportEngine{Base: base}.Transport(c)
 	if err != nil {
 		t.Fatal(err)
 	}

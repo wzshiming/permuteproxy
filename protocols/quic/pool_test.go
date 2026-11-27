@@ -47,7 +47,7 @@ func closeTransport(t *testing.T, tr permuteproxy.Transport) {
 
 func TestConnsOpenTogetherShareOneConnection(t *testing.T) {
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c1, srv1 := connected(t, ln, tr)
 	c2, srv2 := connected(t, ln, tr)
 	bound(t, mem, secondDialed, "after two dials")
@@ -61,7 +61,7 @@ func TestConnsOpenTogetherShareOneConnection(t *testing.T) {
 func TestASharedConnectionLastsUntilItsLastConnCloses(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c1, srv1 := connected(t, ln, tr)
 	c2, srv2 := connected(t, ln, tr)
 	exchanges(t, c1, srv1)
@@ -80,7 +80,7 @@ func TestASharedConnectionLastsUntilItsLastConnCloses(t *testing.T) {
 
 func TestADialAfterTheLastConnClosedOpensAConnection(t *testing.T) {
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c1, srv1 := connected(t, ln, tr)
 	exchanges(t, c1, srv1)
 	c1.Close()
@@ -93,7 +93,7 @@ func TestADialAfterTheLastConnClosedOpensAConnection(t *testing.T) {
 
 func TestADialAfterTheConnectionEndedOpensAConnection(t *testing.T) {
 	mem := newMemNet()
-	e := permuteproxy.Engine{Base: mem}
+	e := permuteproxy.TransportEngine{Base: mem}
 	ln, k := listenQUIC(t, e)
 	tr := build(t, e, quicChain(ln.Addr().String(), k.client))
 	c1, _ := connected(t, ln, tr)
@@ -118,7 +118,7 @@ func TestAFullConnectionLeavesTheNextDialItsOwn(t *testing.T) {
 	quic.SetCloseWait(t, time.Millisecond)
 	quic.SetLinger(t, time.Millisecond)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	go func() {
 		for {
 			if _, err := ln.Accept(); err != nil {
@@ -147,7 +147,7 @@ func TestAnIdleConnectionServesTheNextDial(t *testing.T) {
 	before := quicGoroutines()
 	quic.SetIdleKeep(t, time.Minute)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c1, srv1 := connected(t, ln, tr)
 	exchanges(t, c1, srv1)
 	closed(t, c1, srv1)
@@ -168,7 +168,7 @@ func TestAnIdleConnectionIsReleasedAfterItsKeep(t *testing.T) {
 	before := quicGoroutines()
 	quic.SetIdleKeep(t, 300*time.Millisecond)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	exchanges(t, c, srv)
 	closed(t, c, srv)
@@ -185,7 +185,7 @@ func TestAnIdleConnectionIsReleasedAfterItsKeep(t *testing.T) {
 func TestAClosedTransportKeepsNoConnectionIdle(t *testing.T) {
 	quic.SetIdleKeep(t, time.Minute)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	closeTransport(t, tr)
 	// A conn open at the Close keeps its connection.

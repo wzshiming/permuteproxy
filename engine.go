@@ -4,14 +4,26 @@ import (
 	"fmt"
 )
 
-// Engine builds chains into transports, clients and servers, borrowing Base and Upstream without ever closing them.
-type Engine struct {
-	Base     Network // reaches the endpoint; nil resolves each call by network name: the registered implementation, else ErrUnsupported
+// TransportEngine builds adapter chains into transports, borrowing Base without ever closing it.
+type TransportEngine struct {
+	Base Network // reaches the endpoint; nil resolves each call by network name: the registered implementation, else ErrUnsupported
+}
+
+// ClientEngine builds proxy chains into clients, borrowing Base and Local without ever closing them.
+type ClientEngine struct {
+	Base  Network // reaches the endpoint; nil resolves each call as a nil TransportEngine.Base does
+	Local Network // what clients bind their own sockets through; nil resolves each call as a nil Base does
+}
+
+// ServerEngine builds proxy chains into servers, borrowing Base and Upstream without ever closing them.
+type ServerEngine struct {
+	Base     Network // reaches the endpoint; nil resolves each call as a nil TransportEngine.Base does
 	Upstream Network // what servers reach their targets through; nil resolves each call as a nil Base does
 }
 
-func (e Engine) build(r *resolved, from int) (Transport, error) {
-	n, layered := orByName(e.Base), len(r.layers) > 0
+// build stacks r's layers from the innermost out to from over base.
+func build(base Network, r *resolved, from int) (Transport, error) {
+	n, layered := orByName(base), len(r.layers) > 0
 	dial := bind(n, r.stream, r.packet, r.dial, layered)
 	// The layers get what the carrier offers once a lossy network took its datagrams, not what resolve assumed.
 	r.offer(dial.Planes())
@@ -31,19 +43,19 @@ func (e Engine) build(r *resolved, from int) (Transport, error) {
 }
 
 // Transport builds an adapter chain; with layers, the result's Close forwards to the outermost layer's own result.
-func (e Engine) Transport(c Chain) (Transport, error) {
+func (e TransportEngine) Transport(c Chain) (Transport, error) {
 	r, err := c.resolve()
 	if err != nil {
 		return nil, err
 	}
 	if len(r.specs) > 0 && r.specs[0].Kind == LayerProxy {
-		return nil, fmt.Errorf("layer %q: proxy needs Client or Server: %w", c.Layers[0].Scheme, ErrInvalidChain)
+		return nil, fmt.Errorf("layer %q: proxy needs a ClientEngine or ServerEngine: %w", c.Layers[0].Scheme, ErrInvalidChain)
 	}
-	return e.build(r, 0)
+	return build(e.Base, r, 0)
 }
 
-// below builds the Transport under c's outermost layer, which must be a proxy declaring side.
-func (e Engine) below(c Chain, side string, declares func(LayerSpec) bool) (*resolved, Transport, error) {
+// below builds over base the Transport under c's outermost layer, which must be a proxy declaring side.
+func below(base Network, c Chain, side string, declares func(LayerSpec) bool) (*resolved, Transport, error) {
 	r, err := c.proxy()
 	if err != nil {
 		return nil, nil, err
@@ -51,20 +63,20 @@ func (e Engine) below(c Chain, side string, declares func(LayerSpec) bool) (*res
 	if !declares(r.specs[0]) {
 		return nil, nil, fmt.Errorf("layer %q: %s: %w", c.Layers[0].Scheme, side, ErrUnsupported)
 	}
-	inner, err := e.build(r, 1)
+	inner, err := build(base, r, 1)
 	if err != nil {
 		return nil, nil, err
 	}
 	return r, inner, nil
 }
 
-// Client builds the client of a proxy chain's outermost layer; the result's Close forwards to the layer's own result.
-func (e Engine) Client(c Chain) (Network, error) {
-	r, inner, err := e.below(c, "client", func(s LayerSpec) bool { return s.NewClient != nil })
+// Client builds the client of a proxy chain's outermost layer, which binds its own sockets through Local; the result's Close forwards to the layer's own result.
+func (e ClientEngine) Client(c Chain) (Network, error) {
+	r, inner, err := below(e.Base, c, "client", func(s LayerSpec) bool { return s.NewClient != nil })
 	if err != nil {
 		return nil, err
 	}
-	n, err := r.specs[0].client(inner, borrowed{orByName(e.Base)}, c.Layers[0].Options.clone())
+	n, err := r.specs[0].client(inner, borrowed{orByName(e.Local)}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", c.Layers[0].Scheme, err)
@@ -73,8 +85,8 @@ func (e Engine) Client(c Chain) (Network, error) {
 }
 
 // Server builds the server of a proxy chain's outermost layer, which reaches its targets through Upstream.
-func (e Engine) Server(c Chain) (Server, error) {
-	r, inner, err := e.below(c, "server", func(s LayerSpec) bool { return s.NewServer != nil })
+func (e ServerEngine) Server(c Chain) (Server, error) {
+	r, inner, err := below(e.Base, c, "server", func(s LayerSpec) bool { return s.NewServer != nil })
 	if err != nil {
 		return nil, err
 	}

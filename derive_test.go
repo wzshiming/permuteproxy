@@ -140,7 +140,7 @@ func init() {
 // derivingClient builds the client of c over a fake base and forgets the calls the build made.
 func derivingClient(t *testing.T, c Chain) Network {
 	t.Helper()
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(c)
+	n, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func derivingClient(t *testing.T, c Chain) Network {
 }
 
 func TestClientRefusesDerivations(t *testing.T) {
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ClientEngine{Base: &fakeNet{name: "base"}}
 	for name := range underived {
 		t.Run(name, func(t *testing.T) {
 			calls = nil
@@ -164,7 +164,7 @@ func TestClientRefusesDerivations(t *testing.T) {
 }
 
 func TestClientRefusalsNameTheDeriveEntry(t *testing.T) {
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ClientEngine{Base: &fakeNet{name: "base"}}
 	for scheme, want := range map[string]string{
 		"test-derive-variant":    `network "udp4" in Derive: not one of the base networks`,
 		"test-derive-listed":     `network "udp" in Derive: also listed in Networks`,
@@ -182,7 +182,7 @@ func TestClientRefusalsNameTheDeriveEntry(t *testing.T) {
 
 func TestClientCoversPacketByDerivedDatagrams(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ClientEngine{Base: &fakeNet{name: "base"}}
 	for _, scheme := range []string{"test-derive", "test-derive-kept"} {
 		n, err := e.Client(mk("", scheme))
 		if err != nil {
@@ -245,7 +245,7 @@ func TestClientAdmitsDerivedNetworks(t *testing.T) {
 
 func TestDerivedStreamDialsThroughTheClientItself(t *testing.T) {
 	ctx := context.Background()
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("tcp", "test-derive", "closable"))
+	n, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(mk("tcp", "test-derive", "closable"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +608,7 @@ func TestClientReportsDerivedLossy(t *testing.T) {
 
 func TestDerivedLossyRefusesPacketToLayers(t *testing.T) {
 	ctx := context.Background()
-	tr, err := Engine{Base: derivingClient(t, mk("", "test-derive"))}.Transport(mk("udp", "test-dtls"))
+	tr, err := TransportEngine{Base: derivingClient(t, mk("", "test-derive"))}.Transport(mk("udp", "test-dtls"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestDerivedLossyRefusesPacketToLayers(t *testing.T) {
 		t.Fatalf("Dial(Packet) over udp derived through dgram = %v, want ErrUnsupported", err)
 	}
 	assertCalls(t)
-	if tr, err = (Engine{Base: derivingClient(t, mk("", "test-derive-uot"))}).Transport(mk("udp", "test-dtls")); err != nil {
+	if tr, err = (TransportEngine{Base: derivingClient(t, mk("", "test-derive-uot"))}).Transport(mk("udp", "test-dtls")); err != nil {
 		t.Fatal(err)
 	}
 	calls = nil

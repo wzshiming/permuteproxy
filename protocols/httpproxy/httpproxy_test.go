@@ -41,7 +41,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 		t.Run(network, func(t *testing.T) {
 			base := &testutils.CountingNetwork{}
 			c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "http"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
-			n, err := permuteproxy.Engine{Base: base}.Client(c)
+			n, err := permuteproxy.ClientEngine{Base: base}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -52,7 +52,7 @@ func echoed(tr permuteproxy.Transport, n int) error {
 }
 
 func TestListenerAcceptsStreamsOfEveryConnection(t *testing.T) {
-	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.TransportEngine) {
 		ln, k := listenQUIC(t, e)
 		testutils.ServeEcho(t, ln)
 		const clients, streams = 2, 4
@@ -121,7 +121,7 @@ func rawListen(t *testing.T, k keys) *xquic.Endpoint {
 }
 
 func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
-	ln, k := listenQUIC(t, permuteproxy.Engine{})
+	ln, k := listenQUIC(t, permuteproxy.TransportEngine{})
 	testutils.ServeEcho(t, ln)
 	qc, err := rawDial(t, ln.Addr().String(), k.caFile, "permuteproxy")
 	if err != nil {
@@ -148,7 +148,7 @@ func TestListenerAcceptsEveryStreamOfAConnection(t *testing.T) {
 }
 
 func TestListenerRequiresItsALPN(t *testing.T) {
-	ln, k := listenQUIC(t, permuteproxy.Engine{})
+	ln, k := listenQUIC(t, permuteproxy.TransportEngine{})
 	for _, alpns := range [][]string{{"h3"}, nil} {
 		// 120 is TLS's no_application_protocol alert.
 		if _, err := rawDial(t, ln.Addr().String(), k.caFile, alpns...); err == nil || !strings.Contains(err.Error(), "CRYPTO_ERROR(120)") {
@@ -160,7 +160,7 @@ func TestListenerRequiresItsALPN(t *testing.T) {
 func TestListenerCloseAbortsItsConnections(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	read := make(chan error, 1)
 	go func() {
@@ -190,7 +190,7 @@ func TestListenerCloseAbortsItsConnections(t *testing.T) {
 }
 
 func TestListenerKeepsNothingOfClientsThatClosed(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{Base: newMemNet()})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: newMemNet()})
 	before := quicGoroutines()
 	for range 10 {
 		c, srv := connected(t, ln, tr)
@@ -210,7 +210,7 @@ func TestListenerReportsAFailingCarrier(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failRead = errors.New("carrier failed")
-	ln, _ := listenQUIC(t, permuteproxy.Engine{Base: mem})
+	ln, _ := listenQUIC(t, permuteproxy.TransportEngine{Base: mem})
 	accepted := make(chan error, 1)
 	go func() {
 		_, err := ln.Accept()
@@ -228,7 +228,7 @@ func TestDialOverAFailingCarrierEndsWithItsContext(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	mem.failWrite = errors.New("carrier failed")
-	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
+	tr := build(t, permuteproxy.TransportEngine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	within(t, 2*time.Second, "Dial", func() {

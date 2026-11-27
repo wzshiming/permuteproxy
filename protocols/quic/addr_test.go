@@ -25,7 +25,7 @@ func TestUnixgramCarrierIsUnsupported(t *testing.T) {
 	mem := newMemNet()
 	k := newKeys(t)
 	over := func(opts permuteproxy.Options) permuteproxy.Transport {
-		return build(t, permuteproxy.Engine{Base: mem}, permuteproxy.Chain{
+		return build(t, permuteproxy.TransportEngine{Base: mem}, permuteproxy.Chain{
 			Layers:   []permuteproxy.Layer{{Scheme: "quic", Options: opts}},
 			Endpoint: permuteproxy.Endpoint{Network: "unixgram", Address: "/proxy.sock"},
 		})
@@ -78,14 +78,14 @@ func reaches(t *testing.T, c net.Conn, accepted <-chan net.Conn) {
 func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 	k := newKeys(t)
 	t.Run("quic://:port", func(t *testing.T) {
-		ln, err := build(t, permuteproxy.Engine{}, quicChain(":0", k.server)).Listen(context.Background())
+		ln, err := build(t, permuteproxy.TransportEngine{}, quicChain(":0", k.server)).Listen(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { ln.Close() })
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		accepted := accept(t, ln)
-		reaches(t, dial(t, build(t, permuteproxy.Engine{}, quicChain(":"+port, k.client))), accepted)
+		reaches(t, dial(t, build(t, permuteproxy.TransportEngine{}, quicChain(":"+port, k.client))), accepted)
 	})
 	for _, c := range []struct {
 		name, socket, listen string
@@ -106,7 +106,7 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 				t.Fatal(err)
 			}
 			mem := newMemNet()
-			ln, err := build(t, permuteproxy.Engine{Base: mem}, quicChain(c.listen, k.server)).Listen(context.Background())
+			ln, err := build(t, permuteproxy.TransportEngine{Base: mem}, quicChain(c.listen, k.server)).Listen(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -64,7 +64,7 @@ func notBefore(t *testing.T, at time.Time, max time.Duration, what string, f fun
 }
 
 func TestReadDeadline(t *testing.T) {
-	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.TransportEngine) {
 		ln, tr := pair(t, e)
 		for _, side := range []string{"dialed", "accepted"} {
 			c, peer := ends(t, ln, tr, side)
@@ -107,7 +107,7 @@ func TestReadDeadline(t *testing.T) {
 }
 
 func TestWriteDeadline(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	for _, side := range []string{"dialed", "accepted"} {
 		c, peer := ends(t, ln, tr, side)
 
@@ -136,7 +136,7 @@ func TestWriteDeadline(t *testing.T) {
 }
 
 func TestSetDeadlineCoversBothDirections(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	c, _ := connected(t, ln, tr)
 	setDeadline(t, c.SetDeadline, time.Now().Add(-time.Second))
 	_, err := c.Read(make([]byte, 1))
@@ -200,7 +200,7 @@ func ends(t *testing.T, ln net.Listener, tr permuteproxy.Transport, side string)
 }
 
 func TestCloseInterruptsABlockedRead(t *testing.T) {
-	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.TransportEngine) {
 		ln, tr := pair(t, e)
 		for _, side := range []string{"dialed", "accepted"} {
 			end, _ := ends(t, ln, tr, side)
@@ -223,7 +223,7 @@ func TestCloseInterruptsABlockedRead(t *testing.T) {
 }
 
 func TestCloseInterruptsABlockedWrite(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	for _, side := range []string{"dialed", "accepted"} {
 		end, peer := ends(t, ln, tr, side)
 		errc := make(chan error, 1)
@@ -252,7 +252,7 @@ func TestCloseInterruptsABlockedWrite(t *testing.T) {
 }
 
 func TestReadReturnsAtOnceWhileADialedCloseWaits(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	c, _ := connected(t, ln, tr)
 	closed := make(chan struct{})
 	go func() {
@@ -290,7 +290,7 @@ func eventuallyReleased(t *testing.T, s *memSocket, wait time.Duration, what str
 func TestCloseReleasesEverythingOnce(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	if _, err := c.Write([]byte("x")); err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestCancelingADialInItsHandshakeReleasesEverything(t *testing.T) {
 	before := quicGoroutines()
 	mem := newMemNet()
 	// Nothing listens at the endpoint, so the handshake waits.
-	tr := build(t, permuteproxy.Engine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
+	tr := build(t, permuteproxy.TransportEngine{Base: mem}, quicChain("127.0.0.1:9", newKeys(t).client))
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
@@ -359,7 +359,7 @@ func TestMain(m *testing.M) {
 	if addr := os.Getenv("QUIC_TEST_CHILD_ADDR"); addr != "" {
 		// The child of TestAProcessExitingRightAfterCloseDeliversWhatItWrote.
 		size, _ := strconv.Atoi(os.Getenv("QUIC_TEST_CHILD_SIZE"))
-		tr, err := permuteproxy.Engine{}.Transport(quicChain(addr, permuteproxy.Options{"tls_server_name": "proxy.test", "tls_ca_file": os.Getenv("QUIC_TEST_CHILD_CA")}))
+		tr, err := permuteproxy.TransportEngine{}.Transport(quicChain(addr, permuteproxy.Options{"tls_server_name": "proxy.test", "tls_ca_file": os.Getenv("QUIC_TEST_CHILD_CA")}))
 		if err == nil {
 			err = writeAndClose(tr, string(pattern(size)))
 		}
@@ -384,7 +384,7 @@ func pattern(n int) []byte {
 }
 
 func TestAProcessExitingRightAfterCloseDeliversWhatItWrote(t *testing.T) {
-	ln, k := listenQUIC(t, permuteproxy.Engine{})
+	ln, k := listenQUIC(t, permuteproxy.TransportEngine{})
 	for _, size := range []int{5, 64 << 10, 256 << 10} {
 		for range 4 {
 			arrived := make(chan error, 1)
@@ -419,7 +419,7 @@ func TestAProcessExitingRightAfterCloseDeliversWhatItWrote(t *testing.T) {
 }
 
 func TestEveryStreamWrittenAndClosedArrivesWhole(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	const streams = 500
 	arrived := make(chan string, streams)
 	go func() {
@@ -475,7 +475,7 @@ func TestEveryStreamWrittenAndClosedArrivesWhole(t *testing.T) {
 }
 
 func TestASlowReaderGetsAllAClosedDialerWrote(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	c, srv := connected(t, ln, tr)
 	data := random(t, 2<<20)
 	if _, err := c.Write(data); err != nil {
@@ -494,7 +494,7 @@ func TestDialedCloseReturnsOnceThePeerEnds(t *testing.T) {
 	// A bound far off, so only the release can end Close early.
 	quic.SetCloseWait(t, 10*time.Second)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	go func() {
 		io.Copy(io.Discard, srv)
@@ -508,7 +508,7 @@ func TestDialedCloseReturnsOnceThePeerEnds(t *testing.T) {
 }
 
 func TestDialedCloseReturnsByTheShortBoundWhenThePeerNeverReads(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	c, _ := connected(t, ln, tr)
 	// Twice the peer's window, so the end of the stream queues behind data the peer never takes.
 	if _, err := c.Write(make([]byte, 2<<20)); err != nil {
@@ -518,7 +518,7 @@ func TestDialedCloseReturnsByTheShortBoundWhenThePeerNeverReads(t *testing.T) {
 }
 
 func TestAnExpiredWriteDeadlineLosesNothingAtClose(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	accepted := accept(t, ln)
 	c := dial(t, tr)
 	data := random(t, 512<<10)
@@ -536,7 +536,7 @@ func TestAnExpiredWriteDeadlineLosesNothingAtClose(t *testing.T) {
 
 func TestDialedCloseReleasesOnceThePeerCloses(t *testing.T) {
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, srv := connected(t, ln, tr)
 	if _, err := c.Write([]byte("x")); err != nil {
 		t.Fatal(err)
@@ -595,7 +595,7 @@ func TestAPeerEndingItsSideBeforeReadingGetsAllTheDialerWrote(t *testing.T) {
 					return nil
 				}()
 			}()
-			c := dial(t, build(t, permuteproxy.Engine{}, quicChain(ep.LocalAddr().String(), k.client)))
+			c := dial(t, build(t, permuteproxy.TransportEngine{}, quicChain(ep.LocalAddr().String(), k.client)))
 			c.SetReadDeadline(time.Now().Add(5 * time.Second))
 			if got, err := io.ReadAll(c); !errors.Is(err, tt.ended) || len(got) != 0 {
 				t.Fatalf("dialer read %q, %v; want the peer's end of stream", got, err)
@@ -615,7 +615,7 @@ func TestDialedCloseReleasesByTheLingerBound(t *testing.T) {
 	quic.SetCloseWait(t, 200*time.Millisecond)
 	quic.SetLinger(t, time.Second)
 	mem := newMemNet()
-	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	ln, tr := pair(t, permuteproxy.TransportEngine{Base: mem})
 	c, _ := connected(t, ln, tr)
 	mem.cut()
 	if _, err := c.Write([]byte("x")); err != nil {

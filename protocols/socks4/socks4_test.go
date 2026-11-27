@@ -44,7 +44,7 @@ func TestClientRefusesUDPAndUnix(t *testing.T) {
 			t.Run(scheme+"/"+network, func(t *testing.T) {
 				base := &testutils.CountingNetwork{}
 				c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: scheme}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
-				n, err := permuteproxy.Engine{Base: base}.Client(c)
+				n, err := permuteproxy.ClientEngine{Base: base}.Client(c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -151,7 +151,7 @@ func TestASecondRunBindsTheAddressTheFirstBound(t *testing.T) {
 		return ln, err
 	}}
 	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks4"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:0"}}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+	srv, err := permuteproxy.ServerEngine{Base: base, Upstream: upstream}.Server(c)
 	if err != nil {
 		t.Fatal(err)
 	}
