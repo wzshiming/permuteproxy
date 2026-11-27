@@ -13,5 +13,5 @@ func init() {
 		HostKey:    tlsutils.KeyServerName,
 		NewAdapter: NewAdapter,
 	})
-	permuteproxy.RegisterAlias("https", "http+tls")
+	permuteproxy.RegisterAlias("https", permuteproxy.AliasSpec{Expansion: "http+tls", DefaultPort: "443"})
 }

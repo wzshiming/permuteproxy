@@ -16,6 +16,7 @@ func init() {
 		OptionKeys:  options,
 		UsernameKey: KeyUsername,
 		PasswordKey: KeyPassword,
+		DefaultPort: "22",
 		Networks:    []string{"tcp", "unix", "cmd"},
 		NewClient:   NewClient,
 		NewServer:   NewServer,

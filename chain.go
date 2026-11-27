@@ -48,6 +48,7 @@ func (c Chain) resolve() (*resolved, error) {
 	if c.Endpoint.Address == "" && !c.selfClient() {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
 	}
+	c.Endpoint.Address = c.address()
 	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address, listen: c.Endpoint.Address}
 	network := c.Endpoint.Network
 	r.host = endpointHost(network, c.Endpoint.Address)
@@ -115,6 +116,22 @@ func (c Chain) resolve() (*resolved, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// address is the endpoint's address, a host:port one that names no port taking the default of the chain's alias or outermost layer.
+func (c Chain) address() string {
+	network := c.Endpoint.Network
+	if ns, ok := lookupNetwork(network); network != "" && (!ok || ns.AddressKind != AddressHost) {
+		return c.Endpoint.Address
+	}
+	tokens := make([]string, 0, len(c.Layers)+1)
+	for _, l := range c.Layers {
+		tokens = append(tokens, l.Scheme)
+	}
+	if network != "" {
+		tokens = append(tokens, network)
+	}
+	return withPort(c.Endpoint.Address, defaultPort(tokens))
 }
 
 // endpointHost is the host of address when network, or the tcp or udp an empty one resolves to, writes it as host:port; an IPv6 zone is dropped, as no name or certificate carries one.

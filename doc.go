@@ -8,7 +8,9 @@
 // on one of two planes: Stream, reliable ordered byte streams as tcp carries, and
 // Packet, datagrams each with its peer as udp carries. A network carries one plane; a
 // layer declares the planes it requires, provides and preserves, and a chain is valid
-// only where they fit.
+// only where they fit. A host:port endpoint written without a port takes, per build,
+// the DefaultPort of the alias its tokens fold into or else of its outermost layer,
+// as ssh://jump reaches jump:22.
 //
 // Three engines each build a chain one way. TransportEngine.Transport stacks adapter
 // layers into a Transport that dials and listens at the endpoint. ClientEngine.Client
