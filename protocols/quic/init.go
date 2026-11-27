@@ -7,7 +7,6 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("quic", permuteproxy.LayerSpec{
-		Kind:       permuteproxy.LayerAdapter,
 		Requires:   permuteproxy.Packet,
 		Provides:   permuteproxy.Stream,
 		OptionKeys: tlsutils.OptionKeysWithoutACME(),

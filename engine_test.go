@@ -345,7 +345,6 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 	var got Network
 	name := fresh("borrowing")
 	RegisterLayer(name, LayerSpec{
-		Kind:     LayerProxy,
 		Requires: Stream,
 		Provides: Stream,
 		NewServer: func(Options) (*ServerFuncs, error) {
@@ -375,7 +374,6 @@ func TestEngineBorrowsLocalForClient(t *testing.T) {
 	var got Network
 	name := fresh("borrowing-client")
 	RegisterLayer(name, LayerSpec{
-		Kind:     LayerProxy,
 		Requires: Stream,
 		Provides: Packet,
 		Networks: []string{"udp"},

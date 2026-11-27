@@ -7,7 +7,6 @@ import (
 
 func init() {
 	permuteproxy.RegisterLayer("tls", permuteproxy.LayerSpec{
-		Kind:       permuteproxy.LayerAdapter,
 		Requires:   permuteproxy.Stream,
 		Provides:   permuteproxy.Stream,
 		OptionKeys: tlsutils.OptionKeys(),

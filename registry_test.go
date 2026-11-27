@@ -93,7 +93,7 @@ func TestRegisterRejectsServerDeclarations(t *testing.T) {
 	adapter.NewServer = proxy.NewServer
 	for name, spec := range map[string]LayerSpec{
 		"server-adapter": adapter,
-		"server-none":    {Kind: LayerProxy, Requires: Stream, Provides: Stream},
+		"server-none":    {Requires: Stream, Provides: Stream},
 	} {
 		mustPanic(t, name, func() { RegisterLayer(name, spec) })
 		if _, ok := lookupLayer(name); ok {

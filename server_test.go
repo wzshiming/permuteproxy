@@ -211,7 +211,7 @@ func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 
 func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 	name := fresh("test-dual-server")
-	RegisterLayer(name, LayerSpec{Kind: LayerProxy, Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
+	RegisterLayer(name, LayerSpec{Requires: Stream | Packet, Provides: Stream, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-dual-server.newserver")
 		return &ServerFuncs{Serve: failServe, ServePacket: failServePacket}, nil
 	}})

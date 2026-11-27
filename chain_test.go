@@ -83,7 +83,6 @@ func taint(name string, opts Options) {
 // fakeAdapter provides one plane over the plane it requires, recording each call of its link.
 func fakeAdapter(name string, requires, provides Plane, options ...string) LayerSpec {
 	return LayerSpec{
-		Kind:       LayerAdapter,
 		Requires:   requires,
 		Provides:   provides,
 		OptionKeys: options,
@@ -117,7 +116,6 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Layer
 // fakeProxy declares a proxy whose client and server functions record each call with what they are handed.
 func fakeProxy(name string, requires, provides, preserves Plane, user, pass string, options ...string) LayerSpec {
 	return LayerSpec{
-		Kind:        LayerProxy,
 		Requires:    requires,
 		Provides:    provides,
 		Preserves:   preserves,
@@ -158,7 +156,7 @@ func fakeProxy(name string, requires, provides, preserves Plane, user, pass stri
 
 // declared is an adapter whose NewAdapter returns funcs and err as given.
 func declared(requires, provides Plane, funcs *AdapterFuncs, err error) LayerSpec {
-	return LayerSpec{Kind: LayerAdapter, Requires: requires, Provides: provides, NewAdapter: func(Options) (*AdapterFuncs, error) { return funcs, err }}
+	return LayerSpec{Requires: requires, Provides: provides, NewAdapter: func(Options) (*AdapterFuncs, error) { return funcs, err }}
 }
 
 var (
@@ -193,7 +191,7 @@ func hookedAdapter(name string, requires, provides Plane, err error) LayerSpec {
 
 // openingAdapter provides Stream over Packet through an Open that obtains a carrier for its first dial and keeps it for the later ones.
 func openingAdapter(name string, hook error) LayerSpec {
-	return LayerSpec{Kind: LayerAdapter, Requires: Packet, Provides: Stream, NewAdapter: func(Options) (*AdapterFuncs, error) {
+	return LayerSpec{Requires: Packet, Provides: Stream, NewAdapter: func(Options) (*AdapterFuncs, error) {
 		var kept net.Conn
 		return &AdapterFuncs{
 			BeforeDial: func() error { record("%s.beforedial", name); return hook },
@@ -255,7 +253,7 @@ var uncovered = map[string]LayerSpec{
 
 // declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
 func declaredProxy(provides, preserves Plane, funcs *ClientFuncs, err error) LayerSpec {
-	return LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
+	return LayerSpec{Requires: Stream, Provides: provides, Preserves: preserves, Networks: []string{"tcp", "udp"}, NewClient: func(Options) (*ClientFuncs, error) { return funcs, err }}
 }
 
 // failDial and failListenPacket fill client functions that fixtures must declare but do not exercise.
@@ -274,7 +272,7 @@ var uncoveredClients = map[string]LayerSpec{
 
 // declaredServer is a proxy providing Stream over the planes it requires or preserves, whose NewServer returns funcs and err as given.
 func declaredServer(requires, preserves Plane, funcs *ServerFuncs, err error) LayerSpec {
-	return LayerSpec{Kind: LayerProxy, Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
+	return LayerSpec{Requires: requires, Provides: Stream, Preserves: preserves, NewServer: func(Options) (*ServerFuncs, error) { return funcs, err }}
 }
 
 // failServe and failServePacket fill server functions that fixtures must declare but do not exercise.
@@ -337,7 +335,7 @@ func init() {
 	anyProxy.NewClient, anyProxy.Networks = nil, nil
 	RegisterLayer("test-any", anyProxy)
 	// test-peer resolves the default peer of its udp dials and binds their sockets through local.
-	RegisterLayer("test-peer", LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
+	RegisterLayer("test-peer", LayerSpec{Requires: Stream, Provides: Packet, Networks: []string{"udp"}, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{
 			ListenPacket: func(ctx context.Context, _ Transport, local Network, network, address string) (net.PacketConn, error) {
 				record("test-peer.listenpacket %s %s", network, address)
@@ -377,7 +375,6 @@ func init() {
 	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("closableserver", declaredServer(Stream, 0, &ServerFuncs{Serve: failServe, Close: func() error { record("closableserver.close"); return nil }}, nil))
 	RegisterLayer("nilproxy", LayerSpec{
-		Kind:      LayerProxy,
 		Requires:  Stream,
 		Provides:  Stream,
 		Networks:  []string{"tcp"},
@@ -399,11 +396,11 @@ func init() {
 	RegisterLayer("test-reject-client-packet", declaredProxy(Packet, 0, &ClientFuncs{Close: func() error { record("test-reject-client-packet.close"); return nil }}, nil))
 	RegisterLayer("test-reject-server-packet", declaredServer(Stream, Packet, &ServerFuncs{Serve: failServe, Close: func() error { record("test-reject-server-packet.close"); return nil }}, nil))
 	// test-counted passes its carrier through and records its Close.
-	RegisterLayer("test-counted", LayerSpec{Kind: LayerAdapter, Preserves: Stream | Packet, NewAdapter: func(Options) (*AdapterFuncs, error) {
+	RegisterLayer("test-counted", LayerSpec{Preserves: Stream | Packet, NewAdapter: func(Options) (*AdapterFuncs, error) {
 		return &AdapterFuncs{Close: func() error { record("test-counted.close"); return nil }}, nil
 	}})
 	// test-packet-server binds only a Packet carrier, so a Stream one leaves it nothing to serve.
-	RegisterLayer("test-packet-server", LayerSpec{Kind: LayerProxy, Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
+	RegisterLayer("test-packet-server", LayerSpec{Provides: Stream, Preserves: Packet, NewServer: func(Options) (*ServerFuncs, error) {
 		record("test-packet-server.newserver")
 		return &ServerFuncs{ServePacket: func(_ context.Context, _ net.PacketConn, upstream Network) error {
 			record("test-packet-server.servepacket upstream=%s", netName(upstream))
@@ -411,7 +408,7 @@ func init() {
 		}}, nil
 	}})
 	// test-relay's server binds through its upstream on the network its relay option names, a socket on a datagram one, returning the outcome.
-	RegisterLayer("test-relay", LayerSpec{Kind: LayerProxy, Requires: Stream, Provides: Stream, OptionKeys: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
+	RegisterLayer("test-relay", LayerSpec{Requires: Stream, Provides: Stream, OptionKeys: []string{"relay"}, NewServer: func(opts Options) (*ServerFuncs, error) {
 		return &ServerFuncs{Serve: func(ctx context.Context, _ net.Listener, upstream Network) error {
 			network := opts["relay"]
 			var bound io.Closer

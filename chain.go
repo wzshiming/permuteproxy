@@ -69,7 +69,7 @@ func (c Chain) resolve() (*resolved, error) {
 		if !ok {
 			return nil, fmt.Errorf("layer %q: unknown scheme: %w", l.Scheme, ErrInvalidChain)
 		}
-		if spec.Kind == LayerProxy && i != 0 {
+		if spec.isProxy() && i != 0 {
 			return nil, fmt.Errorf("layer %q: proxy must be outermost: %w", l.Scheme, ErrInvalidChain)
 		}
 		for k := range l.Options {
@@ -154,7 +154,7 @@ func (c Chain) proxy() (*resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(r.specs) == 0 || r.specs[0].Kind != LayerProxy {
+	if len(r.specs) == 0 || !r.specs[0].isProxy() {
 		return nil, fmt.Errorf("outermost layer is not a proxy: %w", ErrInvalidChain)
 	}
 	return r, nil

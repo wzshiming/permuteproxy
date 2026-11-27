@@ -9,7 +9,6 @@ import (
 
 // dgram is protocols/local's layer of that name, declared alike.
 var dgram = LayerSpec{
-	Kind:     LayerAdapter,
 	Requires: Stream,
 	Provides: Packet,
 	Lossy:    Packet,

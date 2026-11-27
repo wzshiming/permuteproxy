@@ -151,7 +151,7 @@ func checkExpression(text string, kind AddressKind) (expression, error) {
 		return x, err
 	}
 	for _, name := range x.layers {
-		if spec, ok := lookupLayer(name); !ok || spec.Kind != LayerAdapter {
+		if spec, ok := lookupLayer(name); !ok || spec.isProxy() {
 			return x, fmt.Errorf("%q is not a registered adapter", name)
 		}
 	}
