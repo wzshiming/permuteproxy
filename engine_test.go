@@ -109,7 +109,7 @@ func TestEngineClientServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
 			c := parse(t, tt.uri)
-			n, err := ClientEngine{Base: base}.Client(c)
+			n, err := ClientEngine{Base: base, Local: base}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,10 +154,10 @@ func TestEngineRejects(t *testing.T) {
 		want error
 	}{
 		{"transport of proxy", func(c Chain) error { _, err := TransportEngine{Base: base}.Transport(c); return err }, "test-http://127.0.0.1:1", ErrInvalidChain},
-		{"client of adapter", func(c Chain) error { _, err := ClientEngine{Base: base}.Client(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
+		{"client of adapter", func(c Chain) error { _, err := ClientEngine{Base: base, Local: base}.Client(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
 		{"server of adapter", func(c Chain) error { _, err := ServerEngine{Base: base}.Server(c); return err }, "test-tls://127.0.0.1:1", ErrInvalidChain},
 		{"server of raw endpoint", func(c Chain) error { _, err := ServerEngine{Base: base}.Server(c); return err }, "tcp://127.0.0.1:1", ErrInvalidChain},
-		{"client without constructor", func(c Chain) error { _, err := ClientEngine{Base: base}.Client(c); return err }, "test-any+test-tls://127.0.0.1:1", ErrUnsupported},
+		{"client without constructor", func(c Chain) error { _, err := ClientEngine{Base: base, Local: base}.Client(c); return err }, "test-any+test-tls://127.0.0.1:1", ErrUnsupported},
 		{"server without constructor", func(c Chain) error { _, err := ServerEngine{Base: base}.Server(c); return err }, "test-peer://127.0.0.1:1", ErrUnsupported},
 	}
 	for _, tt := range tests {
@@ -173,7 +173,7 @@ func TestEngineRejects(t *testing.T) {
 		if _, err := (TransportEngine{Base: base}).Transport(c); !errors.Is(err, ErrInvalidChain) {
 			t.Fatalf("Transport(%+v) = %v, want ErrInvalidChain", c, err)
 		}
-		if _, err := (ClientEngine{Base: base}).Client(c); !errors.Is(err, ErrInvalidChain) {
+		if _, err := (ClientEngine{Base: base, Local: base}).Client(c); !errors.Is(err, ErrInvalidChain) {
 			t.Fatalf("Client(%+v) = %v, want ErrInvalidChain", c, err)
 		}
 		assertCalls(t)
@@ -292,7 +292,10 @@ func TestEngineRejectsNilResults(t *testing.T) {
 			_, err := TransportEngine{Base: base}.Transport(parse(t, "niladapter://x:1"))
 			return err
 		}(),
-		"client": func() error { _, err := ClientEngine{Base: base}.Client(parse(t, "nilproxy://x:1")); return err }(),
+		"client": func() error {
+			_, err := ClientEngine{Base: base, Local: base}.Client(parse(t, "nilproxy://x:1"))
+			return err
+		}(),
 		"server": func() error { _, err := ServerEngine{Base: base}.Server(parse(t, "nilproxy://x:1")); return err }(),
 	} {
 		if err == nil || !strings.Contains(err.Error(), "nil") {
@@ -305,7 +308,7 @@ func TestEngineReleasesFailedBuild(t *testing.T) {
 	calls = nil
 	base := &closableNet{fakeNet{name: "base"}}
 	transport := func(c Chain) error { _, err := TransportEngine{Base: base}.Transport(c); return err }
-	client := func(c Chain) error { _, err := ClientEngine{Base: base}.Client(c); return err }
+	client := func(c Chain) error { _, err := ClientEngine{Base: base, Local: base}.Client(c); return err }
 	server := func(c Chain) error { _, err := ServerEngine{Base: base}.Server(c); return err }
 	tests := []struct {
 		name  string
@@ -368,7 +371,7 @@ func TestEngineBorrowsUpstream(t *testing.T) {
 	}
 }
 
-func TestEngineBorrowsBaseForClient(t *testing.T) {
+func TestEngineBorrowsLocalForClient(t *testing.T) {
 	var got Network
 	name := fresh("borrowing-client")
 	RegisterLayer(name, LayerSpec{
@@ -384,7 +387,7 @@ func TestEngineBorrowsBaseForClient(t *testing.T) {
 		},
 	})
 	base := &closableNet{fakeNet{name: "base"}}
-	n, err := (ClientEngine{Base: base}).Client(parse(t, name+"://127.0.0.1:1"))
+	n, err := (ClientEngine{Base: base, Local: base}).Client(parse(t, name+"://127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,10 +395,10 @@ func TestEngineBorrowsBaseForClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := got.(io.Closer); ok {
-		t.Fatal("client received a closable base")
+		t.Fatal("client received a closable local")
 	}
 	if b, ok := got.(borrowed); !ok || b.Network != Network(base) {
-		t.Fatalf("client local = %#v, want the injected base borrowed", got)
+		t.Fatalf("client local = %#v, want the injected local borrowed", got)
 	}
 }
 
@@ -420,7 +423,7 @@ func TestBuiltPlanesFollowALossyCarrier(t *testing.T) {
 		}
 	})
 	t.Run("client", func(t *testing.T) {
-		n, err := ClientEngine{Base: base}.Client(mk("", "test-derive-kept", "test-keep"))
+		n, err := ClientEngine{Base: base, Local: base}.Client(mk("", "test-derive-kept", "test-keep"))
 		if err != nil {
 			t.Fatal(err)
 		}

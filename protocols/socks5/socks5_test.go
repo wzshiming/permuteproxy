@@ -127,7 +127,7 @@ func dialer(t *testing.T, base permuteproxy.Network, address string, opts permut
 	if resolve {
 		scheme = "socks5"
 	}
-	n, err := permuteproxy.ClientEngine{Base: base}.Client(chain(scheme, address, opts))
+	n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(chain(scheme, address, opts))
 	if err != nil {
 		t.Fatal(err)
 	}

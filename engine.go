@@ -9,9 +9,10 @@ type TransportEngine struct {
 	Base Network // reaches the endpoint; nil resolves each call by network name: the registered implementation, else ErrUnsupported
 }
 
-// ClientEngine builds proxy chains into clients, borrowing Base without ever closing it.
+// ClientEngine builds proxy chains into clients, borrowing Base and Local without ever closing them.
 type ClientEngine struct {
-	Base Network // reaches the endpoint and binds the client's own sockets; nil resolves each call as a nil TransportEngine.Base does
+	Base  Network // reaches the endpoint; nil resolves each call as a nil TransportEngine.Base does
+	Local Network // what clients bind their own sockets through; nil resolves each call as a nil Base does
 }
 
 // ServerEngine builds proxy chains into servers, borrowing Base and Upstream without ever closing them.
@@ -69,13 +70,13 @@ func below(base Network, c Chain, side string, declares func(LayerSpec) bool) (*
 	return r, inner, nil
 }
 
-// Client builds the client of a proxy chain's outermost layer; the result's Close forwards to the layer's own result.
+// Client builds the client of a proxy chain's outermost layer, which binds its own sockets through Local; the result's Close forwards to the layer's own result.
 func (e ClientEngine) Client(c Chain) (Network, error) {
 	r, inner, err := below(e.Base, c, "client", func(s LayerSpec) bool { return s.NewClient != nil })
 	if err != nil {
 		return nil, err
 	}
-	n, err := r.specs[0].client(inner, borrowed{orByName(e.Base)}, c.Layers[0].Options.clone())
+	n, err := r.specs[0].client(inner, borrowed{orByName(e.Local)}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", c.Layers[0].Scheme, err)

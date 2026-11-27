@@ -331,7 +331,7 @@ func TestProxy(t *testing.T) {
 					cc := c
 					cc.Layers = append([]permuteproxy.Layer{{Scheme: scheme, Options: c.Layers[0].Options}}, c.Layers[1:]...)
 					clientBase := newProbe(local.Network)
-					n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(cc)
+					n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(cc)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -624,7 +624,7 @@ func TestClientRefusesPacket(t *testing.T) {
 	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1"} {
 		t.Run(uri, func(t *testing.T) {
 			base := newProbe(testutils.System{})
-			n, err := permuteproxy.ClientEngine{Base: base}.Client(parse(t, uri))
+			n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(parse(t, uri))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -641,7 +641,7 @@ func TestClientRefusesPacket(t *testing.T) {
 
 func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
 	under := &testutils.CountingNetwork{}
-	client, err := permuteproxy.ClientEngine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
+	client, err := permuteproxy.ClientEngine{Base: under, Local: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
 	if err != nil {
 		t.Fatal(err)
 	}

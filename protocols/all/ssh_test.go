@@ -161,7 +161,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	ssh := sshExec(t, newProbe(local.Network))
 	t.Run("ss+udp", func(t *testing.T) {
 		base := &lossyCalls{Network: ssh}
-		n, err := permuteproxy.ClientEngine{Base: base}.Client(parse(t, "ss+udp://127.0.0.1:1"))
+		n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(parse(t, "ss+udp://127.0.0.1:1"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 		_, done := start(t, permuteproxy.ServerEngine{Base: proxyBase}, c)
 		c.Endpoint.Address = waitBound(t, proxyBase, done).String()
 		base := &lossyCalls{Network: ssh}
-		n, err := permuteproxy.ClientEngine{Base: base}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}

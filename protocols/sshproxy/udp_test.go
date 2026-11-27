@@ -229,7 +229,7 @@ func TestMalformedUDPCommandFailsClientBuild(t *testing.T) {
 	n.(io.Closer).Close()
 	for _, command := range []string{"", "nc -u '%h' %p", "nc -u %h %x", "nc -u %h %p 'oops", `nc -u %h %p \`, " ", "# %h %p"} {
 		base := &testutils.CountingNetwork{}
-		if _, err := (permuteproxy.ClientEngine{Base: base}).Client(chain(permuteproxy.Options{"udp_command": command}, "127.0.0.1:1")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+		if _, err := (permuteproxy.ClientEngine{Base: base, Local: base}).Client(chain(permuteproxy.Options{"udp_command": command}, "127.0.0.1:1")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 			t.Errorf("Client() with udp_command %q = %v, want ErrInvalidChain", command, err)
 		}
 		if got := base.Calls.Load(); got != 0 {
@@ -256,7 +256,7 @@ func TestSSHBaseRefusesPacketsOfLayersKeepingBoundaries(t *testing.T) {
 	up := newUpstream()
 	base := dialServer(t, &clientBase{}, serveExec(t, up), withCredentials())
 	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-ssh-framed"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: testutils.ServeEcho(t, listen(t)).String()}}
-	n, err := permuteproxy.ClientEngine{Base: base}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}

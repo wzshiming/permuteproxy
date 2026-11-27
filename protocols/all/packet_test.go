@@ -90,7 +90,7 @@ func TestSOCKS5PacketEcho(t *testing.T) {
 			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			c.Endpoint.Address = waitBound(t, base, done).String()
 			clientBase := newProbe(testutils.System{})
-			n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+			n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	c.Layers[0].Options = permuteproxy.Options{"username": "u", "password": "x"}
 	clientBase := newProbe(testutils.System{})
-	n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,12 +152,12 @@ func socks5TwoHops(t *testing.T) (hop2 permuteproxy.Network, clientBase, firstUp
 	_, done = start(t, permuteproxy.ServerEngine{Base: secondBase, Upstream: secondUpstream}, second)
 	second.Endpoint.Address = waitBound(t, secondBase, done).String()
 	clientBase = newProbe(testutils.System{})
-	hop1, err := permuteproxy.ClientEngine{Base: clientBase}.Client(first)
+	hop1, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(first)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeIf(hop1) })
-	hop2, err = permuteproxy.ClientEngine{Base: hop1}.Client(second)
+	hop2, err = permuteproxy.ClientEngine{Base: hop1, Local: hop1}.Client(second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestNativePacketDialOverSOCKS5(t *testing.T) {
 	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	proxy, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+	proxy, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestShadowsocksPacketEcho(t *testing.T) {
 				t.Fatalf("bound tcp %v and udp %v, want the declared address on both", tcp, udp)
 			}
 			clientBase := newProbe(testutils.System{})
-			n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+			n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -353,7 +353,7 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 			t.Fatalf("base listens = %d for a udp-only server", base.listens.Load())
 		}
 		clientBase := newProbe(testutils.System{})
-		n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -372,7 +372,7 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 		_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 		c.Endpoint.Address = waitBound(t, base, done).String()
 		clientBase := newProbe(testutils.System{})
-		n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -595,7 +595,7 @@ func TestQUICOverShadowsocksPacket(t *testing.T) {
 	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	ss, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+	ss, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -627,7 +627,7 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
