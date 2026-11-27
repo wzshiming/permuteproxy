@@ -92,6 +92,8 @@ func RegisterLayer(name string, spec LayerSpec) {
 		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
 	case spec.NewAdapter != nil && (spec.NewClient != nil || spec.NewServer != nil):
 		panic(fmt.Sprintf("permuteproxy: layer %q must declare either NewAdapter, as an adapter, or NewClient or NewServer, as a proxy, not both", name))
+	case spec.HostKey != "" && spec.NewAdapter == nil:
+		panic(fmt.Sprintf("permuteproxy: layer %q may set HostKey only as an adapter", name))
 	case spec.NewAdapter == nil && spec.NewClient == nil && spec.NewServer == nil:
 		panic(fmt.Sprintf("permuteproxy: layer %q must declare NewAdapter, as an adapter, or NewClient or NewServer, as a proxy", name))
 	case (spec.NewClient == nil) != (len(spec.Networks) == 0):

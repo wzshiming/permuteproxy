@@ -10,12 +10,12 @@ import (
 )
 
 func NewClient(metadata url.Values) (*tls.Config, error) {
-	config := &tls.Config{ServerName: metadata.Get(keyServerName)}
-	if skipVerify, _ := strconv.ParseBool(metadata.Get(keySkipVerify)); skipVerify {
+	config := &tls.Config{ServerName: metadata.Get(KeyServerName)}
+	if skipVerify, _ := strconv.ParseBool(metadata.Get(KeySkipVerify)); skipVerify {
 		config.InsecureSkipVerify = true
 		return config, nil
 	}
-	if caFile := metadata.Get(keyCAFile); caFile != "" {
+	if caFile := metadata.Get(KeyCAFile); caFile != "" {
 		data, err := os.ReadFile(caFile)
 		if err != nil {
 			return nil, err

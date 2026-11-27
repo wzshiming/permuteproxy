@@ -26,6 +26,7 @@ type LayerSpec struct {
 	OptionKeys  []string                                  // names of the options the layer accepts
 	UsernameKey string                                    // optional; the option a URI's username fills
 	PasswordKey string                                    // optional; the option a URI's password fills, beside UsernameKey
+	HostKey     string                                    // optional, adapters only; the option a build fills with the host of a host:port endpoint when the layer does not set it, as tls names the server it dials
 	NewAdapter  func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build
 	Networks    []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
 	NewClient   func(opts Options) (*ClientFuncs, error)  // declares a proxy's client per build
@@ -41,7 +42,7 @@ func (s LayerSpec) accepts(key string) bool {
 	if key == "" {
 		return false
 	}
-	if key == s.UsernameKey || key == s.PasswordKey {
+	if key == s.UsernameKey || key == s.PasswordKey || key == s.HostKey {
 		return true
 	}
 	for _, o := range s.OptionKeys {
