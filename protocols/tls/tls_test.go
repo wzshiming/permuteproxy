@@ -265,3 +265,51 @@ func TestCanceledHandshakeClosesSocketOnce(t *testing.T) {
 		t.Fatalf("underlying connection closed %d times, want 1", base.closed.Load())
 	}
 }
+
+func TestLaterDialsResumeTheSession(t *testing.T) {
+	caFile, certFile, keyFile := testutils.Issue(t, "proxy.test")
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	resumed := make(chan bool, 2)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// The byte carries the session ticket to a client that reads it.
+			if _, err := conn.Write([]byte{0}); err == nil {
+				resumed <- conn.(*tls.Conn).ConnectionState().DidResume
+			}
+			conn.Close()
+		}
+	}()
+	tr := transport(t, permuteproxy.Engine{}, "tls://"+ln.Addr().String()+"?tls_server_name=proxy.test&tls_ca_file="+caFile)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i, want := range []bool{false, true} {
+		conn, err := tr.Dial(ctx, permuteproxy.Stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.ReadFull(conn, make([]byte, 1)); err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+		select {
+		case got := <-resumed:
+			if got != want {
+				t.Fatalf("dial %d: server saw a resumed session = %t, want %t", i+1, got, want)
+			}
+		case <-ctx.Done():
+			t.Fatalf("dial %d: server did not finish the handshake", i+1)
+		}
+	}
+}

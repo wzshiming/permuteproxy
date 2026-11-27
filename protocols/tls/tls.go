@@ -16,7 +16,15 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	values := protoutils.Values(opts)
 	// Each side's config is built where it is needed: the CA file only by dialers, key material
 	// only by listeners.
-	clientConfig := sync.OnceValues(func() (*tls.Config, error) { return tlsutils.NewClient(values) })
+	clientConfig := sync.OnceValues(func() (*tls.Config, error) {
+		config, err := tlsutils.NewClient(values)
+		if err != nil {
+			return nil, err
+		}
+		// Later dials of the adapter resume the session of an earlier one instead of a full handshake.
+		config.ClientSessionCache = tls.NewLRUClientSessionCache(0)
+		return config, nil
+	})
 	var serverConfig atomic.Pointer[tls.Config] // what the latest BeforeListen built
 	return &permuteproxy.AdapterFuncs{
 		BeforeDial: func() error {
