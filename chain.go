@@ -3,7 +3,9 @@ package permuteproxy
 import (
 	"errors"
 	"fmt"
+	"net"
 	"slices"
+	"strings"
 )
 
 // ErrInvalidChain is returned, before any I/O, for a chain or declaration the root package cannot build.
@@ -33,6 +35,8 @@ type resolved struct {
 	own    int     // how many of layers are the chain's own
 	specs  []LayerSpec
 	planes []Plane // what the chain exposes above each layer, to the next layer out or to its user
+	host   string  // the host of the chain's endpoint when it is host:port, which fills the HostKey of its own layers
+	inner  string  // the same for the layers of its endpoint expression, of the endpoint that expression dials
 	stream string
 	packet string
 	dial   string    // the address the innermost layer dials: the endpoint's, or its expression's expansion
@@ -46,6 +50,7 @@ func (c Chain) resolve() (*resolved, error) {
 	}
 	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address, listen: c.Endpoint.Address}
 	network := c.Endpoint.Network
+	r.host = endpointHost(network, c.Endpoint.Address)
 	if ns, _ := lookupNetwork(network); ns.Dial != "" {
 		// RegisterNetwork has checked the expressions, so an address filling Dial fills Listen.
 		x, _ := parseExpression(ns.Dial)
@@ -62,6 +67,7 @@ func (c Chain) resolve() (*resolved, error) {
 		inner := x.over(dial)
 		r.layers = append(slices.Clip(c.Layers), inner.Layers...)
 		network, r.dial = inner.Endpoint.Network, inner.Endpoint.Address
+		r.inner = endpointHost(network, r.dial)
 	}
 	r.specs, r.planes = make([]LayerSpec, len(r.layers)), make([]Plane, len(r.layers))
 	for i, l := range r.layers {
@@ -109,6 +115,36 @@ func (c Chain) resolve() (*resolved, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// endpointHost is the host of address when network, or the tcp or udp an empty one resolves to, writes it as host:port; an IPv6 zone is dropped, as no name or certificate carries one.
+func endpointHost(network, address string) string {
+	if ns, ok := lookupNetwork(network); network != "" && (!ok || ns.AddressKind != AddressHost) {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return ""
+	}
+	if ip, _, zoned := strings.Cut(host, "%"); zoned && net.ParseIP(ip) != nil {
+		return ip
+	}
+	return host
+}
+
+// options are layer i's options for one build, its HostKey filled when the layer leaves it out.
+func (r *resolved) options(i int) Options {
+	opts := r.layers[i].Options.clone()
+	host := r.host
+	if i >= r.own {
+		host = r.inner
+	}
+	if key := r.specs[i].HostKey; key != "" && host != "" {
+		if _, set := opts[key]; !set {
+			opts[key] = host
+		}
+	}
+	return opts
 }
 
 // offer applies the chain rule over a carrier of avail; a failing layer offers nothing.

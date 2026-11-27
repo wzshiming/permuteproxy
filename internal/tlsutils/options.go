@@ -12,6 +12,9 @@ const (
 	keySelfSigned   = "tls_self_signed"
 )
 
+// ServerNameKey is the option naming the server a client verifies and asks for, which a build fills with the endpoint's host.
+const ServerNameKey = keyServerName
+
 // OptionKeys returns every tls layer option key.
 func OptionKeys() []string {
 	return append(OptionKeysWithoutACME(), keyAcmeHost, keyAcmeCacheDir)

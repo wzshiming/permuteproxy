@@ -136,7 +136,7 @@ func bind(n Network, stream, packet, address string, layered bool) *bound {
 // stack builds layers hi-1 out to lo over t, closing what it holds when a layer fails.
 func (r *resolved) stack(t Transport, lo, hi int) (Transport, error) {
 	for i := hi - 1; i >= lo; i-- {
-		next, err := r.specs[i].adapt(t, r.layers[i].Options.clone())
+		next, err := r.specs[i].adapt(t, r.options(i))
 		if err != nil {
 			closeIf(t)
 			return nil, fmt.Errorf("layer %q: %w", r.layers[i].Scheme, err)
