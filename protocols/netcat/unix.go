@@ -15,8 +15,8 @@ import (
 )
 
 // Local is a local.Local that also listens on cmd-nc-unix, where each connection is an nc -Ul
-// of its own and the socket file an nc leaves behind is removed, and binds cmd-nc-udp as one
-// nc -u -l, which serves a single peer. A Base given to an engine does either only if it is one.
+// of its own and the socket file an nc leaves behind is removed, and binds cmd-nc-udp and
+// cmd-nc-unixgram as one nc -u -l, which serves a single peer. A Base given to an engine does either only if it is one.
 type Local struct{ *local.Local }
 
 // Network is the Local over local.Network, the registered implementation of cmd-nc-unix.
@@ -51,16 +51,18 @@ func (l Local) Listen(ctx context.Context, network, address string) (net.Listene
 	})
 }
 
-// ListenPacket binds cmd-nc-udp at address as one nc -u -l, a socket for the single peer nc serves.
+// ListenPacket binds cmd-nc-udp and cmd-nc-unixgram at address as one nc -u -l, a socket for the
+// single peer nc serves. The socket file of cmd-nc-unixgram is left behind, as nothing proves it is nc's.
 func (l Local) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	if network != "cmd-nc-udp" {
+	template, ok := map[string]string{"cmd-nc-udp": ListenUDP, "cmd-nc-unixgram": ListenUnixgram}[network]
+	if !ok {
 		return l.Local.ListenPacket(ctx, network, address)
 	}
-	filled, err := permuteproxy.ClientEngine{Base: l.Local}.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: ListenUDP}})
+	filled, err := permuteproxy.ClientEngine{Base: l.Local}.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: template}})
 	if err != nil {
 		return nil, err
 	}
-	return listenPacket(ctx, filled, address)
+	return listenPacket(ctx, filled, network, address)
 }
 
 type socketFile struct {

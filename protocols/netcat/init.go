@@ -11,6 +11,7 @@ func init() {
 	permuteproxy.RegisterNetwork("cmd-nc-unix", permuteproxy.NetworkSpec{AddressKind: permuteproxy.AddressPath, Dial: "cmd:" + DialUnix, Network: Network})
 	// Binding goes to Network under this name too: one nc -u -l, which serves a single peer.
 	permuteproxy.RegisterNetwork("cmd-nc-udp", permuteproxy.NetworkSpec{AddressKind: permuteproxy.AddressHost, Dial: "dgram+cmd:" + DialUDP, Network: Network})
+	permuteproxy.RegisterNetwork("cmd-nc-unixgram", permuteproxy.NetworkSpec{AddressKind: permuteproxy.AddressPath, Dial: "dgram+cmd:" + DialUnixgram, Network: Network})
 	// The client: nc:[prefix] reaches each target it is asked for by an nc of its own.
 	client := permuteproxy.NetworkSpec{Plane: permuteproxy.Stream, AddressKind: permuteproxy.AddressOpaque, NewClient: NewClient}
 	permuteproxy.RegisterNetwork("nc", client)

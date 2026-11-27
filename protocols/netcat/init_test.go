@@ -13,6 +13,7 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
+	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
 func TestTemplates(t *testing.T) {
@@ -25,6 +26,8 @@ func TestTemplates(t *testing.T) {
 		{"ListenUnix", ListenUnix, "nc -Ul %h"},
 		{"DialUDP", DialUDP, "nc -u -w 30 %h %p"},
 		{"ListenUDP", ListenUDP, "nc -u -l %h %p"},
+		{"DialUnixgram", DialUnixgram, "nc -U -u -w 30 %h"},
+		{"ListenUnixgram", ListenUnixgram, "nc -U -u -l %h"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
@@ -77,6 +80,7 @@ func TestNetcatNetworkRegistrations(t *testing.T) {
 		{"cmd-nc://127.0.0.1:80", permuteproxy.Endpoint{Network: "cmd-nc", Address: "127.0.0.1:80"}, permuteproxy.Stream},
 		{"cmd-nc-unix://./s.sock", permuteproxy.Endpoint{Network: "cmd-nc-unix", Address: "./s.sock"}, permuteproxy.Stream},
 		{"cmd-nc-udp://127.0.0.1:53", permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: "127.0.0.1:53"}, permuteproxy.Packet},
+		{"cmd-nc-unixgram://./s.sock", permuteproxy.Endpoint{Network: "cmd-nc-unixgram", Address: "./s.sock"}, permuteproxy.Packet},
 	} {
 		t.Run(tt.want.Network, func(t *testing.T) {
 			c, err := permuteproxy.ParseURI(tt.uri)
@@ -106,6 +110,7 @@ func TestNetcatNetworksDialCmdOnTheBase(t *testing.T) {
 		{"cmd-nc", "127.0.0.1:80", permuteproxy.Stream, "dial cmd nc 127.0.0.1 80"},
 		{"cmd-nc-unix", "/tmp/a b.sock", permuteproxy.Stream, "dial cmd nc -U '/tmp/a b.sock'"},
 		{"cmd-nc-udp", "127.0.0.1:53", permuteproxy.Packet, "dial cmd nc -u -w 30 127.0.0.1 53"},
+		{"cmd-nc-unixgram", "/tmp/a b.sock", permuteproxy.Packet, "dial cmd nc -U -u -w 30 '/tmp/a b.sock'"},
 	} {
 		t.Run(tt.network, func(t *testing.T) {
 			base := &hop{}
@@ -178,6 +183,8 @@ func TestNetcatNetworksRefuseInvalidValues(t *testing.T) {
 		{"cmd-nc-unix", "-x.sock", false},
 		{"cmd-nc-udp", "127.0.0.1:53", true},
 		{"cmd-nc-udp", "-h:53", false},
+		{"cmd-nc-unixgram", "./s.sock", true},
+		{"cmd-nc-unixgram", "-x.sock", false},
 		{"cmd-nc-udp", "a b:53", false},
 		{"cmd-nc-udp", "a'b:53", false},
 		{"cmd-nc-udp", "h:65536", false},
@@ -371,6 +378,40 @@ func TestNetcatUDPListenServesOnePeer(t *testing.T) {
 	})
 }
 
+// cmd-nc-unixgram binds through nc -U -u -l on a Local, and is asked of a base under its own name.
+func TestNetcatUnixgramBinds(t *testing.T) {
+	ctx := context.Background()
+	base := &hop{}
+	tr, err := permuteproxy.TransportEngine{Base: base}.Transport(chain("cmd-nc-unixgram", "./s.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.ListenPacket(ctx); !errors.Is(err, errHop) {
+		t.Errorf("ListenPacket on cmd-nc-unixgram = %v, want the base's %v", err, errHop)
+	}
+	if want := []string{"listen packet cmd-nc-unixgram ./s.sock"}; !slices.Equal(base.calls, want) {
+		t.Fatalf("base calls = %q, want %q", base.calls, want)
+	}
+	argv := make(chan []string, 1)
+	n := Local{&local.Local{}}
+	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+		argv <- append([]string{name}, args...)
+		conn, _ := net.Pipe()
+		return conn, nil
+	}
+	pc, err := n.ListenPacket(ctx, "cmd-nc-unixgram", "./s.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	if got, want := <-argv, []string{"nc", "-U", "-u", "-l", "./s.sock"}; !slices.Equal(got, want) {
+		t.Fatalf("binding runs %q, want %q", got, want)
+	}
+	if got := pc.LocalAddr(); got.Network() != "unixgram" || got.String() != "./s.sock" {
+		t.Fatalf("LocalAddr = %s %s, want unixgram ./s.sock", got.Network(), got)
+	}
+}
+
 // freeUDP is a udp address nothing is bound to any more.
 func freeUDP(t *testing.T) string {
 	t.Helper()
@@ -408,6 +449,7 @@ func TestNetcatUDPBindsWithoutABase(t *testing.T) {
 func TestNetcatUDPRefusesLayersNeedingDatagrams(t *testing.T) {
 	for _, endpoint := range []permuteproxy.Endpoint{
 		{Network: "cmd-nc-udp", Address: "127.0.0.1:53"},
+		{Network: "cmd-nc-unixgram", Address: "./s.sock"},
 	} {
 		c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "test-datagrams"}}, Endpoint: endpoint}
 		if err := c.Validate(); !errors.Is(err, permuteproxy.ErrInvalidChain) || !strings.Contains(err.Error(), "datagram boundaries") {
