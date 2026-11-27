@@ -265,3 +265,65 @@ func TestClientWithoutListenPacketRefusesListedDatagrams(t *testing.T) {
 	}
 	assertCalls(t)
 }
+
+func init() {
+	spec := fakeProxy("test-bind", Stream, Stream|Packet, 0, "", "")
+	newClient := spec.NewClient
+	spec.NewClient = func(opts Options) (*ClientFuncs, error) {
+		funcs, err := newClient(opts)
+		funcs.Listen = func(_ context.Context, inner Transport, network, address string) (net.Listener, error) {
+			record("test-bind.listen %v %s %s", inner.Planes(), network, address)
+			return nil, nil
+		}
+		return funcs, err
+	}
+	RegisterLayer("test-bind", spec)
+}
+
+func TestClientListensThroughItsProxy(t *testing.T) {
+	ctx := context.Background()
+	n, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(mk("", "test-bind"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	for _, network := range []string{"tcp", "tcp4", "tcp6"} {
+		if _, err := n.Listen(ctx, network, "x:1"); err != nil {
+			t.Fatal(err)
+		}
+		assertCalls(t, "test-bind.listen stream "+network+" x:1")
+	}
+	// A datagram network, one the client does not list and an unknown one have no listener.
+	for _, network := range []string{"udp", "unixgram", "unix", "fakenet", "bogus", ""} {
+		if _, err := n.Listen(ctx, network, "x:1"); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("Listen(%q) = %v, want ErrUnsupported", network, err)
+		}
+		assertCalls(t)
+	}
+}
+
+func TestClientDoesNotListenOnADerivedNetwork(t *testing.T) {
+	spec := derivingProxy("test-derive", Stream, 0, []string{"tcp"}, map[string]string{"unix": "test-tls+tcp://%h:1"}, dialRelay)
+	newClient := spec.NewClient
+	spec.NewClient = func(opts Options) (*ClientFuncs, error) {
+		funcs, err := newClient(opts)
+		funcs.Listen = func(context.Context, Transport, string, string) (net.Listener, error) {
+			record("listen")
+			return nil, nil
+		}
+		return funcs, err
+	}
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := n.Listen(context.Background(), "unix", "x"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("Listen on a derived network = %v, want ErrUnsupported", err)
+	}
+	assertCalls(t)
+	if _, err := n.Listen(context.Background(), "tcp", "x:1"); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "listen")
+}

@@ -39,7 +39,7 @@ func newClient(opts permuteproxy.Options, resolve bool) (*permuteproxy.ClientFun
 		IsResolve: resolve,
 		Timeout:   time.Minute,
 	}}
-	return &permuteproxy.ClientFuncs{Dial: c.dial, ListenPacket: c.associate, Peer: c.peer}, nil
+	return &permuteproxy.ClientFuncs{Dial: c.dial, Listen: c.listen, ListenPacket: c.associate, Peer: c.peer}, nil
 }
 
 // client takes its control conns from inner and binds the sockets of its UDP associations through local.
@@ -61,14 +61,8 @@ func (c *client) peer(ctx context.Context, _, address string) (net.Addr, error) 
 	if err != nil {
 		return nil, err
 	}
-	if c.dialer.IsResolve && host != "" && net.ParseIP(host) == nil {
-		ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-		if err != nil {
-			if ips, err = net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
-				return nil, err
-			}
-		}
-		host = ips[0].String()
+	if host, err = c.lookup(ctx, host); err != nil {
+		return nil, err
 	}
 	portnum, err := strconv.Atoi(port)
 	if err != nil {
@@ -82,6 +76,20 @@ func (c *client) peer(ctx context.Context, _, address string) (net.Addr, error) 
 	}
 	// The library parses the target as an IP only; socks5h keeps the name for the proxy.
 	return netutils.NewNetAddr("udp", address), nil
+}
+
+// lookup resolves a name here for socks5, preferring IPv4 as the library does, and keeps it for socks5h.
+func (c *client) lookup(ctx context.Context, host string) (string, error) {
+	if !c.dialer.IsResolve || host == "" || net.ParseIP(host) != nil {
+		return host, nil
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		if ips, err = net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
+			return "", err
+		}
+	}
+	return ips[0].String(), nil
 }
 
 // associate performs the UDP ASSOCIATE handshake with its socket bound through local at address; WriteTo reaches any target.

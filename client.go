@@ -13,6 +13,7 @@ import (
 // ClientFuncs declares a proxy's client over the networks LayerSpec.Networks lists or Derive expresses, its functions receiving one inner Transport for the client's life.
 type ClientFuncs struct {
 	Dial         func(ctx context.Context, inner Transport, network, address string) (net.Conn, error)                      // a conn to address on a stream network
+	Listen       func(ctx context.Context, inner Transport, network, address string) (net.Listener, error)                  // optional; a listener at address on the proxy's side of a stream network, as BIND and a remote forward open
 	ListenPacket func(ctx context.Context, inner Transport, local Network, network, address string) (net.PacketConn, error) // a socket reaching any peer, its own end bound at address through local
 	Peer         func(ctx context.Context, network, address string) (net.Addr, error)                                       // optional; a udp dial's default peer, else its address carried unresolved
 	Derive       map[string]string                                                                                          // optional; base network -> expression over its own networks; Dial's conns must unblock a pending Read on Close
@@ -60,6 +61,14 @@ func (s LayerSpec) client(inner Transport, local Network, opts Options) (Network
 				return funcs.dialUDP(ctx, inner, local, network, address)
 			}
 			return nil, fmt.Errorf("dial %s: %w", network, ErrUnsupported)
+		},
+		ListenFunc: func(ctx context.Context, network, address string) (net.Listener, error) {
+			base, plane := a.admit(network)
+			// A derived network is dialed through an expression, which has no remote end to listen at.
+			if _, ok := derived[base]; ok || plane != Stream || funcs.Listen == nil {
+				return nil, fmt.Errorf("listen %s: %w", network, ErrUnsupported)
+			}
+			return funcs.Listen(ctx, inner, network, address)
 		},
 		ListenPacketFunc: func(ctx context.Context, network, address string) (net.PacketConn, error) {
 			base, plane := a.admit(network)
@@ -129,7 +138,7 @@ func (f *ClientFuncs) dialUDP(ctx context.Context, inner Transport, local Networ
 	return netutils.WrapPacket(pc, peer), nil
 }
 
-// restricted refuses dials and datagram sockets outside the chain's declared planes before they reach the client, which never listens.
+// restricted refuses dials, listeners and datagram sockets outside the chain's declared planes before they reach the client.
 type restricted struct {
 	network Network
 	plane   Plane
@@ -150,6 +159,9 @@ func (n restricted) DialContext(ctx context.Context, network, address string) (n
 }
 
 func (n restricted) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	if err := n.check("listen", network, Stream); err != nil {
+		return nil, err
+	}
 	return n.network.Listen(ctx, network, address)
 }
 

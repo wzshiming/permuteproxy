@@ -83,6 +83,7 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	c := &client{dialer: dialer}
 	return &permuteproxy.ClientFuncs{
 		Dial:   c.dial,
+		Listen: c.listen,
 		Derive: map[string]string{"udp": "dgram+cmd:" + udp},
 		Close:  c.close,
 	}, nil
@@ -104,6 +105,7 @@ type link struct {
 	read    atomic.Int64
 	gone    chan struct{} // closes once the client no longer holds it
 	probing atomic.Bool
+	fwd     forwards
 }
 
 // counted adds the bytes each Read returns to n.
@@ -118,7 +120,8 @@ func (c counted) Read(b []byte) (int, error) {
 	return n, err
 }
 
-func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+// over makes the dialer connect over the stream inner dials.
+func (c *client) over(inner permuteproxy.Transport) {
 	c.once.Do(func() {
 		c.dialer.ProxyDial = func(ctx context.Context, _, _ string) (net.Conn, error) {
 			// The dialer reconnects whenever it has no connection, so a closed client refuses here.
@@ -133,6 +136,10 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 			return counted{conn, &c.next.read}, nil
 		}
 	})
+}
+
+func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Conn, error) {
+	c.over(inner)
 	if network == "cmd" {
 		return c.exec(ctx, address)
 	}
@@ -156,6 +163,58 @@ func (c *client) dial(ctx context.Context, inner permuteproxy.Transport, network
 		c.drop(l)
 	}
 	return conn, err
+}
+
+// listen asks the server to forward what it accepts at address, a tcp address whose empty host is the IPv4 wildcard or a unix socket path; the listener ends with the shared connection.
+func (c *client) listen(ctx context.Context, inner permuteproxy.Transport, network, address string) (net.Listener, error) {
+	c.over(inner)
+	if network == "cmd" {
+		return nil, fmt.Errorf("ssh: listen %s: %w", network, permuteproxy.ErrUnsupported)
+	}
+	if err := checkName(network, address); err != nil {
+		return nil, err
+	}
+	if host, port, err := net.SplitHostPort(address); err == nil && host == "" {
+		address = net.JoinHostPort("0.0.0.0", port)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	l, err := c.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type result struct {
+		ln  net.Listener
+		err error
+	}
+	// The request has no ctx of its own, so one given up is left to finish and its listener closed.
+	asked := make(chan result, 1)
+	go func() {
+		// A unix path names the same socket to every server, a tcp address does not; see forwards.
+		listen := l.listenTCP
+		if network == "unix" {
+			listen = func(path string) (net.Listener, error) { return l.ListenUnix(path) }
+		}
+		ln, err := listen(address)
+		asked <- result{ln, err}
+	}()
+	select {
+	case r := <-asked:
+		if r.err != nil {
+			// A refusal reads like a failure of the connection, so a probe tells them apart.
+			c.probe()
+		}
+		return r.ln, r.err
+	case <-ctx.Done():
+		c.probe()
+		go func() {
+			if r := <-asked; r.err == nil {
+				r.ln.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 // connect returns the shared connection, connecting when there is none.
