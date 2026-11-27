@@ -36,9 +36,18 @@ func TestSimple(t *testing.T) {
 	}
 	echo := testutils.ServeEcho(t, ln).String()
 
-	for _, scheme := range []string{"socks5", "socks4", "http", "ssh"} {
-		t.Run(scheme, func(t *testing.T) {
-			uri := scheme + "://" + testutils.ReservePort(t)
+	// Each chain is one the README shows, served and dialed from the same URI.
+	for _, chain := range []struct{ scheme, query string }{
+		{scheme: "socks5"},
+		{scheme: "socks4"},
+		{scheme: "http"},
+		{scheme: "ssh"},
+		{scheme: "https", query: "?tls_self_signed=true&tls_skip_verify=true"},
+		{scheme: "socks5+snappy+tls", query: "?tls_self_signed=true&tls_skip_verify=true"},
+		{scheme: "http+snappy+quic", query: "?tls_self_signed=true&tls_skip_verify=true"},
+	} {
+		t.Run(chain.scheme, func(t *testing.T) {
+			uri := chain.scheme + "://user:pass@" + testutils.ReservePort(t) + chain.query
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() { done <- permuteproxy.ListenAndServe(ctx, uri) }()

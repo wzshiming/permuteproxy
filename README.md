@@ -18,7 +18,28 @@ The following is the implementation of other proxy protocols
 
 ## Usage
 
-Serve a proxy and dial through it, each from a URI:
+A proxy is written as a URI whose scheme joins layers with `+`, outermost first, down to the network that carries them:
+
+```
+socks5+snappy+tls://user:pass@127.0.0.1:1080
+│      │      │
+│      │      └─ encrypted by TLS, over tcp
+│      └──────── compressed by snappy
+└─────────────── spoken as SOCKS5
+```
+
+Any proxy protocol can be stacked on any adapters and network that fit it, so one URI names a combination no single protocol offers:
+
+| URI | Proxy |
+| --- | --- |
+| `socks5://127.0.0.1:1080` | SOCKS5 over tcp |
+| `https://127.0.0.1:8443` | HTTP proxy over TLS, an alias of `http+tls` |
+| `socks5+snappy+tls://127.0.0.1:1080` | SOCKS5, compressed, over TLS |
+| `http+snappy+quic://127.0.0.1:8443` | HTTP proxy, compressed, over QUIC streams on udp |
+| `ssh+unix:///run/proxy.sock` | SSH over a unix socket |
+| `cmd:ssh -W %h:%p jump` | a command run per dial as the client |
+
+The same URI serves the proxy on one side and dials through it on the other:
 
 ```go
 package main
@@ -34,13 +55,13 @@ import (
 func main() {
 	ctx := context.Background()
 
-	// Server: serves until ctx ends.
+	// Server: SOCKS5, compressed by snappy, over TLS with a self-signed certificate.
 	go func() {
-		log.Fatal(permuteproxy.ListenAndServe(ctx, "socks5://user:pass@127.0.0.1:1080"))
+		log.Fatal(permuteproxy.ListenAndServe(ctx, "socks5+snappy+tls://user:pass@127.0.0.1:1080?tls_self_signed=true"))
 	}()
 
-	// Client: dials its targets through the proxy.
-	client, err := permuteproxy.NewClient("socks5://user:pass@127.0.0.1:1080")
+	// Client: the same layers, trusting the self-signed certificate.
+	client, err := permuteproxy.NewClient("socks5+snappy+tls://user:pass@127.0.0.1:1080?tls_skip_verify=true")
 	if err != nil {
 		log.Fatal(err)
 	}
