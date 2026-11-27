@@ -38,6 +38,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		return quicConfig(config), nil
 	})
 	var serverConfig atomic.Pointer[quic.Config] // what the latest BeforeListen built
+	shared := &pool{}
 	return &permuteproxy.AdapterFuncs{
 		BeforeDial: func() error {
 			_, err := clientConfig()
@@ -55,7 +56,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 			Over: permuteproxy.Packet,
 			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
 				config, _ := clientConfig() // BeforeDial has returned its error
-				return dial(ctx, carrier, config)
+				return dial(ctx, carrier, config, shared)
 			},
 			PacketListener: func(pc net.PacketConn) (net.Listener, error) {
 				return listen(pc, serverConfig.Load())
@@ -70,13 +71,31 @@ func quicConfig(config *tls.Config) *quic.Config {
 	return &quic.Config{TLSConfig: config, MaxIdleTimeout: maxIdle, KeepAlivePeriod: keepAlive}
 }
 
-// dial opens one QUIC connection over the carrier to its default peer, and one stream on it.
-func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn, error) {
+// dial opens a stream to the carrier's default peer, on the connection an open conn of the adapter
+// holds when there is one, else on a connection of its own over the carrier.
+func dial(ctx context.Context, carrier net.Conn, config *quic.Config, shared *pool) (net.Conn, error) {
 	peer, ok := addrPort(carrier.RemoteAddr())
 	local, localOK := addrPort(carrier.LocalAddr())
 	if !ok || !localOK {
 		carrier.Close()
 		return nil, fmt.Errorf("quic from %v to %v: not ip:port: %w", carrier.LocalAddr(), carrier.RemoteAddr(), permuteproxy.ErrUnsupported)
+	}
+	if l := shared.acquire(); l != nil {
+		wait, cancel := context.WithTimeout(ctx, openWait)
+		stream, err := l.open(wait)
+		cancel()
+		if err == nil {
+			// Every carrier of an adapter reaches the same peer, so this one is not needed.
+			carrier.Close()
+			return newConn(stream, l.local, l.remote, l.done), nil
+		}
+		// A connection that ended or is full refuses the stream, and this dial opens the next one.
+		l.retire()
+		l.done()
+		if ctx.Err() != nil {
+			carrier.Close()
+			return nil, err
+		}
 	}
 	if peer.Addr().IsUnspecified() {
 		// As net.Dial does, take an unspecified peer for this host, at the loopback of the socket's family.
@@ -92,20 +111,19 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 		sock.Close()
 		return nil, err
 	}
-	release := func() { closeEndpoint(endpoint) }
 	qc, err := endpoint.Dial(ctx, "udp", peer.String(), config)
 	if err != nil {
-		release()
+		closeEndpoint(endpoint)
 		return nil, err
 	}
-	stream, err := qc.NewStream(ctx)
+	l := shared.add(endpoint, qc, carrier.LocalAddr(), carrier.RemoteAddr())
+	stream, err := l.open(ctx)
 	if err != nil {
-		release()
+		l.retire()
+		l.done()
 		return nil, err
 	}
-	// A stream reaches the peer with its first frame, so an empty one opens it for a listener that speaks first.
-	stream.Flush()
-	return newConn(stream, carrier.LocalAddr(), carrier.RemoteAddr(), release), nil
+	return newConn(stream, l.local, l.remote, l.done), nil
 }
 
 // closeEndpoint aborts the connections of e without waiting on their peers, and returns once e has closed its socket.

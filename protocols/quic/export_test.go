@@ -25,3 +25,13 @@ func SetCloseWait(t testing.TB, d time.Duration) {
 	closeWait = d
 	t.Cleanup(func() { closeWait = old })
 }
+
+// SetOpenWait bounds by d how long the dials during t wait for a stream of a shared connection.
+func SetOpenWait(t testing.TB, d time.Duration) {
+	old := openWait
+	openWait = d
+	t.Cleanup(func() { openWait = old })
+}
+
+// MaxStreams is how many conns share one connection.
+const MaxStreams = maxStreams
