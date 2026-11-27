@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -113,7 +114,10 @@ func TestDatagramCommandLines(t *testing.T) {
 		{"nc:", "udp4", "127.0.0.1:53", "nc -4 -u -w 30 127.0.0.1 53"},
 		{"nc:", "udp6", "[::1]:53", "nc -6 -u -w 30 ::1 53"},
 		{"nc:ssh jump", "udp", "host:53", "ssh jump nc -u -w 30 host 53"},
+		{"nc:", "unixgram", "/run/x.sock", "nc -U -u -w 30 /run/x.sock"},
+		{"nc:ssh jump", "unixgram", "./x.sock", "ssh jump nc -U -u -w 30 ./x.sock"},
 	} {
+		base := strings.TrimRight(tt.network, "46")
 		r := &recorder{}
 		n := client(t, tt.uri, r)
 		conn, err := n.DialContext(context.Background(), tt.network, tt.target)
@@ -123,8 +127,8 @@ func TestDatagramCommandLines(t *testing.T) {
 		if _, ok := conn.(net.PacketConn); !ok {
 			t.Errorf("%s: dial %s gave no net.PacketConn", tt.uri, tt.network)
 		}
-		if got := conn.RemoteAddr(); got.Network() != "udp" || got.String() != tt.target {
-			t.Errorf("%s: peer = %s %s, want udp %s", tt.uri, got.Network(), got, tt.target)
+		if got := conn.RemoteAddr(); got.Network() != base || got.String() != tt.target {
+			t.Errorf("%s: peer = %s %s, want %s %s", tt.uri, got.Network(), got, base, tt.target)
 		}
 		conn.Close()
 		if got := r.last(); got != tt.want {
@@ -143,15 +147,18 @@ func TestDatagramListenCommandLines(t *testing.T) {
 		{"nc:", "udp6", "[::1]:53", "nc -6 -u -l ::1 53"},
 		{"nc:", "udp", "127.0.0.1:0", "nc -u -l 127.0.0.1 0"},
 		{"nc:ssh jump", "udp", "host:53", "ssh jump nc -u -l host 53"},
+		{"nc:", "unixgram", "/run/x.sock", "nc -U -u -l /run/x.sock"},
+		{"nc:ssh jump", "unixgram", "./x.sock", "ssh jump nc -U -u -l ./x.sock"},
 	} {
+		base := strings.TrimRight(tt.network, "46")
 		r := &recorder{}
 		n := client(t, tt.uri, r)
 		pc, err := n.ListenPacket(context.Background(), tt.network, tt.address)
 		if err != nil {
 			t.Fatalf("%s: listen packet %s %s: %v", tt.uri, tt.network, tt.address, err)
 		}
-		if got := pc.LocalAddr(); got.Network() != "udp" || got.String() != tt.address {
-			t.Errorf("%s: LocalAddr = %s %s, want udp %s", tt.uri, got.Network(), got, tt.address)
+		if got := pc.LocalAddr(); got.Network() != base || got.String() != tt.address {
+			t.Errorf("%s: LocalAddr = %s %s, want %s %s", tt.uri, got.Network(), got, base, tt.address)
 		}
 		pc.Close()
 		if got := r.last(); got != tt.want {
@@ -174,18 +181,21 @@ func TestRefuses(t *testing.T) {
 	r := &recorder{}
 	n := client(t, "nc:", r)
 	ctx := context.Background()
-	if _, err := n.DialContext(ctx, "unixgram", "./x.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
-		t.Errorf("dial unixgram: err = %v, want ErrUnsupported", err)
+	if _, err := n.DialContext(ctx, "ip", "127.0.0.1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("dial ip: err = %v, want ErrUnsupported", err)
+	}
+	if _, err := n.Listen(ctx, "unixgram", "./x.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("listen unixgram: err = %v, want ErrUnsupported", err)
 	}
 	if _, err := n.Listen(ctx, "udp", "host:53"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Errorf("listen udp: err = %v, want ErrUnsupported", err)
 	}
-	for network, address := range map[string]string{"tcp": ":0", "unixgram": "./x.sock"} {
+	for network, address := range map[string]string{"tcp": ":0", "unix": "./x.sock"} {
 		if _, err := n.ListenPacket(ctx, network, address); !errors.Is(err, permuteproxy.ErrUnsupported) {
 			t.Errorf("listen packet %s %s: err = %v, want ErrUnsupported", network, address, err)
 		}
 	}
-	for network, address := range map[string]string{"tcp": "ho;st:1", "udp": "ho;st:1", "unix": "a b.sock"} {
+	for network, address := range map[string]string{"tcp": "ho;st:1", "udp": "ho;st:1", "unix": "a b.sock", "unixgram": "a b.sock"} {
 		if _, err := n.DialContext(ctx, network, address); err == nil {
 			t.Errorf("dial %s %s succeeded with a value a shell would not read as plain text", network, address)
 		}
@@ -196,8 +206,8 @@ func TestRefuses(t *testing.T) {
 	if _, err := permuteproxy.ParseURI("socks5+nc:"); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 		t.Errorf("socks5+nc: err = %v, want ErrInvalidChain", err)
 	}
-	if l, ok := n.(permuteproxy.LossyNetwork); !ok || !l.Lossy("udp") || l.Lossy("tcp") {
-		t.Error("client does not report udp alone as lossy")
+	if l, ok := n.(permuteproxy.LossyNetwork); !ok || !l.Lossy("udp") || !l.Lossy("unixgram") || l.Lossy("tcp") || l.Lossy("unix") {
+		t.Error("client does not report udp and unixgram alone as lossy")
 	}
 }
 
@@ -389,4 +399,94 @@ func TestListenThroughNetcat(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("socket file left behind after the connection and listener closed")
+}
+
+// TestUnixDatagramsThroughNetcat dials a unixgram echo and serves a unixgram peer through the system's nc.
+func TestUnixDatagramsThroughNetcat(t *testing.T) {
+	if _, err := exec.LookPath("nc"); err != nil {
+		t.Skip("no nc on PATH")
+	}
+	dir, err := os.MkdirTemp("", "nc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	n, err := permuteproxy.NewClient("nc:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	buf := make([]byte, 64)
+
+	echoPath := filepath.Join(dir, "echo.sock")
+	echo, err := net.ListenPacket("unixgram", echoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echo.Close()
+	go func() {
+		buf := make([]byte, 64)
+		for {
+			n, from, err := echo.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			echo.WriteTo(buf[:n], from)
+		}
+	}()
+	conn, err := n.DialContext(ctx, "unixgram", echoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := conn.Read(buf); err != nil || string(buf[:got]) != "ping" {
+		t.Fatalf("dialed echo = %q, %v", buf[:got], err)
+	}
+
+	path := filepath.Join(dir, "listen.sock")
+	pc, err := n.ListenPacket(ctx, "unixgram", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	served := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 64)
+		got, from, err := pc.ReadFrom(buf)
+		if err == nil && string(buf[:got]) != "ping" {
+			err = errors.New("read " + string(buf[:got]))
+		}
+		if err == nil {
+			_, err = pc.WriteTo([]byte("pong"), from)
+		}
+		served <- err
+	}()
+	// The peer binds a path of its own, where nc's answer arrives.
+	peer, err := net.ListenPacket("unixgram", filepath.Join(dir, "peer.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	// nc binds some time after ListenPacket started it; a datagram sent before that is refused, not lost.
+	for i := 0; ; i++ {
+		if _, err = peer.WriteTo([]byte("ping"), &net.UnixAddr{Net: "unixgram", Name: path}); err == nil {
+			break
+		}
+		if i == 200 {
+			t.Fatalf("nc never bound %s: %v", path, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := <-served; err != nil {
+		t.Fatal(err)
+	}
+	peer.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if got, _, err := peer.ReadFrom(buf); err != nil || string(buf[:got]) != "pong" {
+		t.Fatalf("peer read %q, %v", buf[:got], err)
+	}
 }
