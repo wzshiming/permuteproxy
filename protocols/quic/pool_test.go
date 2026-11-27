@@ -24,15 +24,33 @@ func exchanges(t *testing.T, c, srv net.Conn) {
 	}
 }
 
-// The memory network binds the listener's socket first, then one carrier a dial.
-const listened, firstDial, secondDial = 0, 1, 2
+// The memory network binds the listener's socket first, then a carrier for each connection dialed.
+const listened, firstDialed, secondDialed = 0, 1, 2
+
+// bound fails unless m has bound want sockets so far.
+func bound(t *testing.T, m *memNet, want int, when string) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if got := len(m.bound); got != want {
+		t.Fatalf("%d sockets bound %s, want %d", got, when, want)
+	}
+}
+
+// closeTransport closes tr as the owner of a built chain does.
+func closeTransport(t *testing.T, tr permuteproxy.Transport) {
+	t.Helper()
+	if err := tr.(io.Closer).Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestConnsOpenTogetherShareOneConnection(t *testing.T) {
 	mem := newMemNet()
 	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
 	c1, srv1 := connected(t, ln, tr)
 	c2, srv2 := connected(t, ln, tr)
-	unsent(t, mem.socket(t, secondDial), "second dial's")
+	bound(t, mem, secondDialed, "after two dials")
 	exchanges(t, c2, srv2)
 	exchanges(t, c1, srv1)
 	if c1.LocalAddr().String() != c2.LocalAddr().String() {
@@ -50,12 +68,12 @@ func TestASharedConnectionLastsUntilItsLastConnCloses(t *testing.T) {
 	c1.Close()
 	srv1.Close()
 	exchanges(t, c2, srv2)
-	if closes := mem.socket(t, firstDial).closes.Load(); closes != 0 {
+	if closes := mem.socket(t, firstDialed).closes.Load(); closes != 0 {
 		t.Fatalf("carrier closed %d times while a conn is open on its connection, want 0", closes)
 	}
 	c2.Close()
 	srv2.Close()
-	eventuallyReleased(t, mem.socket(t, firstDial), 5*time.Second, "shared")
+	eventuallyReleased(t, mem.socket(t, firstDialed), 5*time.Second, "shared")
 	ln.Close()
 	noGoroutinesLeft(t, before, time.Second)
 }
@@ -67,12 +85,10 @@ func TestADialAfterTheLastConnClosedOpensAConnection(t *testing.T) {
 	exchanges(t, c1, srv1)
 	c1.Close()
 	srv1.Close()
-	eventuallyReleased(t, mem.socket(t, firstDial), 5*time.Second, "first")
+	eventuallyReleased(t, mem.socket(t, firstDialed), 5*time.Second, "first")
 	c2, srv2 := connected(t, ln, tr)
 	exchanges(t, c2, srv2)
-	if writes := mem.socket(t, secondDial).writes.Load(); writes == 0 {
-		t.Fatal("dial after the connection was released sent nothing on its own carrier")
-	}
+	bound(t, mem, secondDialed+1, "after a dial found no connection")
 }
 
 func TestADialAfterTheConnectionEndedOpensAConnection(t *testing.T) {
@@ -113,11 +129,67 @@ func TestAFullConnectionLeavesTheNextDialItsOwn(t *testing.T) {
 	for range quic.MaxStreams {
 		dial(t, tr)
 	}
-	for i := 1; i < quic.MaxStreams; i++ {
-		unsent(t, mem.socket(t, firstDial+i), "sharing dial's")
-	}
+	bound(t, mem, secondDialed, "while the connection has room")
 	dial(t, tr)
-	if writes := mem.socket(t, firstDial+quic.MaxStreams).writes.Load(); writes == 0 {
-		t.Fatal("dial past a full connection sent nothing on its own carrier")
+	bound(t, mem, secondDialed+1, "after a dial past a full connection")
+}
+
+// closed closes both ends of a conn and waits until the dialed end has let go of its connection.
+func closed(t *testing.T, c, srv net.Conn) {
+	t.Helper()
+	srv.Close()
+	c.Close()
+	// The dialed Close returns once the peer has ended its side, or by its short bound.
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestAnIdleConnectionServesTheNextDial(t *testing.T) {
+	before := quicGoroutines()
+	quic.SetIdleKeep(t, time.Minute)
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c1, srv1 := connected(t, ln, tr)
+	exchanges(t, c1, srv1)
+	closed(t, c1, srv1)
+	if closes := mem.socket(t, firstDialed).closes.Load(); closes != 0 {
+		t.Fatalf("carrier closed %d times while its connection is kept idle, want 0", closes)
 	}
+	c2, srv2 := connected(t, ln, tr)
+	exchanges(t, c2, srv2)
+	bound(t, mem, secondDialed, "after a dial found the idle connection")
+	closed(t, c2, srv2)
+	closeTransport(t, tr)
+	released(t, mem.socket(t, firstDialed), "idle")
+	ln.Close()
+	noGoroutinesLeft(t, before, time.Second)
+}
+
+func TestAnIdleConnectionIsReleasedAfterItsKeep(t *testing.T) {
+	before := quicGoroutines()
+	quic.SetIdleKeep(t, 300*time.Millisecond)
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, srv := connected(t, ln, tr)
+	exchanges(t, c, srv)
+	closed(t, c, srv)
+	eventuallyReleased(t, mem.socket(t, firstDialed), 5*time.Second, "idle")
+	c2, srv2 := connected(t, ln, tr)
+	exchanges(t, c2, srv2)
+	bound(t, mem, secondDialed+1, "after a dial found the connection released")
+	closed(t, c2, srv2)
+	eventuallyReleased(t, mem.socket(t, secondDialed), 5*time.Second, "second idle")
+	ln.Close()
+	noGoroutinesLeft(t, before, time.Second)
+}
+
+func TestAClosedTransportKeepsNoConnectionIdle(t *testing.T) {
+	quic.SetIdleKeep(t, time.Minute)
+	mem := newMemNet()
+	ln, tr := pair(t, permuteproxy.Engine{Base: mem})
+	c, srv := connected(t, ln, tr)
+	closeTransport(t, tr)
+	// A conn open at the Close keeps its connection.
+	exchanges(t, c, srv)
+	closed(t, c, srv)
+	eventuallyReleased(t, mem.socket(t, firstDialed), 5*time.Second, "dialed")
 }

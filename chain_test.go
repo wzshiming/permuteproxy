@@ -191,6 +191,26 @@ func hookedAdapter(name string, requires, provides Plane, err error) LayerSpec {
 	return spec
 }
 
+// openingAdapter provides Stream over Packet through an Open that obtains a carrier for its first dial and keeps it for the later ones.
+func openingAdapter(name string, hook error) LayerSpec {
+	return LayerSpec{Kind: LayerAdapter, Requires: Packet, Provides: Stream, NewAdapter: func(Options) (*AdapterFuncs, error) {
+		var kept net.Conn
+		return &AdapterFuncs{
+			BeforeDial: func() error { record("%s.beforedial", name); return hook },
+			Stream: &Link{Over: Packet, Open: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				record("%s.open", name)
+				if kept == nil {
+					var err error
+					if kept, err = carrier(ctx); err != nil {
+						return nil, err
+					}
+				}
+				return kept, nil
+			}},
+		}, nil
+	}}
+}
+
 // recordedCloses is a base whose carriers record their Close.
 var recordedCloses = NetworkFuncs{
 	DialContextFunc:  func(context.Context, string, string) (net.Conn, error) { return closeConn{}, nil },
@@ -230,6 +250,7 @@ var uncovered = map[string]LayerSpec{
 	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: failListener}}, nil),
 	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: failPacketListener}}, nil),
 	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, Listener: failListener}}, nil),
+	"test-bad-clients": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Open: func(context.Context, func(context.Context) (net.Conn, error)) (net.Conn, error) { return nil, errLink }}}, nil),
 }
 
 // declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
@@ -340,6 +361,8 @@ func init() {
 	for name, spec := range failingLinks {
 		RegisterLayer(name, spec)
 	}
+	RegisterLayer("test-open", openingAdapter("test-open", nil))
+	RegisterLayer("test-openfail", openingAdapter("test-openfail", errHook))
 	RegisterLayer("test-hook-ss", hookedAdapter("test-hook-ss", Stream, Stream, nil))
 	RegisterLayer("test-hook-sp", hookedAdapter("test-hook-sp", Packet, Stream, nil))
 	RegisterLayer("test-hookfail-ss", hookedAdapter("test-hookfail-ss", Stream, Stream, errHook))

@@ -35,3 +35,15 @@ func SetOpenWait(t testing.TB, d time.Duration) {
 
 // MaxStreams is how many conns share one connection.
 const MaxStreams = maxStreams
+
+// SetIdleKeep makes the adapters keep a connection no conn holds for d during t.
+func SetIdleKeep(t testing.TB, d time.Duration) {
+	old := idleKeep
+	idleKeep = d
+	t.Cleanup(func() { idleKeep = old })
+}
+
+// ReleaseAtOnce makes the adapters of this test binary release a connection with its last conn.
+func ReleaseAtOnce() {
+	idleKeep = 0
+}

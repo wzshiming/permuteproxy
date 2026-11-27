@@ -54,7 +54,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		},
 		Stream: &permuteproxy.Link{
 			Over: permuteproxy.Packet,
-			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
+			Open: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
 				config, _ := clientConfig() // BeforeDial has returned its error
 				return dial(ctx, carrier, config, shared)
 			},
@@ -62,6 +62,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 				return listen(pc, serverConfig.Load())
 			},
 		},
+		Close: shared.close,
 	}, nil
 }
 
@@ -71,31 +72,32 @@ func quicConfig(config *tls.Config) *quic.Config {
 	return &quic.Config{TLSConfig: config, MaxIdleTimeout: maxIdle, KeepAlivePeriod: keepAlive}
 }
 
-// dial opens a stream to the carrier's default peer, on the connection an open conn of the adapter
-// holds when there is one, else on a connection of its own over the carrier.
-func dial(ctx context.Context, carrier net.Conn, config *quic.Config, shared *pool) (net.Conn, error) {
-	peer, ok := addrPort(carrier.RemoteAddr())
-	local, localOK := addrPort(carrier.LocalAddr())
-	if !ok || !localOK {
-		carrier.Close()
-		return nil, fmt.Errorf("quic from %v to %v: not ip:port: %w", carrier.LocalAddr(), carrier.RemoteAddr(), permuteproxy.ErrUnsupported)
-	}
+// dial opens a stream to the endpoint, on the connection the adapter holds when it has one,
+// else on a connection of its own over a carrier it obtains.
+func dial(ctx context.Context, obtain func(context.Context) (net.Conn, error), config *quic.Config, shared *pool) (net.Conn, error) {
 	if l := shared.acquire(); l != nil {
 		wait, cancel := context.WithTimeout(ctx, openWait)
 		stream, err := l.open(wait)
 		cancel()
 		if err == nil {
-			// Every carrier of an adapter reaches the same peer, so this one is not needed.
-			carrier.Close()
 			return newConn(stream, l.local, l.remote, l.done), nil
 		}
 		// A connection that ended or is full refuses the stream, and this dial opens the next one.
 		l.retire()
 		l.done()
 		if ctx.Err() != nil {
-			carrier.Close()
 			return nil, err
 		}
+	}
+	carrier, err := obtain(ctx)
+	if err != nil {
+		return nil, err
+	}
+	peer, ok := addrPort(carrier.RemoteAddr())
+	local, localOK := addrPort(carrier.LocalAddr())
+	if !ok || !localOK {
+		carrier.Close()
+		return nil, fmt.Errorf("quic from %v to %v: not ip:port: %w", carrier.LocalAddr(), carrier.RemoteAddr(), permuteproxy.ErrUnsupported)
 	}
 	if peer.Addr().IsUnspecified() {
 		// As net.Dial does, take an unspecified peer for this host, at the loopback of the socket's family.

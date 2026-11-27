@@ -369,6 +369,8 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// The tests follow a connection to its release, which comes with its last conn unless a test keeps it idle.
+	quic.ReleaseAtOnce()
 	os.Exit(m.Run())
 }
 
