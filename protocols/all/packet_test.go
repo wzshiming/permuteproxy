@@ -87,10 +87,10 @@ func TestSOCKS5PacketEcho(t *testing.T) {
 			defer cancel()
 			c := parse(t, uri)
 			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			c.Endpoint.Address = waitBound(t, base, done).String()
 			clientBase := newProbe(testutils.System{})
-			n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+			n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,11 +117,11 @@ func TestSOCKS5PacketEcho(t *testing.T) {
 func TestSOCKS5PacketRejectsBadCredentials(t *testing.T) {
 	c := parse(t, "socks5://u:p@127.0.0.1:0")
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	c.Layers[0].Options = permuteproxy.Options{"username": "u", "password": "x"}
 	clientBase := newProbe(testutils.System{})
-	n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,19 +145,19 @@ func socks5TwoHops(t *testing.T) (hop2 permuteproxy.Network, clientBase, firstUp
 	t.Helper()
 	first := parse(t, "socks5://127.0.0.1:0")
 	firstBase, firstUpstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: firstBase, Upstream: firstUpstream}, first)
+	_, done := start(t, permuteproxy.ServerEngine{Base: firstBase, Upstream: firstUpstream}, first)
 	first.Endpoint.Address = waitBound(t, firstBase, done).String()
 	second := parse(t, "socks5://u:p@127.0.0.1:0")
 	secondBase, secondUpstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done = start(t, permuteproxy.Engine{Base: secondBase, Upstream: secondUpstream}, second)
+	_, done = start(t, permuteproxy.ServerEngine{Base: secondBase, Upstream: secondUpstream}, second)
 	second.Endpoint.Address = waitBound(t, secondBase, done).String()
 	clientBase = newProbe(testutils.System{})
-	hop1, err := permuteproxy.Engine{Base: clientBase}.Client(first)
+	hop1, err := permuteproxy.ClientEngine{Base: clientBase}.Client(first)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { closeIf(hop1) })
-	hop2, err = permuteproxy.Engine{Base: hop1}.Client(second)
+	hop2, err = permuteproxy.ClientEngine{Base: hop1}.Client(second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,16 +196,16 @@ func TestNativePacketDialOverSOCKS5(t *testing.T) {
 	defer cancel()
 	c := parse(t, "socks5://127.0.0.1:0")
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBound(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	proxy, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	proxy, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeIf(proxy)
 	echo := testutils.UDPEcho(t)
-	tr, err := permuteproxy.Engine{Base: proxy}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: echo.String()}})
+	tr, err := permuteproxy.TransportEngine{Base: proxy}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "udp", Address: echo.String()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestServerStopEndsDatagramSessions(t *testing.T) {
 				}
 				c := parse(t, scheme+"://"+address)
 				base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-				srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+				srv, err := permuteproxy.ServerEngine{Base: base, Upstream: upstream}.Server(c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -258,7 +258,7 @@ func TestServerStopEndsDatagramSessions(t *testing.T) {
 				if scheme == "ss" {
 					waitBoundPacket(t, base, done)
 				}
-				n, err := permuteproxy.Engine{}.Client(c)
+				n, err := permuteproxy.ClientEngine{}.Client(c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -311,13 +311,13 @@ func TestShadowsocksPacketEcho(t *testing.T) {
 			defer cancel()
 			c := parse(t, uri+testutils.ReservePort(t))
 			base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			tcp, udp := waitBound(t, base, done), waitBoundPacket(t, base, done)
 			if tcp.String() != udp.String() {
 				t.Fatalf("bound tcp %v and udp %v, want the declared address on both", tcp, udp)
 			}
 			clientBase := newProbe(testutils.System{})
-			n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+			n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -347,13 +347,13 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 	t.Run("udp", func(t *testing.T) {
 		c := parse(t, "ss+udp://127.0.0.1:0")
 		base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+		_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 		c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 		if base.listens.Load() != 0 {
 			t.Fatalf("base listens = %d for a udp-only server", base.listens.Load())
 		}
 		clientBase := newProbe(testutils.System{})
-		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -369,10 +369,10 @@ func TestShadowsocksExplicitPlanes(t *testing.T) {
 	t.Run("tls", func(t *testing.T) {
 		c := parse(t, "ss+tls://127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
 		base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-		_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+		_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 		c.Endpoint.Address = waitBound(t, base, done).String()
 		clientBase := newProbe(testutils.System{})
-		n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -397,7 +397,7 @@ func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 	defer cancel()
 	c := parse(t, "ss://aes-256-gcm:p@"+testutils.ReservePort(t))
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	udp := waitBoundPacket(t, base, done)
 	garbage, err := net.Dial("udp", udp.String())
@@ -408,7 +408,7 @@ func TestShadowsocksPacketServerSurvivesGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	garbage.Close()
-	n, err := permuteproxy.Engine{}.Client(c)
+	n, err := permuteproxy.ClientEngine{}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,10 +427,10 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 	addr := testutils.ReservePort(t)
 	c := parse(t, "ss://aes-256-gcm:p@"+addr)
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	waitBoundPacket(t, base, done)
-	intruder, err := permuteproxy.Engine{}.Client(parse(t, "ss://aes-256-gcm:x@"+addr))
+	intruder, err := permuteproxy.ClientEngine{}.Client(parse(t, "ss://aes-256-gcm:x@"+addr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ func TestShadowsocksPacketServerSurvivesWrongKey(t *testing.T) {
 	if _, err := wrong.Write([]byte("wrong key")); err != nil {
 		t.Fatal(err)
 	}
-	n, err := permuteproxy.Engine{}.Client(c)
+	n, err := permuteproxy.ClientEngine{}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -466,10 +466,10 @@ func TestShadowsocksPacketServerSurvivesAnUnresolvableTarget(t *testing.T) {
 	defer cancel()
 	c := parse(t, "ss://aes-256-gcm:p@"+testutils.ReservePort(t))
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	waitBound(t, base, done)
 	waitBoundPacket(t, base, done)
-	n, err := permuteproxy.Engine{}.Client(c)
+	n, err := permuteproxy.ClientEngine{}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func quicChain(address string) permuteproxy.Chain {
 // quicEcho echoes each stream it accepts through quic on loopback until the test ends and returns its address.
 func quicEcho(t *testing.T) string {
 	t.Helper()
-	tr, err := permuteproxy.Engine{}.Transport(quicChain("127.0.0.1:0"))
+	tr, err := permuteproxy.TransportEngine{}.Transport(quicChain("127.0.0.1:0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +565,7 @@ func TestQUICOverSOCKS5TwoHops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	hop2, clientBase, firstUpstream, secondUpstream := socks5TwoHops(t)
-	tr, err := permuteproxy.Engine{Base: hop2}.Transport(quicChain(quicEcho(t)))
+	tr, err := permuteproxy.TransportEngine{Base: hop2}.Transport(quicChain(quicEcho(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,15 +592,15 @@ func TestQUICOverShadowsocksPacket(t *testing.T) {
 	defer cancel()
 	c := parse(t, "ss+udp://aes-256-gcm:p@127.0.0.1:0")
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	ss, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	ss, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeIf(ss)
-	tr, err := permuteproxy.Engine{Base: ss}.Transport(quicChain(quicEcho(t)))
+	tr, err := permuteproxy.TransportEngine{Base: ss}.Transport(quicChain(quicEcho(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,10 +624,10 @@ func TestShadowsocksStreamOverQUIC(t *testing.T) {
 	defer cancel()
 	c := parse(t, "ss+quic://aes-256-gcm:p@127.0.0.1:0?tls_skip_verify=true&tls_self_signed=true")
 	base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-	_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+	_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 	c.Endpoint.Address = waitBoundPacket(t, base, done).String()
 	clientBase := newProbe(testutils.System{})
-	n, err := permuteproxy.Engine{Base: clientBase}.Client(c)
+	n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(c)
 	if err != nil {
 		t.Fatal(err)
 	}

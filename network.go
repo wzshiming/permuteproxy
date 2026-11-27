@@ -71,7 +71,7 @@ func (b borrowed) Lossy(network string) bool {
 	return isLossy(b.Network, network)
 }
 
-// byName is the Network a nil Engine.Base or Engine.Upstream stands for, resolving each call by its network name.
+// byName is the Network an engine's nil Base or Upstream stands for, resolving each call by its network name.
 type byName struct{}
 
 // resolve is the registered implementation of network's base, else a Network refusing every call.

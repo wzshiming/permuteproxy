@@ -16,7 +16,7 @@ import (
 	"github.com/wzshiming/permuteproxy"
 )
 
-// memNet is an in-memory datagram network for the udp and unixgram carriers of an Engine.
+// memNet is an in-memory datagram network for the udp and unixgram carriers of a TransportEngine.
 type memNet struct {
 	permuteproxy.NetworkFuncs
 	loss, reorder       float64 // shares of datagrams dropped, and of those held back behind the next one to the same peer
@@ -204,16 +204,16 @@ func (s *memSocket) SetReadDeadline(t time.Time) error  { return nil }
 func (s *memSocket) SetWriteDeadline(t time.Time) error { return nil }
 
 // overCarriers runs f over a real udp loopback, an in-memory network and one that loses and reorders datagrams.
-func overCarriers(t *testing.T, f func(t *testing.T, e permuteproxy.Engine)) {
+func overCarriers(t *testing.T, f func(t *testing.T, e permuteproxy.TransportEngine)) {
 	lossy := newMemNet()
 	lossy.loss, lossy.reorder = 0.05, 0.1
 	for _, c := range []struct {
 		name string
-		e    permuteproxy.Engine
+		e    permuteproxy.TransportEngine
 	}{
-		{"udp", permuteproxy.Engine{}},
-		{"memory", permuteproxy.Engine{Base: newMemNet()}},
-		{"lossy", permuteproxy.Engine{Base: lossy}},
+		{"udp", permuteproxy.TransportEngine{}},
+		{"memory", permuteproxy.TransportEngine{Base: newMemNet()}},
+		{"lossy", permuteproxy.TransportEngine{Base: lossy}},
 	} {
 		t.Run(c.name, func(t *testing.T) { f(t, c.e) })
 	}

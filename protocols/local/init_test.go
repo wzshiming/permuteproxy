@@ -32,7 +32,7 @@ func init() {
 
 var errHop = errors.New("hop: not listening")
 
-// hop records what an Engine asks of it; each dial gets a pipe named after the dialed address.
+// hop records what a TransportEngine asks of it; each dial gets a pipe named after the dialed address.
 type hop struct {
 	calls []string
 	peers []net.Conn
@@ -79,7 +79,7 @@ func TestNetworkRegistrations(t *testing.T) {
 			if c.Endpoint != tt.want || len(c.Layers) != 0 {
 				t.Fatalf("ParseURI(%q) = %+v, want the endpoint %+v", tt.uri, c, tt.want)
 			}
-			tr, err := permuteproxy.Engine{}.Transport(c)
+			tr, err := permuteproxy.TransportEngine{}.Transport(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ func TestCommandNetworksDialCmdOnTheBase(t *testing.T) {
 	} {
 		t.Run(tt.network, func(t *testing.T) {
 			base := &hop{}
-			tr, err := permuteproxy.Engine{Base: base}.Transport(chain(tt.network, tt.address))
+			tr, err := permuteproxy.TransportEngine{Base: base}.Transport(chain(tt.network, tt.address))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestNetcatNetworksListenOnTheBase(t *testing.T) {
 	} {
 		t.Run(tt.network, func(t *testing.T) {
 			base := &hop{}
-			tr, err := permuteproxy.Engine{Base: base}.Transport(chain(tt.network, tt.address))
+			tr, err := permuteproxy.TransportEngine{Base: base}.Transport(chain(tt.network, tt.address))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +146,7 @@ func TestNetcatNetworksListenOnTheBase(t *testing.T) {
 }
 
 func TestNetcatUnixListensWithoutABase(t *testing.T) {
-	tr, err := permuteproxy.Engine{}.Transport(chain("cmd-nc-unix", socketPath(t)))
+	tr, err := permuteproxy.TransportEngine{}.Transport(chain("cmd-nc-unix", socketPath(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestSystemNetworksWithoutABase(t *testing.T) {
 				}
 				address = socketPath(t)
 			}
-			tr, err := permuteproxy.Engine{}.Transport(chain(network, address))
+			tr, err := permuteproxy.TransportEngine{}.Transport(chain(network, address))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,7 +186,7 @@ func TestSystemNetworksWithoutABase(t *testing.T) {
 				}
 				peer = testutils.ServeEcho(t, ln)
 			}
-			tr, err = permuteproxy.Engine{}.Transport(chain(network, peer.String()))
+			tr, err = permuteproxy.TransportEngine{}.Transport(chain(network, peer.String()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -219,7 +219,7 @@ func TestCommandNetworksRefuseInvalidValues(t *testing.T) {
 		{"cmd-nc-udp", "a'b:53", false},
 		{"cmd-nc-udp", "h:65536", false},
 	} {
-		switch _, err := (permuteproxy.Engine{}).Transport(chain(tt.network, tt.address)); {
+		switch _, err := (permuteproxy.TransportEngine{}).Transport(chain(tt.network, tt.address)); {
 		case tt.ok && err != nil:
 			t.Errorf("Transport(%s %q) = %v, want it built", tt.network, tt.address, err)
 		case !tt.ok && !errors.Is(err, permuteproxy.ErrInvalidChain):
@@ -282,7 +282,7 @@ func TestNetcatUDPEcho(t *testing.T) {
 	requireCommand(t, "nc")
 	n, _ := spawning(t)
 	peer := testutils.UDPEcho(t)
-	tr, err := permuteproxy.Engine{Base: n}.Transport(chain("cmd-nc-udp", peer.String()))
+	tr, err := permuteproxy.TransportEngine{Base: n}.Transport(chain("cmd-nc-udp", peer.String()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestNetcatUDPCommandPerDial(t *testing.T) {
 	requireCommand(t, "nc")
 	ctx := context.Background()
 	n, started := spawning(t)
-	tr, err := permuteproxy.Engine{Base: n}.Transport(chain("cmd-nc-udp", testutils.UDPEcho(t).String()))
+	tr, err := permuteproxy.TransportEngine{Base: n}.Transport(chain("cmd-nc-udp", testutils.UDPEcho(t).String()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestCommandPacketRunsItsAddress(t *testing.T) {
 	}
 	t.Setenv("PERMUTEPROXY_FAKE_SOCAT", "1")
 	address := cmdutils.Quote([]string{exe, "socat", "-", "UDP:" + testutils.UDPEcho(t).String()})
-	tr, err := permuteproxy.Engine{}.Transport(chain("cmd-packet", address))
+	tr, err := permuteproxy.TransportEngine{}.Transport(chain("cmd-packet", address))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestCommandPacketRunsItsAddress(t *testing.T) {
 
 func TestCommandPacketNetworksRefuseListening(t *testing.T) {
 	ctx := context.Background()
-	for base, e := range map[string]permuteproxy.Engine{"without a Base": {}, "with Local as Base": {Base: Network}} {
+	for base, e := range map[string]permuteproxy.TransportEngine{"without a Base": {}, "with Local as Base": {Base: Network}} {
 		for _, c := range []permuteproxy.Chain{chain("cmd-nc-udp", "127.0.0.1:53"), chain("cmd-packet", "socat - UDP:127.0.0.1:53")} {
 			tr, err := e.Transport(c)
 			if err != nil {

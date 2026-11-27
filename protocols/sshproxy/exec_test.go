@@ -173,7 +173,7 @@ func withCredentials(kv ...string) permuteproxy.Options {
 	return opts
 }
 
-// serve runs this layer's server with opts through the Engine on loopback and returns its address.
+// serve runs this layer's server with opts through a ServerEngine on loopback and returns its address.
 func serve(t *testing.T, opts permuteproxy.Options, up permuteproxy.Network) string {
 	t.Helper()
 	bound := make(chan string, 1)
@@ -184,7 +184,7 @@ func serve(t *testing.T, opts permuteproxy.Options, up permuteproxy.Network) str
 		}
 		return ln, err
 	}}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: up}.Server(chain(opts, "127.0.0.1:0"))
+	srv, err := permuteproxy.ServerEngine{Base: base, Upstream: up}.Server(chain(opts, "127.0.0.1:0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,10 +346,10 @@ func (c *baseConn) Close() error {
 	return c.Conn.Close()
 }
 
-// dialServer builds this layer's client with opts of the server at addr through the Engine.
+// dialServer builds this layer's client with opts of the server at addr through a ClientEngine.
 func dialServer(t *testing.T, base permuteproxy.Network, addr string, opts permuteproxy.Options) permuteproxy.Network {
 	t.Helper()
-	n, err := permuteproxy.Engine{Base: base}.Client(chain(opts, addr))
+	n, err := permuteproxy.ClientEngine{Base: base}.Client(chain(opts, addr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1272,7 +1272,7 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			base := &testutils.CountingNetwork{}
-			if _, err := (permuteproxy.Engine{Base: base, Upstream: base}).Server(chain(opts, "127.0.0.1:0")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
+			if _, err := (permuteproxy.ServerEngine{Base: base, Upstream: base}).Server(chain(opts, "127.0.0.1:0")); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 				t.Fatalf("Server() = %v, want ErrInvalidChain", err)
 			}
 			if got := base.Calls.Load(); got != 0 {
@@ -1285,7 +1285,7 @@ func TestServerBuildRefusesUnguardedOrMalformedExec(t *testing.T) {
 		"authorized keys": {"allow_exec": "true", "hostkey_data": hostKey, "authorized_data": authorizedKey},
 	} {
 		t.Run(name, func(t *testing.T) {
-			srv, err := permuteproxy.Engine{Base: &testutils.CountingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
+			srv, err := permuteproxy.ServerEngine{Base: &testutils.CountingNetwork{}}.Server(chain(opts, "127.0.0.1:0"))
 			if err != nil {
 				t.Fatal(err)
 			}

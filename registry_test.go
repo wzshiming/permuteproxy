@@ -127,7 +127,7 @@ func TestRegisterCopiesNetworks(t *testing.T) {
 	name := fresh("test-copied")
 	RegisterLayer(name, spec)
 	networks[0] = "unix"
-	n, err := Engine{Base: &fakeNet{name: "base"}}.Client(mk("", name))
+	n, err := ClientEngine{Base: &fakeNet{name: "base"}}.Client(mk("", name))
 	if err != nil {
 		t.Fatal(err)
 	}

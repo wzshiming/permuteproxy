@@ -52,7 +52,7 @@ func TestFuncsPlaneGating(t *testing.T) {
 func TestBoundDialPacket(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(parse(t, "udp://127.0.0.1:1"))
+	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(parse(t, "udp://127.0.0.1:1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestBoundDialPacket(t *testing.T) {
 
 func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 	ctx := context.Background()
-	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	e := TransportEngine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
 	listen := func(tr Transport) error { _, err := tr.Listen(ctx); return err }
 	listenPacket := func(tr Transport) error { _, err := tr.ListenPacket(ctx); return err }
 	for _, tt := range []struct {
@@ -119,7 +119,7 @@ func TestLossyCarrierRefusesPacketToLayers(t *testing.T) {
 func TestLossyNetworkWithoutLayersDialsNormally(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
-	tr, err := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}.Transport(mk("udp"))
+	tr, err := TransportEngine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}.Transport(mk("udp"))
 	if err != nil {
 		t.Fatal(err)
 	}

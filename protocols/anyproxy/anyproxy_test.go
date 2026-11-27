@@ -63,7 +63,7 @@ func serve(t *testing.T) *pipeListener {
 		ListenFunc: func(context.Context, string, string) (net.Listener, error) { return ln, nil },
 	}
 	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "any"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:0"}}
-	srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+	srv, err := permuteproxy.ServerEngine{Base: base, Upstream: upstream}.Server(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestURIKeepsNameAndKeys(t *testing.T) {
 
 func TestClientIsUnsupported(t *testing.T) {
 	c := permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "any"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}}
-	if _, err := (permuteproxy.Engine{}).Client(c); !errors.Is(err, permuteproxy.ErrUnsupported) {
+	if _, err := (permuteproxy.ClientEngine{}).Client(c); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("Client = %v, want ErrUnsupported", err)
 	}
 }

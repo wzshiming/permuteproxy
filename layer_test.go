@@ -6,7 +6,7 @@ import (
 )
 
 func TestTransportAndClientCloseOnce(t *testing.T) {
-	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
+	base := &closableNet{fakeNet{name: "base"}}
 	tests := []struct {
 		uri   string
 		proxy bool
@@ -28,9 +28,9 @@ func TestTransportAndClientCloseOnce(t *testing.T) {
 			var got any
 			var err error
 			if tt.proxy {
-				got, err = e.Client(parse(t, tt.uri))
+				got, err = ClientEngine{Base: base}.Client(parse(t, tt.uri))
 			} else {
-				got, err = e.Transport(parse(t, tt.uri))
+				got, err = TransportEngine{Base: base}.Transport(parse(t, tt.uri))
 			}
 			if err != nil {
 				t.Fatal(err)

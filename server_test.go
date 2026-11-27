@@ -17,7 +17,7 @@ func TestServerBindFailureReleasesCarriers(t *testing.T) {
 		ListenFunc:       func(context.Context, string, string) (net.Listener, error) { return closeListener{}, nil },
 		ListenPacketFunc: func(context.Context, string, string) (net.PacketConn, error) { return nil, errLink },
 	}
-	srv, err := Engine{Base: base}.Server(mk("", "test-ss"))
+	srv, err := ServerEngine{Base: base}.Server(mk("", "test-ss"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestServerBindFailureReleasesCarriers(t *testing.T) {
 
 func TestServerBindsRequiredOrPreservedPlanes(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ServerEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		chain Chain
 		serve []string
@@ -160,7 +160,7 @@ func TestServerStopReleasesCarriers(t *testing.T) {
 
 func TestServerRejectsDeclarations(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := ServerEngine{Base: &fakeNet{name: "base"}}
 	schemes := []string{"nilproxy", "test-server-broken"}
 	for name := range uncoveredServers {
 		schemes = append(schemes, name)
@@ -180,11 +180,11 @@ func TestServerRejectsDeclarations(t *testing.T) {
 
 func TestServerRefusesCarrierWithNothingToBind(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &closableNet{fakeNet{name: "base"}}}
-	lossy := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	e := ServerEngine{Base: &closableNet{fakeNet{name: "base"}}}
+	lossy := ServerEngine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
 	for _, tt := range []struct {
 		name   string
-		engine Engine
+		engine ServerEngine
 		chain  Chain
 		want   []string
 	}{
@@ -216,7 +216,7 @@ func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 		return &ServerFuncs{Serve: failServe, ServePacket: failServePacket}, nil
 	}})
 	// The Base reports udp lossy, so the layer's carrier keeps only its stream.
-	e := Engine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
+	e := ServerEngine{Base: &lossyNet{fakeNet{name: "base"}, []string{"udp"}}}
 	for _, tt := range []struct {
 		chain Chain
 		want  []string
@@ -234,7 +234,7 @@ func TestServerRefusesCarrierLackingARequiredPlane(t *testing.T) {
 
 func TestServerClosesOnce(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &closableNet{fakeNet{name: "base"}}, Upstream: &closableNet{fakeNet{name: "upstream"}}}
+	e := ServerEngine{Base: &closableNet{fakeNet{name: "base"}}, Upstream: &closableNet{fakeNet{name: "upstream"}}}
 	tests := []struct {
 		chain Chain
 		want  []string

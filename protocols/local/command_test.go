@@ -544,9 +544,9 @@ func chain(network, address string) permuteproxy.Chain {
 	return permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: network, Address: address}}
 }
 
-// engineListen listens through the Engine, which asks n for what the network's declaration names.
+// engineListen listens through a TransportEngine, which asks n for what the network's declaration names.
 func engineListen(ctx context.Context, n *Local, network, address string) (net.Listener, error) {
-	tr, err := permuteproxy.Engine{Base: n}.Transport(chain(network, address))
+	tr, err := permuteproxy.TransportEngine{Base: n}.Transport(chain(network, address))
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +554,7 @@ func engineListen(ctx context.Context, n *Local, network, address string) (net.L
 }
 
 func pingPong(ctx context.Context, n *Local, network, address string) error {
-	tr, err := permuteproxy.Engine{Base: n}.Transport(chain(network, address))
+	tr, err := permuteproxy.TransportEngine{Base: n}.Transport(chain(network, address))
 	if err != nil {
 		return err
 	}

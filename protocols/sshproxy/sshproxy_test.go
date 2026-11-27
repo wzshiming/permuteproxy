@@ -133,7 +133,7 @@ func TestURIKeepsNameAndKeys(t *testing.T) {
 func TestClientRefusesUnixgramAndListen(t *testing.T) {
 	ctx := context.Background()
 	base := &testutils.CountingNetwork{}
-	n, err := permuteproxy.Engine{Base: base}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}})
+	n, err := permuteproxy.ClientEngine{Base: base}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -528,7 +528,7 @@ func TestChainValidateLossy(t *testing.T) {
 
 func TestLossyPlaneNotOfferedAbove(t *testing.T) {
 	calls = nil
-	e := Engine{Base: &fakeNet{name: "base"}}
+	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
 		chain  Chain
 		planes Plane

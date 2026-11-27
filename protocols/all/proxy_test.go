@@ -115,7 +115,7 @@ func closeIf(v any) {
 }
 
 // start runs the server in the background; the returned channel yields Run's result once.
-func start(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) (permuteproxy.Server, <-chan error) {
+func start(t *testing.T, e permuteproxy.ServerEngine, c permuteproxy.Chain) (permuteproxy.Server, <-chan error) {
 	t.Helper()
 	srv, err := e.Server(c)
 	if err != nil {
@@ -311,7 +311,7 @@ func TestProxy(t *testing.T) {
 			// A quic row's server binds a udp socket at port 0, not a listener.
 			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
 			base, upstream := newProbe(local.Network), newProbe(testutils.System{})
-			_, done := start(t, permuteproxy.Engine{Base: base, Upstream: upstream}, c)
+			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			bound := waitBound
 			if overUDP {
 				bound = waitBoundPacket
@@ -331,7 +331,7 @@ func TestProxy(t *testing.T) {
 					cc := c
 					cc.Layers = append([]permuteproxy.Layer{{Scheme: scheme, Options: c.Layers[0].Options}}, c.Layers[1:]...)
 					clientBase := newProbe(local.Network)
-					n, err := permuteproxy.Engine{Base: clientBase}.Client(cc)
+					n, err := permuteproxy.ClientEngine{Base: clientBase}.Client(cc)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -378,7 +378,7 @@ func TestServerLifecycle(t *testing.T) {
 			c := parse(t, uri)
 			t.Run("cancel", func(t *testing.T) {
 				base := newProbe(testutils.System{})
-				srv, err := permuteproxy.Engine{Base: base}.Server(c)
+				srv, err := permuteproxy.ServerEngine{Base: base}.Server(c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -391,7 +391,7 @@ func TestServerLifecycle(t *testing.T) {
 			})
 			t.Run("close", func(t *testing.T) {
 				base := newProbe(testutils.System{})
-				srv, done := start(t, permuteproxy.Engine{Base: base}, c)
+				srv, done := start(t, permuteproxy.ServerEngine{Base: base}, c)
 				addr := waitBound(t, base, done)
 				if err := srv.Close(); err != nil {
 					t.Fatal(err)
@@ -407,7 +407,7 @@ func TestServerLifecycle(t *testing.T) {
 			})
 			t.Run("close before run", func(t *testing.T) {
 				base := newProbe(testutils.System{})
-				srv, err := permuteproxy.Engine{Base: base}.Server(c)
+				srv, err := permuteproxy.ServerEngine{Base: base}.Server(c)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -490,7 +490,7 @@ func connect(t *testing.T, ctx context.Context, c permuteproxy.Chain, state, tar
 		if scheme == "any" {
 			c.Layers = append([]permuteproxy.Layer{{Scheme: "socks5", Options: c.Layers[0].Options}}, c.Layers[1:]...)
 		}
-		n, err := permuteproxy.Engine{}.Client(c)
+		n, err := permuteproxy.ClientEngine{}.Client(c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -505,7 +505,7 @@ func connect(t *testing.T, ctx context.Context, c permuteproxy.Chain, state, tar
 	if c.Endpoint.Network == "" {
 		c.Endpoint.Network = "tcp"
 	}
-	tr, err := permuteproxy.Engine{}.Transport(c)
+	tr, err := permuteproxy.TransportEngine{}.Transport(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +543,7 @@ func TestServerStopReleasesConns(t *testing.T) {
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					base, upstream := newProbe(testutils.System{}), newProbe(testutils.System{})
-					srv, err := permuteproxy.Engine{Base: base, Upstream: upstream}.Server(c)
+					srv, err := permuteproxy.ServerEngine{Base: base, Upstream: upstream}.Server(c)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -603,10 +603,10 @@ func TestProxyRejectsBadCredentials(t *testing.T) {
 		t.Run(tt.server+"/"+tt.client["username"], func(t *testing.T) {
 			c := parse(t, tt.server)
 			base := newProbe(testutils.System{})
-			_, done := start(t, permuteproxy.Engine{Base: base}, c)
+			_, done := start(t, permuteproxy.ServerEngine{Base: base}, c)
 			c.Endpoint.Address = waitBound(t, base, done).String()
 			c.Layers[0].Options = tt.client
-			n, err := permuteproxy.Engine{}.Client(c)
+			n, err := permuteproxy.ClientEngine{}.Client(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -624,7 +624,7 @@ func TestClientRefusesPacket(t *testing.T) {
 	for _, uri := range []string{"http://127.0.0.1:1", "socks4://127.0.0.1:1"} {
 		t.Run(uri, func(t *testing.T) {
 			base := newProbe(testutils.System{})
-			n, err := permuteproxy.Engine{Base: base}.Client(parse(t, uri))
+			n, err := permuteproxy.ClientEngine{Base: base}.Client(parse(t, uri))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -641,7 +641,7 @@ func TestClientRefusesPacket(t *testing.T) {
 
 func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
 	under := &testutils.CountingNetwork{}
-	client, err := permuteproxy.Engine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
+	client, err := permuteproxy.ClientEngine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +653,7 @@ func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
 		{"cmd-nc", "127.0.0.1:80", permuteproxy.Stream},
 		{"cmd-nc-udp", "127.0.0.1:53", permuteproxy.Packet},
 	} {
-		tr, err := permuteproxy.Engine{Base: client}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: tt.network, Address: tt.address}})
+		tr, err := permuteproxy.TransportEngine{Base: client}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: tt.network, Address: tt.address}})
 		if err != nil {
 			t.Fatal(err)
 		}

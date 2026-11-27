@@ -14,7 +14,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero Engine reaches udp through Local
+	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero TransportEngine reaches udp through Local
 	"github.com/wzshiming/permuteproxy/protocols/quic"
 )
 
@@ -38,7 +38,7 @@ func quicChain(address string, opts permuteproxy.Options) permuteproxy.Chain {
 	return permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "quic", Options: opts}}, Endpoint: permuteproxy.Endpoint{Address: address}}
 }
 
-func build(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) permuteproxy.Transport {
+func build(t *testing.T, e permuteproxy.TransportEngine, c permuteproxy.Chain) permuteproxy.Transport {
 	t.Helper()
 	tr, err := e.Transport(c)
 	if err != nil {
@@ -48,7 +48,7 @@ func build(t *testing.T, e permuteproxy.Engine, c permuteproxy.Chain) permutepro
 }
 
 // listenQUIC listens through quic on e and returns the listener and the keys to dial it with.
-func listenQUIC(t *testing.T, e permuteproxy.Engine) (net.Listener, keys) {
+func listenQUIC(t *testing.T, e permuteproxy.TransportEngine) (net.Listener, keys) {
 	t.Helper()
 	k := newKeys(t)
 	ln, err := build(t, e, quicChain("127.0.0.1:0", k.server)).Listen(context.Background())
@@ -60,7 +60,7 @@ func listenQUIC(t *testing.T, e permuteproxy.Engine) (net.Listener, keys) {
 }
 
 // pair listens through quic on e and returns the listener and a transport dialing it.
-func pair(t *testing.T, e permuteproxy.Engine) (net.Listener, permuteproxy.Transport) {
+func pair(t *testing.T, e permuteproxy.TransportEngine) (net.Listener, permuteproxy.Transport) {
 	t.Helper()
 	ln, k := listenQUIC(t, e)
 	return ln, build(t, e, quicChain(ln.Addr().String(), k.client))
@@ -117,7 +117,7 @@ func random(t *testing.T, n int) []byte {
 }
 
 func TestWriteIsSentWithoutMoreData(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	accepted := accept(t, ln)
 	c := dial(t, tr)
 	if _, err := c.Write([]byte("hello")); err != nil {
@@ -132,7 +132,7 @@ func TestWriteIsSentWithoutMoreData(t *testing.T) {
 }
 
 func TestReadEndsAtEOFOnceTheListenerCloses(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	accepted := accept(t, ln)
 	c := dial(t, tr)
 	if _, err := c.Write([]byte("hi")); err != nil {
@@ -153,7 +153,7 @@ func TestReadEndsAtEOFOnceTheListenerCloses(t *testing.T) {
 }
 
 func TestReadEndsAtEOFOnceTheDialerCloses(t *testing.T) {
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	accepted := accept(t, ln)
 	c := dial(t, tr)
 	data := random(t, 256<<10)
@@ -170,7 +170,7 @@ func TestReadEndsAtEOFOnceTheDialerCloses(t *testing.T) {
 
 func TestAnIdleStreamOutlivesTheIdleTimeout(t *testing.T) {
 	quic.SetIdleTimeout(t, 500*time.Millisecond)
-	ln, tr := pair(t, permuteproxy.Engine{})
+	ln, tr := pair(t, permuteproxy.TransportEngine{})
 	c, srv := connected(t, ln, tr)
 	time.Sleep(1500 * time.Millisecond)
 	for _, ends := range [][2]net.Conn{{c, srv}, {srv, c}} {
@@ -185,7 +185,7 @@ func TestAnIdleStreamOutlivesTheIdleTimeout(t *testing.T) {
 }
 
 func TestListenerMaySpeakFirst(t *testing.T) {
-	overCarriers(t, func(t *testing.T, e permuteproxy.Engine) {
+	overCarriers(t, func(t *testing.T, e permuteproxy.TransportEngine) {
 		ln, tr := pair(t, e)
 		go func() {
 			if c, err := ln.Accept(); err == nil {
@@ -208,7 +208,7 @@ func TestListenerMaySpeakFirst(t *testing.T) {
 func TestDialBuildsItsTLSConfigBeforeTheCarrier(t *testing.T) {
 	base := newRecorder()
 	missing := filepath.Join(t.TempDir(), "missing-ca.pem")
-	tr := build(t, permuteproxy.Engine{Base: base}, quicChain("127.0.0.1:1", permuteproxy.Options{"tls_ca_file": missing}))
+	tr := build(t, permuteproxy.TransportEngine{Base: base}, quicChain("127.0.0.1:1", permuteproxy.Options{"tls_ca_file": missing}))
 	for range 2 {
 		if _, err := tr.Dial(context.Background(), permuteproxy.Stream); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("Dial = %v, want the missing CA file", err)
@@ -221,7 +221,7 @@ func TestDialBuildsItsTLSConfigBeforeTheCarrier(t *testing.T) {
 
 func TestListenBuildsItsTLSConfigBeforeTheBind(t *testing.T) {
 	base := newRecorder()
-	tr := build(t, permuteproxy.Engine{Base: base}, quicChain("127.0.0.1:0", permuteproxy.Options{"tls_skip_verify": "true"}))
+	tr := build(t, permuteproxy.TransportEngine{Base: base}, quicChain("127.0.0.1:0", permuteproxy.Options{"tls_skip_verify": "true"}))
 	if _, err := tr.Listen(context.Background()); err == nil {
 		t.Fatal("Listen without key material succeeded")
 	}
@@ -234,7 +234,7 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 	k := newKeys(t)
 	dir := t.TempDir()
 	opts := permuteproxy.Options{"tls_cert_file": filepath.Join(dir, "cert.pem"), "tls_key_file": filepath.Join(dir, "key.pem")}
-	tr := build(t, permuteproxy.Engine{}, quicChain("127.0.0.1:0", opts))
+	tr := build(t, permuteproxy.TransportEngine{}, quicChain("127.0.0.1:0", opts))
 	if _, err := tr.Listen(context.Background()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Listen before the key material exists = %v, want it missing", err)
 	}
@@ -249,7 +249,7 @@ func TestFailedServerConfigIsRetried(t *testing.T) {
 	}
 	defer ln.Close()
 	accepted := accept(t, ln)
-	c := dial(t, build(t, permuteproxy.Engine{}, quicChain(ln.Addr().String(), k.client)))
+	c := dial(t, build(t, permuteproxy.TransportEngine{}, quicChain(ln.Addr().String(), k.client)))
 	if _, err := c.Write([]byte("x")); err != nil {
 		t.Fatal(err)
 	}
