@@ -3,9 +3,7 @@ package permuteproxy
 import (
 	"errors"
 	"fmt"
-	"net"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -97,36 +95,12 @@ func (x expression) over(address string) Chain {
 	return c
 }
 
-// hostBytes are the bytes a host may carry into a template.
-const hostBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.-_:%"
-
-// maxHost bounds the host a template carries, since no DNS name is longer.
-const maxHost = 255
-
-// splitTarget splits a host:port address whose host and port a template can carry.
-func splitTarget(address string) (host, port string, err error) {
-	host, port, err = net.SplitHostPort(address)
-	if err != nil {
-		return "", "", errors.New("address is not host:port")
-	}
-	if len(host) > maxHost {
-		return "", "", fmt.Errorf("host of %d bytes is longer than %d", len(host), maxHost)
-	}
-	if strings.HasPrefix(host, "-") || strings.Trim(host, hostBytes) != "" {
-		return "", "", errors.New("host starts with '-' or has a byte other than ASCII letters, digits, '.', '-', '_', ':' and '%'")
-	}
-	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
-		return "", "", errors.New("port is not a decimal number from 0 to 65535")
-	}
-	return host, port, nil
-}
-
 // expand fills x's template from address, an address of kind, refusing values the template cannot carry.
 func (x expression) expand(kind AddressKind, address string) (string, error) {
 	var pairs []string
 	switch kind {
 	case AddressHost:
-		host, port, err := splitTarget(address)
+		host, port, err := cmdutils.SplitTarget(address)
 		if err != nil {
 			return "", err
 		}

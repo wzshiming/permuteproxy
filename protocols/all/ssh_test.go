@@ -10,7 +10,6 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
 // sshExec serves ssh with exec allowed for u:p, running commands through upstream, and returns its client.
@@ -33,7 +32,7 @@ func TestNetcatUDPOverSSHExec(t *testing.T) {
 	requireNetcat(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	commands := newProbe(local.Network)
+	commands := newProbe(bundled{})
 	echo, received := watchedUDPEcho(t)
 	tr, err := permuteproxy.TransportEngine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc-udp", Address: echo.String()}})
 	if err != nil {
@@ -55,7 +54,7 @@ func TestSSHClientDialsUDPThroughNetcat(t *testing.T) {
 	requireNetcat(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	commands := newProbe(local.Network)
+	commands := newProbe(bundled{})
 	echo, received := watchedUDPEcho(t)
 	conn := dialPacket(t, ctx, sshExec(t, commands), echo.String())
 	echoed(t, conn, []byte("ping"))
@@ -69,7 +68,7 @@ func TestSOCKS5AssociationOverSSHUpstream(t *testing.T) {
 	requireNetcat(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	commands := newProbe(local.Network)
+	commands := newProbe(bundled{})
 	upstream := newProbe(sshExec(t, commands))
 	c := parse(t, "socks5://127.0.0.1:0")
 	base := newProbe(testutils.System{})
@@ -97,7 +96,7 @@ func TestNetcatOverSSHExecCarriesAStream(t *testing.T) {
 	requireNetcat(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	commands := newProbe(local.Network)
+	commands := newProbe(bundled{})
 	echo, accepted := tcpEcho(t)
 	tr, err := permuteproxy.TransportEngine{Base: sshExec(t, commands)}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd-nc", Address: echo}})
 	if err != nil {
@@ -158,7 +157,7 @@ func TestLayersOverSSHRefuseItsLossyDatagrams(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	// The ssh client derives udp from nc's output through dgram, which keeps no datagram boundaries.
-	ssh := sshExec(t, newProbe(local.Network))
+	ssh := sshExec(t, newProbe(bundled{}))
 	t.Run("ss+udp", func(t *testing.T) {
 		base := &lossyCalls{Network: ssh}
 		n, err := permuteproxy.ClientEngine{Base: base, Local: base}.Client(parse(t, "ss+udp://127.0.0.1:1"))

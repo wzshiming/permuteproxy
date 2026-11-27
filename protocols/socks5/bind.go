@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/clientutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
@@ -34,7 +33,7 @@ var replies = []string{
 
 // listen asks the proxy to listen at address with BIND; an empty host is the IPv4 wildcard.
 func (c *client) listen(ctx context.Context, inner permuteproxy.Transport, _, address string) (net.Listener, error) {
-	return clientutils.ListenBind(ctx, address, func(ctx context.Context, address string) (net.Conn, net.Addr, error) {
+	return netutils.ListenBind(ctx, address, func(ctx context.Context, address string) (net.Conn, net.Addr, error) {
 		request, err := c.bindRequest(ctx, address)
 		if err != nil {
 			return nil, nil, err
@@ -44,7 +43,7 @@ func (c *client) listen(ctx context.Context, inner permuteproxy.Transport, _, ad
 			return nil, nil, err
 		}
 		var bound net.Addr
-		err = clientutils.Handshake(ctx, conn, c.dialer.Timeout, func() error {
+		err = netutils.Handshake(ctx, conn, c.dialer.Timeout, func() error {
 			if err := c.authenticate(conn); err != nil {
 				return err
 			}

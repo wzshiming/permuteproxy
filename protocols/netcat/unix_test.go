@@ -15,7 +15,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	"github.com/wzshiming/permuteproxy/protocols/local"
+	"github.com/wzshiming/permuteproxy/protocols/command"
 )
 
 func TestNetcatSequentialConnections(t *testing.T) {
@@ -225,7 +225,7 @@ func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
 	}
 	address := socketPath(t)
 	peers := make(chan net.Conn, 1)
-	n := Local{&local.Local{}}
+	n := Runner{&command.Runner{}}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		local, peer := net.Pipe()
 		peers <- peer
@@ -266,7 +266,7 @@ func TestNetcatUnixCustomCommandWithoutProcess(t *testing.T) {
 func TestNetcatUnixListenQuotesThePath(t *testing.T) {
 	address := filepath.Join(t.TempDir(), "a b.sock")
 	argv := make(chan []string, 1)
-	n := Local{&local.Local{}}
+	n := Runner{&command.Runner{}}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		argv <- append([]string{name}, args...)
 		local, _ := net.Pipe()
@@ -365,11 +365,11 @@ func TestNetcatUnixKeepsForeignPath(t *testing.T) {
 	})
 }
 
-// Once an nc has exited before its first byte, Accept waits for its output for the Local's WaitDelay.
+// Once an nc has exited before its first byte, Accept waits for its output for the Runner's WaitDelay.
 func TestNetcatUnixExitWindowIsWaitDelay(t *testing.T) {
 	const waitDelay = 200 * time.Millisecond
 	spawns := make(chan *fakeSpawn, 1)
-	n := Local{&local.Local{WaitDelay: waitDelay}}
+	n := Runner{&command.Runner{WaitDelay: waitDelay}}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		local, peer := net.Pipe()
 		p := &fakeSpawn{Conn: local, peer: peer, done: make(chan struct{}), deadlines: make(chan time.Time, 4)}
@@ -406,7 +406,7 @@ func TestNetcatUnixExitWindowIsWaitDelay(t *testing.T) {
 }
 
 func TestNetcatRejectsNegativeWaitDelay(t *testing.T) {
-	n := Local{&local.Local{WaitDelay: -time.Second}}
+	n := Runner{&command.Runner{WaitDelay: -time.Second}}
 	for _, network := range []string{"cmd-nc", "cmd-nc-unix"} {
 		if _, err := engineListen(context.Background(), n, network, "127.0.0.1:1"); err == nil || !strings.Contains(err.Error(), "negative WaitDelay") {
 			t.Fatalf("Listen %s = %v, want the negative WaitDelay refused", network, err)
@@ -414,15 +414,13 @@ func TestNetcatRejectsNegativeWaitDelay(t *testing.T) {
 	}
 }
 
-// A plain local.Local listens on cmd-nc-unix only as a Local of this package.
-func TestLocalListensOnOtherNetworks(t *testing.T) {
+// A plain command.Runner listens on cmd-nc-unix only as a Runner of this package, which takes no network but those and cmd.
+func TestRunnerRefusesOtherNetworks(t *testing.T) {
 	ctx := context.Background()
-	if _, err := local.Network.Listen(ctx, "cmd-nc-unix", socketPath(t)); !errors.Is(err, permuteproxy.ErrUnsupported) {
-		t.Fatalf("local.Network.Listen(cmd-nc-unix) = %v, want ErrUnsupported", err)
+	if _, err := command.Network.Listen(ctx, "cmd-nc-unix", socketPath(t)); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("command.Network.Listen(cmd-nc-unix) = %v, want ErrUnsupported", err)
 	}
-	ln, err := Network.Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Network.Listen(ctx, "tcp", "127.0.0.1:0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Fatalf("Network.Listen(tcp) = %v, want ErrUnsupported", err)
 	}
-	ln.Close()
 }

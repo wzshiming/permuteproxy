@@ -11,7 +11,7 @@ import (
 	_ "github.com/wzshiming/shadowsocks/init"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/pool"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 const (
@@ -80,7 +80,7 @@ func (c *client) listenPacket(ctx context.Context, inner permuteproxy.Transport,
 		ProxyAddress: conn.RemoteAddr().String(),
 		ProxyPacket:  func(context.Context, string, string) (net.PacketConn, error) { return carrier, nil },
 		Cipher:       c.cipher,
-		BytesPool:    pool.Bytes,
+		BytesPool:    netutils.Buffers,
 	}
 	wrapped, err := pc.ListenPacket(ctx, "udp", ":0")
 	if err != nil {
@@ -100,7 +100,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 		srv.Context = ctx
 		srv.Cipher = connCipher
 		srv.ProxyDial = upstream.DialContext
-		srv.BytesPool = pool.Bytes
+		srv.BytesPool = netutils.Buffers
 		return srv.Serve(ln)
 	}
 	servePacket := func(ctx context.Context, pc net.PacketConn, upstream permuteproxy.Network) error {
@@ -108,7 +108,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 		psrv.Context = ctx
 		psrv.Cipher = connCipher
 		psrv.ProxyPacket = upstream.ListenPacket
-		psrv.BytesPool = pool.Bytes
+		psrv.BytesPool = netutils.Buffers
 		psrv.Timeout = time.Minute
 		// The library skips the datagrams it cannot decrypt or parse and closes the outgoing sockets it opened.
 		return psrv.ServePacket(pc)

@@ -17,7 +17,7 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
-	"github.com/wzshiming/permuteproxy/protocols/local"
+	"github.com/wzshiming/permuteproxy/protocols/command"
 )
 
 func TestMain(m *testing.M) {
@@ -72,14 +72,14 @@ func fakeNetcat(args []string) int {
 	return 0
 }
 
-// recording is a Local whose commands go through run and are killed and reaped at the test's end.
-func recording(t *testing.T, waitDelay time.Duration, run func(name string, args []string) ([]string, error)) (Local, func() []net.Conn) {
+// recording is a Runner whose commands go through run and are killed and reaped at the test's end.
+func recording(t *testing.T, waitDelay time.Duration, run func(name string, args []string) ([]string, error)) (Runner, func() []net.Conn) {
 	t.Helper()
 	var mu sync.Mutex
 	var started []net.Conn
-	// The commands themselves run on a Local of their own, as a custom Command replaces os/exec.
-	inner := &local.Local{WaitDelay: waitDelay}
-	n := Local{&local.Local{WaitDelay: waitDelay}}
+	// The commands themselves run on a Runner of their own, as a custom Command replaces os/exec.
+	inner := &command.Runner{WaitDelay: waitDelay}
+	n := Runner{&command.Runner{WaitDelay: waitDelay}}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		argv, err := run(name, args)
 		if err != nil {
@@ -109,7 +109,7 @@ func recording(t *testing.T, waitDelay time.Duration, run func(name string, args
 }
 
 // fakeLinux runs the nc networks through the test binary acting as Linux netcat.
-func fakeLinux(t *testing.T, waitDelay time.Duration) Local {
+func fakeLinux(t *testing.T, waitDelay time.Duration) Runner {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -125,8 +125,8 @@ func fakeLinux(t *testing.T, waitDelay time.Duration) Local {
 	return n
 }
 
-// spawning is a Local recording each command it starts.
-func spawning(t *testing.T) (Local, func() []net.Conn) {
+// spawning is a Runner recording each command it starts.
+func spawning(t *testing.T) (Runner, func() []net.Conn) {
 	t.Helper()
 	return recording(t, 0, func(name string, args []string) ([]string, error) {
 		return append([]string{name}, args...), nil

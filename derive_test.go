@@ -286,7 +286,7 @@ func TestFailedDerivedDialReleasesWhatItBuilt(t *testing.T) {
 			Derive: map[string]string{"unix": relayed["unix"]},
 		}, nil
 	}}
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 			Close:  func() error { record("close"); close(closed); return nil },
 		}, nil
 	}}
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestDerivedDialBlockedInDialDoesNotHangClientClose(t *testing.T) {
 			Close:  func() error { record("close"); close(closed); return nil },
 		}, nil
 	}}
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +549,7 @@ func TestDerivedDialReopensEndedSession(t *testing.T) {
 		relays <- r
 		return r
 	})
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestClientRefusesDerivationOverNetworkWithoutDial(t *testing.T) {
 			Close:  func() error { record("test-dialless.close"); return nil },
 		}, nil
 	}}
-	if _, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}); !errors.Is(err, ErrInvalidChain) {
+	if _, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet); !errors.Is(err, ErrInvalidChain) {
 		t.Fatalf("client deriving udp over cmd without Dial = %v, want ErrInvalidChain", err)
 	}
 	assertCalls(t, "test-dialless.close")

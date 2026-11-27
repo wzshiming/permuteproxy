@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 )
 
@@ -141,4 +142,39 @@ func (c Chain) URI() (string, error) {
 		return "", fmt.Errorf("endpoint: address not representable as URI: %w", ErrInvalidChain)
 	}
 	return s, nil
+}
+
+func expandAliases(tokens []string) []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if exp, ok := aliases[t]; ok {
+			out = append(out, exp...)
+		} else {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// foldAliases replaces the longest registered expansion found at the head of tokens.
+func foldAliases(tokens []string) []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	names := make([]string, 0, len(aliases))
+	for name := range aliases {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		li, lj := len(aliases[names[i]]), len(aliases[names[j]])
+		return li > lj || (li == lj && names[i] < names[j])
+	})
+	for _, name := range names {
+		exp := aliases[name]
+		if len(exp) <= len(tokens) && strings.Join(tokens[:len(exp)], "+") == strings.Join(exp, "+") {
+			return append([]string{name}, tokens[len(exp):]...)
+		}
+	}
+	return tokens
 }

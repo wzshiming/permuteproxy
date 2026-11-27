@@ -8,7 +8,7 @@ import (
 	"github.com/wzshiming/socks4"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/pool"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/serverutils"
 )
 
@@ -48,7 +48,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			srv.Context = ctx
 			srv.ProxyDial = upstream.DialContext
 			srv.ProxyListenBind = owned.Listen
-			srv.BytesPool = pool.Bytes
+			srv.BytesPool = netutils.Buffers
 			if username != "" {
 				srv.Authentication = socks4.UserAuth(username)
 			}

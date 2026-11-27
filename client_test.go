@@ -253,7 +253,7 @@ func TestClientWithoutListenPacketRefusesListedDatagrams(t *testing.T) {
 	calls = nil
 	ctx := context.Background()
 	// The engine refuses datagrams to a proxy without Packet first, so this one is assembled directly.
-	n, err := derivingProxy("test-derive", Stream, 0, []string{"tcp", "udp", "unixgram"}, nil, dialRelay).client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := derivingProxy("test-derive", Stream, 0, []string{"tcp", "udp", "unixgram"}, nil, dialRelay).client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +313,7 @@ func TestClientDoesNotListenOnADerivedNetwork(t *testing.T) {
 		}
 		return funcs, err
 	}
-	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{})
+	n, err := spec.client(TransportFuncs{Plane: Stream}, NetworkFuncs{}, Options{}, Stream|Packet)
 	if err != nil {
 		t.Fatal(err)
 	}

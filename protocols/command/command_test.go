@@ -1,4 +1,4 @@
-package local
+package command
 
 import (
 	"context"
@@ -85,7 +85,7 @@ func signaled(err error) bool {
 
 func TestCommandCloseReturnsBeforeExit(t *testing.T) {
 	requireCommand(t, "sleep")
-	n := &Local{WaitDelay: 200 * time.Millisecond}
+	n := &Runner{WaitDelay: 200 * time.Millisecond}
 	conn, err := n.command(context.Background(), "sleep", "30")
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestCommandCloseIsIdempotent(t *testing.T) {
 
 func TestCommandCloseDrainsOutput(t *testing.T) {
 	requireCommand(t, "sh")
-	n := &Local{WaitDelay: 30 * time.Second}
+	n := &Runner{WaitDelay: 30 * time.Second}
 	conn, err := n.command(context.Background(), "sh", "-c", "cat >/dev/null; head -c 1000000 /dev/zero")
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestCommandDoneNotPinnedByDescendant(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			pidFile := pidPath(t)
-			n := &Local{WaitDelay: 200 * time.Millisecond}
+			n := &Runner{WaitDelay: 200 * time.Millisecond}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			conn, err := n.command(ctx, "sh", "-c", tt.script, pidFile)
@@ -269,7 +269,7 @@ func TestListenerFirstByteNotPinnedByDescendant(t *testing.T) {
 	requireCommand(t, "sh")
 	t.Run("failure", func(t *testing.T) {
 		pidFile := pidPath(t)
-		n := &Local{WaitDelay: 200 * time.Millisecond}
+		n := &Runner{WaitDelay: 200 * time.Millisecond}
 		ln, err := n.Listen(context.Background(), "cmd", `sh -c 'sleep 30 & echo $! >> "$0"; exit 3' `+pidFile)
 		if err != nil {
 			t.Fatal(err)
@@ -291,7 +291,7 @@ func TestListenerFirstByteNotPinnedByDescendant(t *testing.T) {
 		pidFile := pidPath(t)
 		stopped := errors.New("enough")
 		var spawns int
-		n := &Local{WaitDelay: 200 * time.Millisecond}
+		n := &Runner{WaitDelay: 200 * time.Millisecond}
 		n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 			if spawns++; spawns > 2 {
 				return nil, stopped
@@ -377,7 +377,7 @@ func TestCommandKill(t *testing.T) {
 
 func TestCommandCancelKillsAfterWaitDelay(t *testing.T) {
 	requireCommand(t, "cat")
-	n := &Local{WaitDelay: 200 * time.Millisecond}
+	n := &Runner{WaitDelay: 200 * time.Millisecond}
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := n.command(ctx, "cat")
 	if err != nil {
@@ -394,7 +394,7 @@ func TestCommandCancelKillsAfterWaitDelay(t *testing.T) {
 }
 
 func TestCommandRejectsNegativeWaitDelay(t *testing.T) {
-	n := &Local{WaitDelay: -time.Second}
+	n := &Runner{WaitDelay: -time.Second}
 	if _, err := n.DialContext(context.Background(), "cmd", "cat"); !errors.Is(err, errNegativeWaitDelay) {
 		t.Fatalf("DialContext = %v, want %v", err, errNegativeWaitDelay)
 	}
@@ -442,7 +442,7 @@ func chain(network, address string) permuteproxy.Chain {
 }
 
 // engineListen listens through a TransportEngine, which asks n for what the network's declaration names.
-func engineListen(ctx context.Context, n *Local, network, address string) (net.Listener, error) {
+func engineListen(ctx context.Context, n *Runner, network, address string) (net.Listener, error) {
 	tr, err := permuteproxy.TransportEngine{Base: n}.Transport(chain(network, address))
 	if err != nil {
 		return nil, err
@@ -513,7 +513,7 @@ func TestListenerExitWindowIsWaitDelay(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			spawns := make(chan *fakeSpawn, 1)
-			n := &Local{WaitDelay: tt.waitDelay}
+			n := &Runner{WaitDelay: tt.waitDelay}
 			n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 				local, peer := net.Pipe()
 				p := &fakeSpawn{Conn: local, peer: peer, done: make(chan struct{}), deadlines: make(chan time.Time, 4)}

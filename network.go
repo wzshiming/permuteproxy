@@ -4,8 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strings"
 )
+
+// Plane is a set of the kinds of carrier a transport offers: byte streams, datagrams or both.
+type Plane uint8
+
+const (
+	Stream Plane = 1 << iota // reliable ordered byte streams, as tcp carries
+	Packet                   // datagrams each with its peer, as udp carries
+)
+
+// String names the planes in p joined by '|', or "none".
+func (p Plane) String() string {
+	var names []string
+	if p&Stream != 0 {
+		names = append(names, "stream")
+	}
+	if p&Packet != 0 {
+		names = append(names, "packet")
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	return strings.Join(names, "|")
+}
 
 // ErrUnsupported is returned, before any I/O, for an operation a network, transport or layer does not offer.
 var ErrUnsupported = errors.New("unsupported")
@@ -63,46 +88,58 @@ func (n NetworkFuncs) ListenPacket(ctx context.Context, network, address string)
 	return n.ListenPacketFunc(ctx, network, address)
 }
 
-// borrowed forwards only Network and Lossy of an injected base, never its Close.
-type borrowed struct{ Network }
-
-// Lossy forwards what the borrowed network reports.
-func (b borrowed) Lossy(network string) bool {
-	return isLossy(b.Network, network)
+// Transport is a chain built down to its endpoint, offering the endpoint on each plane it has.
+type Transport interface {
+	// Planes is the set of planes Dial, Listen and ListenPacket serve.
+	Planes() Plane
+	// Dial connects to the endpoint on one plane; a Packet conn is also a net.PacketConn whose default peer is the endpoint.
+	Dial(ctx context.Context, plane Plane) (net.Conn, error)
+	// Listen accepts Stream connections at the endpoint.
+	Listen(ctx context.Context) (net.Listener, error)
+	// ListenPacket binds a Packet socket at the endpoint.
+	ListenPacket(ctx context.Context) (net.PacketConn, error)
 }
 
-// byName is the Network an engine's nil Base, Local or Upstream stands for, resolving each call by its network name.
-type byName struct{}
+// TransportFuncs is a Transport of functions, each refusing with ErrUnsupported while it is nil or its plane is outside Plane.
+type TransportFuncs struct {
+	Plane            Plane                                                    // the planes it offers
+	DialFunc         func(ctx context.Context, plane Plane) (net.Conn, error) // implements Dial
+	ListenFunc       func(ctx context.Context) (net.Listener, error)          // implements Listen
+	ListenPacketFunc func(ctx context.Context) (net.PacketConn, error)        // implements ListenPacket
+}
 
-// resolve is the registered implementation of network's base, else a Network refusing every call.
-func (byName) resolve(network string) Network {
-	base, _, _ := lookupBase(network)
-	if ns, _ := lookupNetwork(base); ns.Network != nil {
-		return ns.Network
+// Planes returns Plane.
+func (t TransportFuncs) Planes() Plane {
+	return t.Plane
+}
+
+// Dial calls DialFunc for Stream or Packet within Plane.
+func (t TransportFuncs) Dial(ctx context.Context, plane Plane) (net.Conn, error) {
+	if t.DialFunc == nil || (plane != Stream && plane != Packet) || t.Plane&plane == 0 {
+		return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 	}
-	return NetworkFuncs{}
+	return t.DialFunc(ctx, plane)
 }
 
-func (n byName) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return n.resolve(network).DialContext(ctx, network, address)
-}
-
-func (n byName) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	return n.resolve(network).Listen(ctx, network, address)
-}
-
-func (n byName) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	return n.resolve(network).ListenPacket(ctx, network, address)
-}
-
-// Lossy forwards what network's resolved implementation reports.
-func (n byName) Lossy(network string) bool {
-	return isLossy(n.resolve(network), network)
-}
-
-func orByName(n Network) Network {
-	if n != nil {
-		return n
+// Listen calls ListenFunc when Plane has Stream.
+func (t TransportFuncs) Listen(ctx context.Context) (net.Listener, error) {
+	if t.ListenFunc == nil || t.Plane&Stream == 0 {
+		return nil, fmt.Errorf("listen: %w", ErrUnsupported)
 	}
-	return byName{}
+	return t.ListenFunc(ctx)
+}
+
+// ListenPacket calls ListenPacketFunc when Plane has Packet.
+func (t TransportFuncs) ListenPacket(ctx context.Context) (net.PacketConn, error) {
+	if t.ListenPacketFunc == nil || t.Plane&Packet == 0 {
+		return nil, fmt.Errorf("listen packet: %w", ErrUnsupported)
+	}
+	return t.ListenPacketFunc(ctx)
+}
+
+func closeIf(v any) error {
+	if c, ok := v.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }

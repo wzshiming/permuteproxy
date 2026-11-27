@@ -66,8 +66,8 @@ func (s LayerSpec) covers(funcs *AdapterFuncs) error {
 	return nil
 }
 
-// adapt builds over inner the adapter s.NewAdapter declares.
-func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
+// adapt builds over inner the adapter s.NewAdapter declares, offering of its planes those in plane, what the chain exposes above it.
+func (s LayerSpec) adapt(inner Transport, opts Options, plane Plane) (Transport, error) {
 	funcs, err := s.NewAdapter(opts)
 	switch {
 	case err != nil:
@@ -78,7 +78,7 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 	if err := s.covers(funcs); err != nil {
 		return nil, reject(funcs.Close, err)
 	}
-	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
+	t := TransportFuncs{Plane: plane & (s.Provides | (inner.Planes() & s.Preserves))}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {
 		link := funcs.link(plane)
 		if link == nil {
@@ -101,16 +101,6 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 	if funcs.Packet == nil {
 		t.ListenPacketFunc = inner.ListenPacket
 	}
+	// Adapter code never sees inner, so Close releases it too.
 	return assembled{t, closeOnce(funcs.Close, inner)}, nil
-}
-
-// assembled is a declared layer's Transport; adapter code never sees inner, so Close releases it too.
-type assembled struct {
-	TransportFuncs
-	close func() error
-}
-
-// Close releases the layer and then its inner Transport, once.
-func (a assembled) Close() error {
-	return a.close()
 }

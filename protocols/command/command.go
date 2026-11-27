@@ -1,4 +1,4 @@
-package local
+package command
 
 import (
 	"context"
@@ -25,7 +25,7 @@ func splitCommand(address string) ([]string, error) {
 	return args, nil
 }
 
-func (l *Local) dial() (cmdutils.DialFunc, error) {
+func (l *Runner) dial() (cmdutils.DialFunc, error) {
 	if l.WaitDelay < 0 {
 		return nil, errNegativeWaitDelay
 	}
@@ -36,14 +36,14 @@ func (l *Local) dial() (cmdutils.DialFunc, error) {
 }
 
 // waitDelay is WaitDelay with its zero default applied.
-func (l *Local) waitDelay() time.Duration {
+func (l *Runner) waitDelay() time.Duration {
 	if l.WaitDelay == 0 {
 		return defaultWaitDelay
 	}
 	return l.WaitDelay
 }
 
-func (l *Local) dialCommand(ctx context.Context, network, address string) (net.Conn, error) {
+func (l *Runner) dialCommand(ctx context.Context, network, address string) (net.Conn, error) {
 	args, err := splitCommand(address)
 	if err != nil {
 		return nil, err
@@ -55,12 +55,12 @@ func (l *Local) dialCommand(ctx context.Context, network, address string) (net.C
 	return cmdutils.DialContext(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args)
 }
 
-// CommandFunc starts a command whose stdio is the conn, as Local.Command does.
+// CommandFunc starts a command whose stdio is the conn, as Runner.Command does.
 type CommandFunc = func(ctx context.Context, name string, args ...string) (net.Conn, error)
 
 // ListenCommand listens as Listen does on cmd at address, a command line run once per connection;
 // wrap, when set, is given what starts a command and returns what the listener starts each through.
-func (l *Local) ListenCommand(ctx context.Context, address string, wrap func(start CommandFunc) CommandFunc) (net.Listener, error) {
+func (l *Runner) ListenCommand(ctx context.Context, address string, wrap func(start CommandFunc) CommandFunc) (net.Listener, error) {
 	args, err := splitCommand(address)
 	if err != nil {
 		return nil, err

@@ -24,7 +24,6 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
-	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
 	"github.com/wzshiming/permuteproxy/protocols/netcat"
 )
@@ -490,7 +489,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			srv.Context = ctx
 			srv.ProxyDial = upstream.DialContext
 			srv.ProxyListen = upstream.Listen
-			srv.BytesPool = pool.Bytes
+			srv.BytesPool = netutils.Buffers
 			srv.UserPermissions = func(string) sshd.Permissions { return permissions{exec: allowExec} }
 			return srv.Serve(ln)
 		},

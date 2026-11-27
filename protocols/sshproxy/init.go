@@ -4,7 +4,8 @@ import (
 	"github.com/wzshiming/sshd"
 
 	"github.com/wzshiming/permuteproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/local" // registers the base networks Networks lists
+	_ "github.com/wzshiming/permuteproxy/protocols/command" // registers cmd, which Networks lists, and dgram, which the client derives udp through
+	_ "github.com/wzshiming/permuteproxy/protocols/local"   // registers the base networks Networks lists
 )
 
 func init() {

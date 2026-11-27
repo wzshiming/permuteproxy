@@ -3,10 +3,56 @@ package permuteproxy
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 )
+
+// Options are a layer's option values by name.
+type Options map[string]string
+
+func (o Options) clone() Options {
+	c := make(Options, len(o))
+	for k, v := range o {
+		c[k] = v
+	}
+	return c
+}
+
+// LayerSpec declares a layer, the planes it consumes and offers, its options and constructors: NewAdapter makes it an adapter, which turns its carrier into the planes of the layer above, as tls does; NewClient or NewServer make it a proxy, which serves or dials a proxy protocol as the outermost layer, as socks5 does.
+type LayerSpec struct {
+	Requires    Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
+	Provides    Plane                                     // planes offered above whatever the carrier has
+	Preserves   Plane                                     // carrier planes also offered above, but only those the carrier has
+	Lossy       Plane                                     // planes the layer provides without datagram boundaries
+	OptionKeys  []string                                  // names of the options the layer accepts
+	UsernameKey string                                    // optional; the option a URI's username fills
+	PasswordKey string                                    // optional; the option a URI's password fills, beside UsernameKey
+	HostKey     string                                    // optional, adapters only; the option a build fills with the host of a host:port endpoint when the layer does not set it, as tls names the server it dials
+	NewAdapter  func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build
+	Networks    []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
+	NewClient   func(opts Options) (*ClientFuncs, error)  // declares a proxy's client per build
+	NewServer   func(opts Options) (*ServerFuncs, error)  // declares a proxy's server per build
+}
+
+// isProxy reports whether s speaks a proxy protocol as the outermost layer, as socks5 does, rather than adapting its carrier, as tls does.
+func (s LayerSpec) isProxy() bool {
+	return s.NewAdapter == nil
+}
+
+func (s LayerSpec) accepts(key string) bool {
+	if key == "" {
+		return false
+	}
+	if key == s.UsernameKey || key == s.PasswordKey || key == s.HostKey {
+		return true
+	}
+	for _, o := range s.OptionKeys {
+		if o == key {
+			return true
+		}
+	}
+	return false
+}
 
 // NetworkSpec declares a network: the plane it carries, how a URI writes its address and what implements or expresses it.
 type NetworkSpec struct {
@@ -149,39 +195,4 @@ func lookupBase(network string) (string, Plane, bool) {
 	}
 	ns, ok := lookupNetwork(network)
 	return network, ns.Plane, ok
-}
-
-func expandAliases(tokens []string) []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	out := make([]string, 0, len(tokens))
-	for _, t := range tokens {
-		if exp, ok := aliases[t]; ok {
-			out = append(out, exp...)
-		} else {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// foldAliases replaces the longest registered expansion found at the head of tokens.
-func foldAliases(tokens []string) []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	names := make([]string, 0, len(aliases))
-	for name := range aliases {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool {
-		li, lj := len(aliases[names[i]]), len(aliases[names[j]])
-		return li > lj || (li == lj && names[i] < names[j])
-	})
-	for _, name := range names {
-		exp := aliases[name]
-		if len(exp) <= len(tokens) && strings.Join(tokens[:len(exp)], "+") == strings.Join(exp, "+") {
-			return append([]string{name}, tokens[len(exp):]...)
-		}
-	}
-	return tokens
 }
