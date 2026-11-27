@@ -173,3 +173,59 @@ func TestHandshakeFailsOnceCtxEnds(t *testing.T) {
 		t.Fatalf("Handshake = %v, want context.Canceled", err)
 	}
 }
+
+// noDeadlineConn refuses deadlines, as an ssh channel does.
+type noDeadlineConn struct{ net.Conn }
+
+var errNoDeadline = errors.New("deadline not supported")
+
+func (noDeadlineConn) SetDeadline(time.Time) error      { return errNoDeadline }
+func (noDeadlineConn) SetReadDeadline(time.Time) error  { return errNoDeadline }
+func (noDeadlineConn) SetWriteDeadline(time.Time) error { return errNoDeadline }
+
+func TestHandshakeSucceedsOnAConnWithoutDeadlines(t *testing.T) {
+	inner, peer := net.Pipe()
+	defer peer.Close()
+	defer inner.Close()
+	conn := noDeadlineConn{inner}
+	go peer.Write([]byte{1})
+	err := Handshake(context.Background(), conn, time.Minute, func() error {
+		_, err := conn.Read(make([]byte, 1))
+		return err
+	})
+	if err != nil {
+		t.Fatalf("Handshake = %v, want nil", err)
+	}
+	// The conn stays usable after the handshake.
+	go peer.Write([]byte{2})
+	if _, err := conn.Read(make([]byte, 1)); err != nil {
+		t.Fatalf("Read after Handshake = %v", err)
+	}
+}
+
+func TestHandshakeTimesOutOnAConnWithoutDeadlines(t *testing.T) {
+	inner, peer := net.Pipe()
+	defer peer.Close()
+	defer inner.Close()
+	conn := noDeadlineConn{inner}
+	err := Handshake(context.Background(), conn, 50*time.Millisecond, func() error {
+		_, err := conn.Read(make([]byte, 1))
+		return err
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Handshake = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestHandshakeLeavesNoDeadlineBehind(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	defer conn.Close()
+	if err := Handshake(context.Background(), conn, 50*time.Millisecond, func() error { return nil }); err != nil {
+		t.Fatalf("Handshake = %v, want nil", err)
+	}
+	time.AfterFunc(150*time.Millisecond, func() { peer.Write([]byte{1}) })
+	if _, err := conn.Read(make([]byte, 1)); err != nil {
+		t.Fatalf("Read after the timeout passed = %v", err)
+	}
+}

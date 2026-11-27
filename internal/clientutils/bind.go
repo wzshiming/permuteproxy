@@ -161,20 +161,20 @@ type boundConn struct {
 func (c *boundConn) LocalAddr() net.Addr  { return c.local }
 func (c *boundConn) RemoteAddr() net.Addr { return c.remote }
 
-// Handshake runs do under a deadline on conn of timeout from now, or ctx's if sooner, and fails once ctx ends.
+// Handshake runs do, which talks over conn, for at most timeout and fails once that passes or
+// ctx ends. It interrupts do through a deadline on conn, or by closing a conn that takes none,
+// as an ssh channel does; a conn whose handshake succeeded is left without a deadline.
 func Handshake(ctx context.Context, conn net.Conn, timeout time.Duration, do func() error) error {
-	deadline := time.Now().Add(timeout)
-	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
-		deadline = d
-	}
-	conn.SetDeadline(deadline)
-	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Unix(1, 0)) })
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	stop := context.AfterFunc(ctx, func() {
+		if conn.SetDeadline(time.Unix(1, 0)) != nil {
+			conn.Close()
+		}
+	})
 	err := do()
 	if !stop() {
 		return ctx.Err()
 	}
-	if err != nil {
-		return err
-	}
-	return conn.SetDeadline(time.Time{})
+	return err
 }
