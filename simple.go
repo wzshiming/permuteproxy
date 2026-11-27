@@ -2,34 +2,15 @@ package permuteproxy
 
 import (
 	"context"
-	"io"
 )
 
-// Client is a proxy client: a Network reaching its targets through the proxy, whose Close releases it.
-type Client interface {
-	Network
-	io.Closer
-}
-
-// unclosed is a Client of a Network that holds nothing to release.
-type unclosed struct{ Network }
-
-func (unclosed) Close() error { return nil }
-
 // NewClient builds the client of the proxy chain uri names, such as socks5://user:pass@127.0.0.1:1080 or cmd:ssh -W %h:%p jump, as a zero ClientEngine does.
-func NewClient(uri string) (Client, error) {
+func NewClient(uri string) (Network, error) {
 	c, err := ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
-	n, err := ClientEngine{}.Client(c)
-	if err != nil {
-		return nil, err
-	}
-	if client, ok := n.(Client); ok {
-		return client, nil
-	}
-	return unclosed{n}, nil
+	return ClientEngine{}.Client(c)
 }
 
 // NewServer builds the server of the proxy chain uri names, such as socks5://user:pass@:1080, as a zero ServerEngine does; its Run binds and serves.

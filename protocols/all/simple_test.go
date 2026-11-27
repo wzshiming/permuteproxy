@@ -50,9 +50,7 @@ func TestSimple(t *testing.T) {
 			conn := dialRetry(t, client, echo)
 			testutils.RoundTrip(t, conn, "ping", "ping")
 			conn.Close()
-			if err := client.Close(); err != nil {
-				t.Fatalf("Close() = %v", err)
-			}
+			closeIf(client)
 
 			cancel()
 			if err := testutils.Wait(t, done, "ListenAndServe to return"); err != nil {
@@ -89,15 +87,5 @@ func TestSimpleInvalid(t *testing.T) {
 		if err := permuteproxy.ListenAndServe(context.Background(), uri); !errors.Is(err, permuteproxy.ErrInvalidChain) {
 			t.Errorf("ListenAndServe(%q) = %v, want ErrInvalidChain", uri, err)
 		}
-	}
-}
-
-func TestSimpleCommandClient(t *testing.T) {
-	client, err := permuteproxy.NewClient("cmd:nc %h %p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatalf("Close() = %v", err)
 	}
 }

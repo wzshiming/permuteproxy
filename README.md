@@ -44,7 +44,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
 
 	conn, err := client.DialContext(ctx, "tcp", "example.com:80")
 	if err != nil {
