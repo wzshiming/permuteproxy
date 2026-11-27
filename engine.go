@@ -70,8 +70,11 @@ func below(base Network, c Chain, side string, declares func(LayerSpec) bool) (*
 	return r, inner, nil
 }
 
-// Client builds the client of a proxy chain's outermost layer, which binds its own sockets through Local; the result's Close forwards to the layer's own result.
+// Client builds the client of a proxy chain's outermost layer, which binds its own sockets through Local; the result's Close forwards to the layer's own result. A bare command line, as cmd:ssh -W %h:%p jump, is itself the client: each tcp dial runs it with the target's host for %h and port for %p, "%%" writing a '%'.
 func (e ClientEngine) Client(c Chain) (Network, error) {
+	if c.templated() {
+		return e.template(c)
+	}
 	r, inner, err := below(e.Base, c, "client", func(s LayerSpec) bool { return s.NewClient != nil })
 	if err != nil {
 		return nil, err
