@@ -10,7 +10,7 @@ func init() {
 		Requires:   permuteproxy.Stream,
 		Provides:   permuteproxy.Stream,
 		OptionKeys: tlsutils.OptionKeys(),
-		HostKey:    tlsutils.ServerNameKey,
+		HostKey:    tlsutils.KeyServerName,
 		NewAdapter: NewAdapter,
 	})
 	permuteproxy.RegisterAlias("https", "http+tls")

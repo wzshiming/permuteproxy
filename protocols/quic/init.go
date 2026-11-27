@@ -10,7 +10,7 @@ func init() {
 		Requires:   permuteproxy.Packet,
 		Provides:   permuteproxy.Stream,
 		OptionKeys: tlsutils.OptionKeysWithoutACME(),
-		HostKey:    tlsutils.ServerNameKey,
+		HostKey:    tlsutils.KeyServerName,
 		NewAdapter: NewAdapter,
 	})
 }
