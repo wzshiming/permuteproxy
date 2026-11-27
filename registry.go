@@ -3,6 +3,7 @@ package permuteproxy
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -27,6 +28,7 @@ type LayerSpec struct {
 	OptionKeys  []string                                  // names of the options the layer accepts
 	UsernameKey string                                    // optional; the option a URI's username fills
 	PasswordKey string                                    // optional; the option a URI's password fills, beside UsernameKey
+	DefaultPort string                                    // optional; the port of a host:port endpoint written without one when the layer is outermost, as ssh has 22
 	HostKey     string                                    // optional, adapters only; the option a build fills with the host of a host:port endpoint when the layer does not set it, as tls names the server it dials
 	NewAdapter  func(opts Options) (*AdapterFuncs, error) // declares an adapter's links per build
 	Networks    []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
@@ -66,6 +68,12 @@ type NetworkSpec struct {
 	NewClient func(base Network, address string) (Network, error)
 }
 
+// AliasSpec declares an alias: the tokens it stands for and the port its endpoint defaults to.
+type AliasSpec struct {
+	Expansion   string // the '+'-joined run of layers, and optionally a network, the alias stands for, as http+tls
+	DefaultPort string // optional; the port of a host:port endpoint written without one, ahead of the outermost layer's, as https has 443
+}
+
 // AddressKind says how a URI writes a network's address.
 type AddressKind uint8
 
@@ -80,6 +88,7 @@ var (
 	layers     = map[string]LayerSpec{}
 	networks   = map[string]NetworkSpec{}
 	aliases    = map[string][]string{}
+	aliasPorts = map[string]string{} // the DefaultPort of each alias declaring one
 	// validName is what url.Parse yields for a lower-cased scheme token, minus the '+' separator.
 	validName = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 )
@@ -138,6 +147,8 @@ func RegisterLayer(name string, spec LayerSpec) {
 		panic(fmt.Sprintf("permuteproxy: layer %q may mark Lossy only a Packet plane it provides or preserves", name))
 	case spec.NewAdapter != nil && (spec.NewClient != nil || spec.NewServer != nil):
 		panic(fmt.Sprintf("permuteproxy: layer %q must declare either NewAdapter, as an adapter, or NewClient or NewServer, as a proxy, not both", name))
+	case !validPort(spec.DefaultPort):
+		panic(fmt.Sprintf("permuteproxy: layer %q has the malformed default port %q", name, spec.DefaultPort))
 	case spec.HostKey != "" && spec.NewAdapter == nil:
 		panic(fmt.Sprintf("permuteproxy: layer %q may set HostKey only as an adapter", name))
 	case spec.NewAdapter == nil && spec.NewClient == nil && spec.NewServer == nil:
@@ -151,10 +162,14 @@ func RegisterLayer(name string, spec LayerSpec) {
 }
 
 // RegisterAlias names a '+'-joined run of tokens that ParseURI expands and URI folds back, panicking on a malformed or nested alias or a name already taken.
-func RegisterAlias(alias, expansion string) {
+func RegisterAlias(alias string, spec AliasSpec) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	checkName(alias)
+	expansion := spec.Expansion
+	if !validPort(spec.DefaultPort) {
+		panic(fmt.Sprintf("permuteproxy: alias %q has the malformed default port %q", alias, spec.DefaultPort))
+	}
 	tokens := strings.Split(expansion, "+")
 	for _, t := range tokens {
 		if _, nested := aliases[t]; nested || t == alias || !validName.MatchString(t) {
@@ -169,6 +184,18 @@ func RegisterAlias(alias, expansion string) {
 		}
 	}
 	aliases[alias] = tokens
+	if spec.DefaultPort != "" {
+		aliasPorts[alias] = spec.DefaultPort
+	}
+}
+
+// validPort reports whether port is empty or a decimal port number a host:port address carries.
+func validPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	n, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && n > 0 && strconv.FormatUint(n, 10) == port
 }
 
 func lookupLayer(name string) (LayerSpec, bool) {

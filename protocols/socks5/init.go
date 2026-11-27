@@ -11,6 +11,7 @@ func init() {
 		Provides:    permuteproxy.Stream | permuteproxy.Packet,
 		UsernameKey: KeyUsername,
 		PasswordKey: KeyPassword,
+		DefaultPort: "1080",
 		Networks:    []string{"tcp", "udp"},
 		NewClient:   NewClient,
 		NewServer:   NewServer,

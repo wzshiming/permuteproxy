@@ -29,7 +29,7 @@ func TestRegisterRejects(t *testing.T) {
 	mustPanic(t, "duplicate layer", func() { RegisterLayer("test-tls", adapter) })
 	mustPanic(t, "layer named like network", func() { RegisterLayer("tcp", adapter) })
 	mustPanic(t, "duplicate network", func() { RegisterNetwork("tcp", NetworkSpec{Plane: Stream}) })
-	mustPanic(t, "alias named like layer", func() { RegisterAlias("test-tls", "test-http+test-tls") })
+	mustPanic(t, "alias named like layer", func() { RegisterAlias("test-tls", AliasSpec{Expansion: "test-http+test-tls"}) })
 	mustPanic(t, "name with plus", func() { RegisterLayer("a+b", adapter) })
 	mustPanic(t, "network without plane", func() { RegisterNetwork("np", NetworkSpec{}) })
 	mustPanic(t, "adapter without NewAdapter", func() { RegisterLayer("na", LayerSpec{Requires: Stream, Provides: Stream}) })
@@ -54,10 +54,10 @@ func TestRegisterRejects(t *testing.T) {
 	}
 	RegisterLayer(fresh("ok.name"), adapter)
 	mustPanic(t, "dual-plane network", func() { RegisterNetwork("dual", NetworkSpec{Plane: Stream | Packet}) })
-	mustPanic(t, "nested alias", func() { RegisterAlias("nested", "test-https+tcp") })
-	mustPanic(t, "self alias", func() { RegisterAlias("self", "self") })
-	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", "HTTP+test-tls") })
-	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", "test-snappy") })
+	mustPanic(t, "nested alias", func() { RegisterAlias("nested", AliasSpec{Expansion: "test-https+tcp"}) })
+	mustPanic(t, "self alias", func() { RegisterAlias("self", AliasSpec{Expansion: "self"}) })
+	mustPanic(t, "alias with malformed token", func() { RegisterAlias("bad", AliasSpec{Expansion: "HTTP+test-tls"}) })
+	mustPanic(t, "alias named like an expansion token", func() { RegisterAlias("pending", AliasSpec{Expansion: "test-snappy"}) })
 	for _, name := range []string{"na", "pn"} {
 		if _, ok := lookupLayer(name); ok {
 			t.Fatalf("rejected layer %q was registered", name)

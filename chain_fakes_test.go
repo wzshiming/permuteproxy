@@ -470,8 +470,8 @@ func init() {
 			return bound.Close()
 		}}, nil
 	}})
-	RegisterAlias("test-https", "test-http+test-tls")
-	RegisterAlias("later", "pending+test-tls")
+	RegisterAlias("test-https", AliasSpec{Expansion: "test-http+test-tls"})
+	RegisterAlias("later", AliasSpec{Expansion: "pending+test-tls"})
 }
 
 var registered int

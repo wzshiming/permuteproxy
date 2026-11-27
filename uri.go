@@ -2,6 +2,7 @@ package permuteproxy
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -160,6 +161,14 @@ func expandAliases(tokens []string) []string {
 
 // foldAliases replaces the longest registered expansion found at the head of tokens.
 func foldAliases(tokens []string) []string {
+	if name, n := headAlias(tokens); name != "" {
+		return append([]string{name}, tokens[n:]...)
+	}
+	return tokens
+}
+
+// headAlias names the alias with the longest registered expansion at the head of tokens, and how many of them it covers.
+func headAlias(tokens []string) (string, int) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
 	names := make([]string, 0, len(aliases))
@@ -173,8 +182,48 @@ func foldAliases(tokens []string) []string {
 	for _, name := range names {
 		exp := aliases[name]
 		if len(exp) <= len(tokens) && strings.Join(tokens[:len(exp)], "+") == strings.Join(exp, "+") {
-			return append([]string{name}, tokens[len(exp):]...)
+			return name, len(exp)
 		}
 	}
-	return tokens
+	return "", 0
+}
+
+// defaultPort is the port an endpoint of the chain tokens, its layers and then its network when set, takes when it names none: that of the alias URI folds them into, else that of the outermost layer.
+func defaultPort(tokens []string) string {
+	if name, _ := headAlias(tokens); name != "" {
+		registryMu.RLock()
+		port := aliasPorts[name]
+		registryMu.RUnlock()
+		if port != "" {
+			return port
+		}
+	}
+	if len(tokens) == 0 {
+		return ""
+	}
+	spec, _ := lookupLayer(tokens[0])
+	return spec.DefaultPort
+}
+
+// withPort is a host:port address with port where address names a host alone, as example.com, [::1] or example.com: do; any other address is returned as it is.
+func withPort(address, port string) string {
+	if address == "" || port == "" {
+		return address
+	}
+	if host, p, err := net.SplitHostPort(address); err == nil {
+		if p != "" {
+			return address
+		}
+		return net.JoinHostPort(host, port)
+	}
+	host := address
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	} else if ip, _, _ := strings.Cut(host, "%"); strings.Contains(host, ":") && net.ParseIP(ip) == nil {
+		return address
+	}
+	if strings.ContainsAny(host, "[]") {
+		return address
+	}
+	return net.JoinHostPort(host, port)
 }

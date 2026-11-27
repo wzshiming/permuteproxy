@@ -11,6 +11,7 @@ func init() {
 		Networks:    []string{"tcp", "udp"},
 		UsernameKey: KeyEncrypto,
 		PasswordKey: KeyPassword,
+		DefaultPort: "8379",
 		NewClient:   NewClient,
 		NewServer:   NewServer,
 	}
