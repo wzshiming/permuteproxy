@@ -7,7 +7,6 @@ import (
 
 func init() {
 	spec := permuteproxy.LayerSpec{
-		Kind:        permuteproxy.LayerProxy,
 		Requires:    permuteproxy.Stream,
 		Provides:    permuteproxy.Stream,
 		UsernameKey: KeyUsername,

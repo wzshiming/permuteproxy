@@ -14,8 +14,8 @@ import (
 )
 
 func TestDgramDeclaration(t *testing.T) {
-	if dgram.Kind != permuteproxy.LayerAdapter || dgram.Requires != permuteproxy.Stream || dgram.Provides != permuteproxy.Packet || dgram.Preserves != 0 || dgram.Lossy != permuteproxy.Packet {
-		t.Fatalf("dgram declares kind %v, requires %v, provides %v, preserves %v, lossy %v", dgram.Kind, dgram.Requires, dgram.Provides, dgram.Preserves, dgram.Lossy)
+	if dgram.NewAdapter == nil || dgram.Requires != permuteproxy.Stream || dgram.Provides != permuteproxy.Packet || dgram.Preserves != 0 || dgram.Lossy != permuteproxy.Packet {
+		t.Fatalf("dgram declares adapter %v, requires %v, provides %v, preserves %v, lossy %v", dgram.NewAdapter != nil, dgram.Requires, dgram.Provides, dgram.Preserves, dgram.Lossy)
 	}
 	c, err := permuteproxy.ParseURI("dgram+cmd:nc host 1")
 	if err != nil {

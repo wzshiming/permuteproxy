@@ -10,7 +10,6 @@ import (
 
 // dgram is the client-only adapter that dials its Stream carrier as best-effort datagrams to the carrier's peer.
 var dgram = permuteproxy.LayerSpec{
-	Kind:     permuteproxy.LayerAdapter,
 	Requires: permuteproxy.Stream,
 	Provides: permuteproxy.Packet,
 	Lossy:    permuteproxy.Packet,

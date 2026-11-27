@@ -7,7 +7,6 @@ import (
 
 func init() {
 	spec := permuteproxy.LayerSpec{
-		Kind:        permuteproxy.LayerProxy,
 		Preserves:   permuteproxy.Stream | permuteproxy.Packet,
 		Networks:    []string{"tcp", "udp"},
 		UsernameKey: KeyEncrypto,

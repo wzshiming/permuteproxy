@@ -48,7 +48,7 @@ func (e TransportEngine) Transport(c Chain) (Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(r.specs) > 0 && r.specs[0].Kind == LayerProxy {
+	if len(r.specs) > 0 && r.specs[0].isProxy() {
 		return nil, fmt.Errorf("layer %q: proxy needs a ClientEngine or ServerEngine: %w", c.Layers[0].Scheme, ErrInvalidChain)
 	}
 	return build(e.Base, r, 0)

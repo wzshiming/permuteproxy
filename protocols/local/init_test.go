@@ -21,7 +21,6 @@ import (
 func init() {
 	// test-datagrams needs datagram boundaries, as a QUIC or DTLS layer does.
 	permuteproxy.RegisterLayer("test-datagrams", permuteproxy.LayerSpec{
-		Kind:     permuteproxy.LayerAdapter,
 		Requires: permuteproxy.Packet,
 		Provides: permuteproxy.Packet,
 		NewAdapter: func(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {

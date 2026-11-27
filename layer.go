@@ -6,14 +6,6 @@ import (
 	"sync"
 )
 
-// LayerKind says whether a layer transforms its carrier or speaks a proxy protocol.
-type LayerKind uint8
-
-const (
-	LayerAdapter LayerKind = iota // turns its carrier into the planes of the layer above, as tls does
-	LayerProxy                    // serves or dials a proxy protocol as the outermost layer, as socks5 does
-)
-
 // Options are a layer's option values by name.
 type Options map[string]string
 
@@ -25,9 +17,8 @@ func (o Options) clone() Options {
 	return c
 }
 
-// LayerSpec declares a layer: its kind, the planes it consumes and offers, its options and constructors.
+// LayerSpec declares a layer, the planes it consumes and offers, its options and constructors: NewAdapter makes it an adapter, which turns its carrier into the planes of the layer above, as tls does; NewClient or NewServer make it a proxy, which serves or dials a proxy protocol as the outermost layer, as socks5 does.
 type LayerSpec struct {
-	Kind        LayerKind                                 // adapter or proxy
 	Requires    Plane                                     // planes the carrier must have, or the chain is invalid; requiring one does not offer it above
 	Provides    Plane                                     // planes offered above whatever the carrier has
 	Preserves   Plane                                     // carrier planes also offered above, but only those the carrier has
@@ -39,6 +30,11 @@ type LayerSpec struct {
 	Networks    []string                                  // base networks the layer's client accepts: tcp, udp, unix, unixgram, ...
 	NewClient   func(opts Options) (*ClientFuncs, error)  // declares a proxy's client per build
 	NewServer   func(opts Options) (*ServerFuncs, error)  // declares a proxy's server per build
+}
+
+// isProxy reports whether s speaks a proxy protocol as the outermost layer, as socks5 does, rather than adapting its carrier, as tls does.
+func (s LayerSpec) isProxy() bool {
+	return s.NewAdapter == nil
 }
 
 func (s LayerSpec) accepts(key string) bool {
