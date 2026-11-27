@@ -10,7 +10,7 @@ import (
 type AdapterFuncs struct {
 	Stream       *Link        // how the layer provides Stream
 	Packet       *Link        // how the layer provides Packet
-	BeforeDial   func() error // optional; runs before a Dial obtains a link's carrier, failing the Dial with its error
+	BeforeDial   func() error // optional; runs before a Dial obtains a link's carrier or calls its Open, failing the Dial with its error
 	BeforeListen func() error // optional; runs before a Listen obtains a link's carrier, failing the Listen with its error
 	Close        func() error // optional; releases what NewAdapter acquired
 }
@@ -19,9 +19,13 @@ type AdapterFuncs struct {
 type Link struct {
 	Over           Plane                                                         // carrier plane consumed; zero means the provided plane itself
 	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
+	Open           OpenFunc                                                      // the client form in place of Client, for a link that takes a carrier only for some of its dials
 	Listener       func(ln net.Listener) (net.Listener, error)                   // Stream over a Stream carrier
 	PacketListener func(pc net.PacketConn) (net.Listener, error)                 // Stream over a Packet carrier
 }
+
+// OpenFunc dials through carriers it obtains by calling carrier, as many as it needs and none when a carrier it kept serves the dial; it owns each one it obtains.
+type OpenFunc func(ctx context.Context, carrier func(ctx context.Context) (net.Conn, error)) (net.Conn, error)
 
 // carrier is the plane l consumes to provide plane p.
 func (l *Link) carrier(p Plane) Plane {
@@ -61,6 +65,8 @@ func (s LayerSpec) covers(funcs *AdapterFuncs) error {
 			return fmt.Errorf("%v link on a plane the layer neither provides nor preserves", p)
 		case over != Stream && over != Packet, (s.Requires|s.Preserves)&over == 0:
 			return fmt.Errorf("%v link over %v, not one plane the layer requires or preserves", p, over)
+		case link.Client != nil && link.Open != nil:
+			return fmt.Errorf("%v link sets both client forms, Client and Open", p)
 		case !link.fits(p, over):
 			return fmt.Errorf("%v link over %v sets the server form of another pair", p, over)
 		}
@@ -83,13 +89,21 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 	t := TransportFuncs{Plane: s.Provides | (inner.Planes() & s.Preserves)}
 	t.DialFunc = func(ctx context.Context, plane Plane) (net.Conn, error) {
 		link := funcs.link(plane)
-		switch {
-		case link == nil:
+		if link == nil {
 			return inner.Dial(ctx, plane)
+		}
+		dial := func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) }
+		switch {
+		case link.Open != nil:
+			if funcs.BeforeDial != nil {
+				if err := funcs.BeforeDial(); err != nil {
+					return nil, err
+				}
+			}
+			return link.Open(ctx, dial)
 		case link.Client == nil:
 			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
-		dial := func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) }
 		return apply(ctx, funcs.BeforeDial, dial, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
 	}
 	// covers admits a server form only for its own pair, so the one set picks the carrier.

@@ -38,6 +38,7 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		return quicConfig(config), nil
 	})
 	var serverConfig atomic.Pointer[quic.Config] // what the latest BeforeListen built
+	shared := &pool{}
 	return &permuteproxy.AdapterFuncs{
 		BeforeDial: func() error {
 			_, err := clientConfig()
@@ -53,14 +54,15 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		},
 		Stream: &permuteproxy.Link{
 			Over: permuteproxy.Packet,
-			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
+			Open: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
 				config, _ := clientConfig() // BeforeDial has returned its error
-				return dial(ctx, carrier, config)
+				return dial(ctx, carrier, config, shared)
 			},
 			PacketListener: func(pc net.PacketConn) (net.Listener, error) {
 				return listen(pc, serverConfig.Load())
 			},
 		},
+		Close: shared.close,
 	}, nil
 }
 
@@ -70,8 +72,27 @@ func quicConfig(config *tls.Config) *quic.Config {
 	return &quic.Config{TLSConfig: config, MaxIdleTimeout: maxIdle, KeepAlivePeriod: keepAlive}
 }
 
-// dial opens one QUIC connection over the carrier to its default peer, and one stream on it.
-func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn, error) {
+// dial opens a stream to the endpoint, on the connection the adapter holds when it has one,
+// else on a connection of its own over a carrier it obtains.
+func dial(ctx context.Context, obtain func(context.Context) (net.Conn, error), config *quic.Config, shared *pool) (net.Conn, error) {
+	if l := shared.acquire(); l != nil {
+		wait, cancel := context.WithTimeout(ctx, openWait)
+		stream, err := l.open(wait)
+		cancel()
+		if err == nil {
+			return newConn(stream, l.local, l.remote, l.done), nil
+		}
+		// A connection that ended or is full refuses the stream, and this dial opens the next one.
+		l.retire()
+		l.done()
+		if ctx.Err() != nil {
+			return nil, err
+		}
+	}
+	carrier, err := obtain(ctx)
+	if err != nil {
+		return nil, err
+	}
 	peer, ok := addrPort(carrier.RemoteAddr())
 	local, localOK := addrPort(carrier.LocalAddr())
 	if !ok || !localOK {
@@ -92,20 +113,19 @@ func dial(ctx context.Context, carrier net.Conn, config *quic.Config) (net.Conn,
 		sock.Close()
 		return nil, err
 	}
-	release := func() { closeEndpoint(endpoint) }
 	qc, err := endpoint.Dial(ctx, "udp", peer.String(), config)
 	if err != nil {
-		release()
+		closeEndpoint(endpoint)
 		return nil, err
 	}
-	stream, err := qc.NewStream(ctx)
+	l := shared.add(endpoint, qc, carrier.LocalAddr(), carrier.RemoteAddr())
+	stream, err := l.open(ctx)
 	if err != nil {
-		release()
+		l.retire()
+		l.done()
 		return nil, err
 	}
-	// A stream reaches the peer with its first frame, so an empty one opens it for a listener that speaks first.
-	stream.Flush()
-	return newConn(stream, carrier.LocalAddr(), carrier.RemoteAddr(), release), nil
+	return newConn(stream, l.local, l.remote, l.done), nil
 }
 
 // closeEndpoint aborts the connections of e without waiting on their peers, and returns once e has closed its socket.

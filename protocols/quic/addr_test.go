@@ -54,8 +54,9 @@ func TestPeerThatIsNotIPPortIsUnsupported(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := funcs.Stream.Client(context.Background(), netutils.WrapPacket(pc, peer)); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Fatalf("Client to %v = %v, want ErrUnsupported", peer, err)
+		carrier := func(context.Context) (net.Conn, error) { return netutils.WrapPacket(pc, peer), nil }
+		if _, err := funcs.Stream.Open(context.Background(), carrier); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("Open to %v = %v, want ErrUnsupported", peer, err)
 		}
 		unsent(t, mem.socket(t, 0), peer.String())
 	}
@@ -86,13 +87,6 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 		accepted := accept(t, ln)
 		reaches(t, dial(t, build(t, permuteproxy.Engine{}, quicChain(":"+port, k.client))), accepted)
 	})
-	funcs, err := quic.NewAdapter(k.client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := funcs.BeforeDial(); err != nil {
-		t.Fatal(err)
-	}
 	for _, c := range []struct {
 		name, socket, listen string
 		peer                 net.IP
@@ -103,6 +97,14 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 		{"ipv6 socket, ::", "[::]:0", "[::1]:0", net.IPv6unspecified},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			// An adapter of its own, so no dial finds the connection of another peer.
+			funcs, err := quic.NewAdapter(k.client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := funcs.BeforeDial(); err != nil {
+				t.Fatal(err)
+			}
 			mem := newMemNet()
 			ln, err := build(t, permuteproxy.Engine{Base: mem}, quicChain(c.listen, k.server)).Listen(context.Background())
 			if err != nil {
@@ -117,9 +119,9 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			peer := &net.UDPAddr{IP: c.peer, Port: ln.Addr().(*net.UDPAddr).Port}
-			conn, err := funcs.Stream.Client(ctx, netutils.WrapPacket(pc, peer))
+			conn, err := funcs.Stream.Open(ctx, func(context.Context) (net.Conn, error) { return netutils.WrapPacket(pc, peer), nil })
 			if err != nil {
-				t.Fatalf("Client from %s to %v = %v", c.socket, peer, err)
+				t.Fatalf("Open from %s to %v = %v", c.socket, peer, err)
 			}
 			t.Cleanup(func() { conn.Close() })
 			reaches(t, conn, accepted)

@@ -205,6 +205,40 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 	}
 }
 
+func TestAdapterOpenObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
+	ctx := context.Background()
+	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-open"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	first, err := tr.Dial(ctx, Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-open.beforedial", "test-open.open", "base.listenpacket udp :0")
+	second, err := tr.Dial(ctx, Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-open.beforedial", "test-open.open")
+	if first != second {
+		t.Fatal("Dial did not return the conn its Open returned")
+	}
+}
+
+func TestAdapterHookRunsBeforeOpen(t *testing.T) {
+	tr, err := Engine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-openfail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := tr.Dial(context.Background(), Stream); err != errHook {
+		t.Fatalf("Dial() = %v, want %v unchanged", err, errHook)
+	}
+	assertCalls(t, "test-openfail.beforedial")
+}
+
 func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
