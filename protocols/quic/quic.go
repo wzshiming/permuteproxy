@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/quic"
@@ -37,29 +36,27 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		}
 		return quicConfig(config), nil
 	})
-	var serverConfig atomic.Pointer[quic.Config] // what the latest BeforeListen built
 	shared := &pool{}
 	return &permuteproxy.AdapterFuncs{
-		BeforeDial: func() error {
-			_, err := clientConfig()
-			return err
-		},
-		BeforeListen: func() error {
-			config, err := tlsutils.NewServer(values)
-			if err != nil {
-				return err
-			}
-			serverConfig.Store(quicConfig(config))
-			return nil
-		},
 		Stream: &permuteproxy.Link{
 			Over: permuteproxy.Packet,
-			Open: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
-				config, _ := clientConfig() // BeforeDial has returned its error
+			Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				config, err := clientConfig()
+				if err != nil {
+					return nil, err
+				}
 				return dial(ctx, carrier, config, shared)
 			},
-			PacketListener: func(pc net.PacketConn) (net.Listener, error) {
-				return listen(pc, serverConfig.Load())
+			ListenPacket: func(ctx context.Context, carrier func(context.Context) (net.PacketConn, error)) (net.Listener, error) {
+				config, err := tlsutils.NewServer(values)
+				if err != nil {
+					return nil, err
+				}
+				pc, err := carrier(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return listen(pc, quicConfig(config))
 			},
 		},
 		Close: shared.close,

@@ -13,8 +13,12 @@ var dgram = LayerSpec{
 	Provides: Packet,
 	Lossy:    Packet,
 	NewAdapter: func(Options) (*AdapterFuncs, error) {
-		return &AdapterFuncs{Packet: &Link{Over: Stream, Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
-			return netutils.StreamPacket(carrier, carrier.RemoteAddr()), nil
+		return &AdapterFuncs{Packet: &Link{Over: Stream, Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+			c, err := carrier(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return netutils.StreamPacket(c, c.RemoteAddr()), nil
 		}}}, nil
 	},
 }

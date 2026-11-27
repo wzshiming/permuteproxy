@@ -45,9 +45,6 @@ func TestPeerThatIsNotIPPortIsUnsupported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := funcs.BeforeDial(); err != nil {
-		t.Fatal(err)
-	}
 	for _, peer := range []net.Addr{&net.UnixAddr{Name: "/proxy.sock", Net: "unixgram"}, netutils.NewNetAddr("udp", "localhost:1")} {
 		mem := newMemNet()
 		pc, err := mem.ListenPacket(context.Background(), "udp", ":0")
@@ -55,8 +52,8 @@ func TestPeerThatIsNotIPPortIsUnsupported(t *testing.T) {
 			t.Fatal(err)
 		}
 		carrier := func(context.Context) (net.Conn, error) { return netutils.WrapPacket(pc, peer), nil }
-		if _, err := funcs.Stream.Open(context.Background(), carrier); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Fatalf("Open to %v = %v, want ErrUnsupported", peer, err)
+		if _, err := funcs.Stream.Dial(context.Background(), carrier); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("Dial to %v = %v, want ErrUnsupported", peer, err)
 		}
 		unsent(t, mem.socket(t, 0), peer.String())
 	}
@@ -102,9 +99,6 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := funcs.BeforeDial(); err != nil {
-				t.Fatal(err)
-			}
 			mem := newMemNet()
 			ln, err := build(t, permuteproxy.TransportEngine{Base: mem}, quicChain(c.listen, k.server)).Listen(context.Background())
 			if err != nil {
@@ -119,9 +113,9 @@ func TestUnspecifiedPeerIsTheLoopbackOfTheSocketsFamily(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			peer := &net.UDPAddr{IP: c.peer, Port: ln.Addr().(*net.UDPAddr).Port}
-			conn, err := funcs.Stream.Open(ctx, func(context.Context) (net.Conn, error) { return netutils.WrapPacket(pc, peer), nil })
+			conn, err := funcs.Stream.Dial(ctx, func(context.Context) (net.Conn, error) { return netutils.WrapPacket(pc, peer), nil })
 			if err != nil {
-				t.Fatalf("Open from %s to %v = %v", c.socket, peer, err)
+				t.Fatalf("Dial from %s to %v = %v", c.socket, peer, err)
 			}
 			t.Cleanup(func() { conn.Close() })
 			reaches(t, conn, accepted)

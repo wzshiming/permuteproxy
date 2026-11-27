@@ -14,8 +14,12 @@ var dgram = permuteproxy.LayerSpec{
 	Provides: permuteproxy.Packet,
 	Lossy:    permuteproxy.Packet,
 	NewAdapter: func(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
-		return &permuteproxy.AdapterFuncs{Packet: &permuteproxy.Link{Over: permuteproxy.Stream, Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
-			return netutils.StreamPacket(carrier, carrier.RemoteAddr()), nil
+		return &permuteproxy.AdapterFuncs{Packet: &permuteproxy.Link{Over: permuteproxy.Stream, Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+			c, err := carrier(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return netutils.StreamPacket(c, c.RemoteAddr()), nil
 		}}}, nil
 	},
 }

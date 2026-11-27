@@ -8,24 +8,18 @@ import (
 
 // AdapterFuncs declares an adapter per plane; a preserved plane without a Link passes through unchanged.
 type AdapterFuncs struct {
-	Stream       *Link        // how the layer provides Stream
-	Packet       *Link        // how the layer provides Packet
-	BeforeDial   func() error // optional; runs before a Dial obtains a link's carrier or calls its Open, failing the Dial with its error
-	BeforeListen func() error // optional; runs before a Listen obtains a link's carrier, failing the Listen with its error
-	Close        func() error // optional; releases what NewAdapter acquired
+	Stream *Link        // how the layer provides Stream
+	Packet *Link        // how the layer provides Packet
+	Close  func() error // optional; releases what NewAdapter acquired
 }
 
-// Link derives one plane from a carrier of one plane through a client form and, for Stream, a server form, each function owning the carrier it is handed, also when it fails.
+// Link derives one plane from a carrier of one plane through a client form and, for Stream, a server form. Each function obtains its carrier by calling carrier, so what it checks first fails before any I/O; Dial may call it as often as it needs and not at all when a carrier it kept serves the dial. A function owns each carrier it obtains, also when it fails.
 type Link struct {
-	Over           Plane                                                         // carrier plane consumed; zero means the provided plane itself
-	Client         func(ctx context.Context, carrier net.Conn) (net.Conn, error) // a Packet carrier is also a net.PacketConn with a default peer
-	Open           OpenFunc                                                      // the client form in place of Client, for a link that takes a carrier only for some of its dials
-	Listener       func(ln net.Listener) (net.Listener, error)                   // Stream over a Stream carrier
-	PacketListener func(pc net.PacketConn) (net.Listener, error)                 // Stream over a Packet carrier
+	Over         Plane                                                                                                  // carrier plane consumed; zero means the provided plane itself
+	Dial         func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error)           // a Packet carrier is also a net.PacketConn with a default peer
+	Listen       func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error)   // Stream over a Stream carrier
+	ListenPacket func(ctx context.Context, carrier func(context.Context) (net.PacketConn, error)) (net.Listener, error) // Stream over a Packet carrier
 }
-
-// OpenFunc dials through carriers it obtains by calling carrier, as many as it needs and none when a carrier it kept serves the dial; it owns each one it obtains.
-type OpenFunc func(ctx context.Context, carrier func(ctx context.Context) (net.Conn, error)) (net.Conn, error)
 
 // carrier is the plane l consumes to provide plane p.
 func (l *Link) carrier(p Plane) Plane {
@@ -45,8 +39,8 @@ func (f *AdapterFuncs) link(p Plane) *Link {
 
 // fits reports whether each server form l sets is the one for p over a carrier of plane over.
 func (l *Link) fits(p, over Plane) bool {
-	return (l.Listener == nil || p == Stream && over == Stream) &&
-		(l.PacketListener == nil || p == Stream && over == Packet)
+	return (l.Listen == nil || p == Stream && over == Stream) &&
+		(l.ListenPacket == nil || p == Stream && over == Packet)
 }
 
 // covers reports how funcs falls short of the planes s declares.
@@ -65,8 +59,6 @@ func (s LayerSpec) covers(funcs *AdapterFuncs) error {
 			return fmt.Errorf("%v link on a plane the layer neither provides nor preserves", p)
 		case over != Stream && over != Packet, (s.Requires|s.Preserves)&over == 0:
 			return fmt.Errorf("%v link over %v, not one plane the layer requires or preserves", p, over)
-		case link.Client != nil && link.Open != nil:
-			return fmt.Errorf("%v link sets both client forms, Client and Open", p)
 		case !link.fits(p, over):
 			return fmt.Errorf("%v link over %v sets the server form of another pair", p, over)
 		}
@@ -92,32 +84,19 @@ func (s LayerSpec) adapt(inner Transport, opts Options) (Transport, error) {
 		if link == nil {
 			return inner.Dial(ctx, plane)
 		}
-		dial := func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) }
-		switch {
-		case link.Open != nil:
-			if funcs.BeforeDial != nil {
-				if err := funcs.BeforeDial(); err != nil {
-					return nil, err
-				}
-			}
-			return link.Open(ctx, dial)
-		case link.Client == nil:
+		if link.Dial == nil {
 			return nil, fmt.Errorf("dial %v: %w", plane, ErrUnsupported)
 		}
-		return apply(ctx, funcs.BeforeDial, dial, func(conn net.Conn) (net.Conn, error) { return link.Client(ctx, conn) })
+		return link.Dial(ctx, func(ctx context.Context) (net.Conn, error) { return inner.Dial(ctx, link.carrier(plane)) })
 	}
 	// covers admits a server form only for its own pair, so the one set picks the carrier.
 	switch link := funcs.Stream; {
 	case link == nil:
 		t.ListenFunc = inner.Listen
-	case link.Listener != nil:
-		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			return apply(ctx, funcs.BeforeListen, inner.Listen, link.Listener)
-		}
-	case link.PacketListener != nil:
-		t.ListenFunc = func(ctx context.Context) (net.Listener, error) {
-			return apply(ctx, funcs.BeforeListen, inner.ListenPacket, link.PacketListener)
-		}
+	case link.Listen != nil:
+		t.ListenFunc = func(ctx context.Context) (net.Listener, error) { return link.Listen(ctx, inner.Listen) }
+	case link.ListenPacket != nil:
+		t.ListenFunc = func(ctx context.Context) (net.Listener, error) { return link.ListenPacket(ctx, inner.ListenPacket) }
 	}
 	if funcs.Packet == nil {
 		t.ListenPacketFunc = inner.ListenPacket
@@ -134,18 +113,4 @@ type assembled struct {
 // Close releases the layer and then its inner Transport, once.
 func (a assembled) Close() error {
 	return a.close()
-}
-
-// apply runs before, when set, then hands the carrier obtain gets to f, which owns it from then on.
-func apply[C, R any](ctx context.Context, before func() error, obtain func(context.Context) (C, error), f func(C) (R, error)) (r R, _ error) {
-	if before != nil {
-		if err := before(); err != nil {
-			return r, err
-		}
-	}
-	carrier, err := obtain(ctx)
-	if err != nil {
-		return r, err
-	}
-	return f(carrier)
 }
