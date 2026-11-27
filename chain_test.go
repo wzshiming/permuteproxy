@@ -89,18 +89,32 @@ func fakeAdapter(name string, requires, provides Plane, options ...string) Layer
 		NewAdapter: func(opts Options) (*AdapterFuncs, error) {
 			record("%s.new", name)
 			taint(name, opts)
-			link := &Link{Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
+			link := &Link{Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				conn, err := carrier(ctx)
+				if err != nil {
+					return nil, err
+				}
 				record("%s.client", name)
-				return carrier, nil
+				return conn, nil
 			}}
 			if requires != provides {
 				link.Over = requires
 			}
 			switch {
 			case provides == Stream && requires == Stream:
-				link.Listener = func(ln net.Listener) (net.Listener, error) { record("%s.listener", name); return ln, nil }
+				link.Listen = func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error) {
+					ln, err := carrier(ctx)
+					if err != nil {
+						return nil, err
+					}
+					record("%s.listener", name)
+					return ln, nil
+				}
 			case provides == Stream:
-				link.PacketListener = func(net.PacketConn) (net.Listener, error) {
+				link.ListenPacket = func(ctx context.Context, carrier func(context.Context) (net.PacketConn, error)) (net.Listener, error) {
+					if _, err := carrier(ctx); err != nil {
+						return nil, err
+					}
 					record("%s.packetlistener", name)
 					return idleListener{}, nil
 				}
@@ -162,41 +176,78 @@ func declared(requires, provides Plane, funcs *AdapterFuncs, err error) LayerSpe
 var (
 	errDeclare = errors.New("declare failed")
 	errLink    = errors.New("link failed")
-	// The fail* links close the carrier they own, then fail.
-	failClient         = func(_ context.Context, carrier net.Conn) (net.Conn, error) { carrier.Close(); return nil, errLink }
-	failListener       = func(ln net.Listener) (net.Listener, error) { ln.Close(); return nil, errLink }
-	failPacketListener = func(pc net.PacketConn) (net.Listener, error) { pc.Close(); return nil, errLink }
+	// The fail* links obtain a carrier, close it as its owner, then fail.
+	failDialLink = func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+		if conn, err := carrier(ctx); err == nil {
+			conn.Close()
+		}
+		return nil, errLink
+	}
+	failListen = func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error) {
+		if ln, err := carrier(ctx); err == nil {
+			ln.Close()
+		}
+		return nil, errLink
+	}
+	failListenOverPacket = func(ctx context.Context, carrier func(context.Context) (net.PacketConn, error)) (net.Listener, error) {
+		if pc, err := carrier(ctx); err == nil {
+			pc.Close()
+		}
+		return nil, errLink
+	}
 )
 
 // failingLinks are layers whose link functions all fail, one per pair with a server form.
 var failingLinks = map[string]LayerSpec{
-	"test-fail-ss": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Listener: failListener}}, nil),
-	"test-fail-sp": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Client: failClient, PacketListener: failPacketListener}}, nil),
+	"test-fail-ss": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Dial: failDialLink, Listen: failListen}}, nil),
+	"test-fail-sp": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Dial: failDialLink, ListenPacket: failListenOverPacket}}, nil),
 }
 
-var errHook = errors.New("hook failed")
+var errCheck = errors.New("check failed")
 
-// hookedAdapter is fakeAdapter with BeforeDial and BeforeListen hooks that record each call and return err.
-func hookedAdapter(name string, requires, provides Plane, err error) LayerSpec {
+// checkingAdapter is fakeAdapter whose link functions record a check before they obtain their carrier and return err from it.
+func checkingAdapter(name string, requires, provides Plane, err error) LayerSpec {
 	spec := fakeAdapter(name, requires, provides)
 	newAdapter := spec.NewAdapter
 	spec.NewAdapter = func(opts Options) (*AdapterFuncs, error) {
 		funcs, _ := newAdapter(opts)
-		funcs.BeforeDial = func() error { record("%s.beforedial", name); return err }
-		funcs.BeforeListen = func() error { record("%s.beforelisten", name); return err }
+		link := funcs.link(provides)
+		if dial := link.Dial; dial != nil {
+			link.Dial = func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				if record("%s.checkdial", name); err != nil {
+					return nil, err
+				}
+				return dial(ctx, carrier)
+			}
+		}
+		if listen := link.Listen; listen != nil {
+			link.Listen = func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error) {
+				if record("%s.checklisten", name); err != nil {
+					return nil, err
+				}
+				return listen(ctx, carrier)
+			}
+		}
+		if listen := link.ListenPacket; listen != nil {
+			link.ListenPacket = func(ctx context.Context, carrier func(context.Context) (net.PacketConn, error)) (net.Listener, error) {
+				if record("%s.checklisten", name); err != nil {
+					return nil, err
+				}
+				return listen(ctx, carrier)
+			}
+		}
 		return funcs, nil
 	}
 	return spec
 }
 
-// openingAdapter provides Stream over Packet through an Open that obtains a carrier for its first dial and keeps it for the later ones.
-func openingAdapter(name string, hook error) LayerSpec {
+// keepingAdapter provides Stream over Packet through a Dial that obtains a carrier for its first dial and keeps it for the later ones.
+func keepingAdapter(name string) LayerSpec {
 	return LayerSpec{Requires: Packet, Provides: Stream, NewAdapter: func(Options) (*AdapterFuncs, error) {
 		var kept net.Conn
 		return &AdapterFuncs{
-			BeforeDial: func() error { record("%s.beforedial", name); return hook },
-			Stream: &Link{Over: Packet, Open: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
-				record("%s.open", name)
+			Stream: &Link{Over: Packet, Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				record("%s.dial", name)
 				if kept == nil {
 					var err error
 					if kept, err = carrier(ctx); err != nil {
@@ -244,11 +295,10 @@ var uncovered = map[string]LayerSpec{
 	"test-bad-carrier": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Packet}}, nil),
 	"test-bad-dual":    declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: Stream | Packet}}, nil),
 	"test-bad-bit":     declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Over: 4}}, nil),
-	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{PacketListener: failPacketListener}}, nil),
-	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listener: failListener}}, nil),
-	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{PacketListener: failPacketListener}}, nil),
-	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, Listener: failListener}}, nil),
-	"test-bad-clients": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{Client: failClient, Open: func(context.Context, func(context.Context) (net.Conn, error)) (net.Conn, error) { return nil, errLink }}}, nil),
+	"test-bad-ss-form": declared(Stream, Stream, &AdapterFuncs{Stream: &Link{ListenPacket: failListenOverPacket}}, nil),
+	"test-bad-sp-form": declared(Packet, Stream, &AdapterFuncs{Stream: &Link{Over: Packet, Listen: failListen}}, nil),
+	"test-bad-pp-form": declared(Packet, Packet, &AdapterFuncs{Packet: &Link{ListenPacket: failListenOverPacket}}, nil),
+	"test-bad-ps-form": declared(Stream, Packet, &AdapterFuncs{Packet: &Link{Over: Stream, Listen: failListen}}, nil),
 }
 
 // declaredProxy is a proxy over Stream whose NewClient returns funcs and err as given.
@@ -359,18 +409,17 @@ func init() {
 	for name, spec := range failingLinks {
 		RegisterLayer(name, spec)
 	}
-	RegisterLayer("test-open", openingAdapter("test-open", nil))
-	RegisterLayer("test-openfail", openingAdapter("test-openfail", errHook))
-	RegisterLayer("test-hook-ss", hookedAdapter("test-hook-ss", Stream, Stream, nil))
-	RegisterLayer("test-hook-sp", hookedAdapter("test-hook-sp", Packet, Stream, nil))
-	RegisterLayer("test-hookfail-ss", hookedAdapter("test-hookfail-ss", Stream, Stream, errHook))
-	RegisterLayer("test-hookfail-sp", hookedAdapter("test-hookfail-sp", Packet, Stream, errHook))
-	hookKeep := hookedAdapter("test-hook-keep", Stream, Stream, nil)
-	hookKeep.Preserves = Packet
-	RegisterLayer("test-hook-keep", hookKeep)
-	hookKeepStream := hookedAdapter("test-hook-keep-stream", Packet, Packet, nil)
-	hookKeepStream.Preserves = Stream
-	RegisterLayer("test-hook-keep-stream", hookKeepStream)
+	RegisterLayer("test-kept", keepingAdapter("test-kept"))
+	RegisterLayer("test-check-ss", checkingAdapter("test-check-ss", Stream, Stream, nil))
+	RegisterLayer("test-check-sp", checkingAdapter("test-check-sp", Packet, Stream, nil))
+	RegisterLayer("test-checkfail-ss", checkingAdapter("test-checkfail-ss", Stream, Stream, errCheck))
+	RegisterLayer("test-checkfail-sp", checkingAdapter("test-checkfail-sp", Packet, Stream, errCheck))
+	checkKeep := checkingAdapter("test-check-keep", Stream, Stream, nil)
+	checkKeep.Preserves = Packet
+	RegisterLayer("test-check-keep", checkKeep)
+	checkKeepStream := checkingAdapter("test-check-keep-stream", Packet, Packet, nil)
+	checkKeepStream.Preserves = Stream
+	RegisterLayer("test-check-keep-stream", checkKeepStream)
 	RegisterLayer("closable", declared(Stream, Stream, &AdapterFuncs{Stream: &Link{}, Close: func() error { record("closable.close"); return nil }}, nil))
 	RegisterLayer("closableproxy", declaredProxy(Stream, 0, &ClientFuncs{Dial: failDial, Close: func() error { record("closableproxy.close"); return nil }}, nil))
 	RegisterLayer("closableserver", declaredServer(Stream, 0, &ServerFuncs{Serve: failServe, Close: func() error { record("closableserver.close"); return nil }}, nil))

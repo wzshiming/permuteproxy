@@ -12,10 +12,18 @@ import (
 
 func NewAdapter(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	return &permuteproxy.AdapterFuncs{Stream: &permuteproxy.Link{
-		Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
-			return newConn(carrier), nil
+		Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+			c, err := carrier(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return newConn(c), nil
 		},
-		Listener: func(ln net.Listener) (net.Listener, error) {
+		Listen: func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error) {
+			ln, err := carrier(ctx)
+			if err != nil {
+				return nil, err
+			}
 			return listener{ln}, nil
 		},
 	}}, nil

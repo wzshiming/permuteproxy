@@ -114,9 +114,13 @@ var underived = map[string]struct {
 
 func init() {
 	RegisterLayer("test-held", declared(Stream, Stream, &AdapterFuncs{
-		Stream: &Link{Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) {
+		Stream: &Link{Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+			conn, err := carrier(ctx)
+			if err != nil {
+				return nil, err
+			}
 			record("test-held.client")
-			return carrier, nil
+			return conn, nil
 		}},
 		Close: func() error { record("test-held.close"); return nil },
 	}, nil))
@@ -326,12 +330,11 @@ func TestNoDerivedDialStartsAfterClientClose(t *testing.T) {
 	entered, closed := make(chan struct{}), make(chan struct{})
 	gate := fresh("test-gate")
 	RegisterLayer(gate, declared(Stream, Stream, &AdapterFuncs{
-		Stream: &Link{Client: func(_ context.Context, carrier net.Conn) (net.Conn, error) { return carrier, nil }},
-		BeforeDial: func() error {
+		Stream: &Link{Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
 			close(entered)
 			<-closed
-			return nil
-		},
+			return carrier(ctx)
+		}},
 	}, nil))
 	spec := LayerSpec{Requires: Stream, Provides: Stream, Networks: relayNetworks, NewClient: func(Options) (*ClientFuncs, error) {
 		return &ClientFuncs{

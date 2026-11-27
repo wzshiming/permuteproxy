@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"net"
 	"sync"
-	"sync/atomic"
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
@@ -25,25 +24,19 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 		config.ClientSessionCache = tls.NewLRUClientSessionCache(0)
 		return config, nil
 	})
-	var serverConfig atomic.Pointer[tls.Config] // what the latest BeforeListen built
 	return &permuteproxy.AdapterFuncs{
-		BeforeDial: func() error {
-			_, err := clientConfig()
-			return err
-		},
-		BeforeListen: func() error {
-			config, err := tlsutils.NewServer(values)
-			if err != nil {
-				return err
-			}
-			serverConfig.Store(config)
-			return nil
-		},
 		Stream: &permuteproxy.Link{
-			Client: func(ctx context.Context, carrier net.Conn) (net.Conn, error) {
-				config, _ := clientConfig() // BeforeDial has returned its error
+			Dial: func(ctx context.Context, carrier func(context.Context) (net.Conn, error)) (net.Conn, error) {
+				config, err := clientConfig()
+				if err != nil {
+					return nil, err
+				}
+				c, err := carrier(ctx)
+				if err != nil {
+					return nil, err
+				}
 				// A canceled handshake closes raw itself, so the error path must not close it again.
-				raw := &closeOnce{Conn: carrier}
+				raw := &closeOnce{Conn: c}
 				conn := tls.Client(raw, config)
 				if err := conn.HandshakeContext(ctx); err != nil {
 					raw.Close()
@@ -51,8 +44,16 @@ func NewAdapter(opts permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 				}
 				return conn, nil
 			},
-			Listener: func(ln net.Listener) (net.Listener, error) {
-				return tls.NewListener(ln, serverConfig.Load()), nil
+			Listen: func(ctx context.Context, carrier func(context.Context) (net.Listener, error)) (net.Listener, error) {
+				config, err := tlsutils.NewServer(values)
+				if err != nil {
+					return nil, err
+				}
+				ln, err := carrier(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return tls.NewListener(ln, config), nil
 			},
 		},
 	}, nil

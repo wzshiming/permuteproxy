@@ -165,7 +165,7 @@ func TestAdapterLeavesCarrierToLink(t *testing.T) {
 		"test-quic.new", "test-quic.client", "test-quic.packetlistener")
 }
 
-func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
+func TestAdapterLinkChecksBeforeItObtainsItsCarrier(t *testing.T) {
 	ctx := context.Background()
 	e := TransportEngine{Base: &fakeNet{name: "base"}}
 	tests := []struct {
@@ -174,10 +174,10 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 		dial   []string
 		listen []string
 	}{
-		{"test-hook-ss", nil, []string{"test-hook-ss.beforedial", "base.dial tcp 127.0.0.1:1", "test-hook-ss.client"}, []string{"test-hook-ss.beforelisten", "base.listen tcp 127.0.0.1:1", "test-hook-ss.listener"}},
-		{"test-hook-sp", nil, []string{"test-hook-sp.beforedial", "base.listenpacket udp :0", "test-hook-sp.client"}, []string{"test-hook-sp.beforelisten", "base.listenpacket udp 127.0.0.1:1", "test-hook-sp.packetlistener"}},
-		{"test-hookfail-ss", errHook, []string{"test-hookfail-ss.beforedial"}, []string{"test-hookfail-ss.beforelisten"}},
-		{"test-hookfail-sp", errHook, []string{"test-hookfail-sp.beforedial"}, []string{"test-hookfail-sp.beforelisten"}},
+		{"test-check-ss", nil, []string{"test-check-ss.checkdial", "base.dial tcp 127.0.0.1:1", "test-check-ss.client"}, []string{"test-check-ss.checklisten", "base.listen tcp 127.0.0.1:1", "test-check-ss.listener"}},
+		{"test-check-sp", nil, []string{"test-check-sp.checkdial", "base.listenpacket udp :0", "test-check-sp.client"}, []string{"test-check-sp.checklisten", "base.listenpacket udp 127.0.0.1:1", "test-check-sp.packetlistener"}},
+		{"test-checkfail-ss", errCheck, []string{"test-checkfail-ss.checkdial"}, []string{"test-checkfail-ss.checklisten"}},
+		{"test-checkfail-sp", errCheck, []string{"test-checkfail-sp.checkdial"}, []string{"test-checkfail-sp.checklisten"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.scheme, func(t *testing.T) {
@@ -205,9 +205,9 @@ func TestAdapterHooksRunBeforeCarrier(t *testing.T) {
 	}
 }
 
-func TestAdapterOpenObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
+func TestAdapterDialObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
 	ctx := context.Background()
-	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-open"))
+	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-kept"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,38 +216,26 @@ func TestAdapterOpenObtainsOnlyTheCarriersItAsksFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-open.beforedial", "test-open.open", "base.listenpacket udp :0")
+	assertCalls(t, "test-kept.dial", "base.listenpacket udp :0")
 	second, err := tr.Dial(ctx, Stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCalls(t, "test-open.beforedial", "test-open.open")
+	assertCalls(t, "test-kept.dial")
 	if first != second {
-		t.Fatal("Dial did not return the conn its Open returned")
+		t.Fatal("Dial did not return the conn its link returned")
 	}
 }
 
-func TestAdapterHookRunsBeforeOpen(t *testing.T) {
-	tr, err := TransportEngine{Base: &fakeNet{name: "base"}}.Transport(mk("", "test-openfail"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls = nil
-	if _, err := tr.Dial(context.Background(), Stream); err != errHook {
-		t.Fatalf("Dial() = %v, want %v unchanged", err, errHook)
-	}
-	assertCalls(t, "test-openfail.beforedial")
-}
-
-func TestAdapterHooksSkipAPlanePassedThrough(t *testing.T) {
+func TestAdapterLinkIsNotCalledForAPlanePassedThrough(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
 		scheme string
 		plane  Plane // the plane passed through
 		calls  []string
 	}{
-		{"test-hook-keep", Packet, []string{"base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1"}},
-		{"test-hook-keep-stream", Stream, []string{"base.dial tcp 127.0.0.1:1", "base.listen tcp 127.0.0.1:1"}},
+		{"test-check-keep", Packet, []string{"base.listenpacket udp :0", "base.listenpacket udp 127.0.0.1:1"}},
+		{"test-check-keep-stream", Stream, []string{"base.dial tcp 127.0.0.1:1", "base.listen tcp 127.0.0.1:1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.scheme, func(t *testing.T) {
