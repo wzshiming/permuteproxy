@@ -1,4 +1,4 @@
-package clientutils
+package netutils
 
 import (
 	"context"

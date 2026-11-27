@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
-	_ "github.com/wzshiming/permuteproxy/protocols/local"
+	_ "github.com/wzshiming/permuteproxy/protocols/command"
 	_ "github.com/wzshiming/permuteproxy/protocols/netcat"
 )
 

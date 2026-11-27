@@ -1,5 +1,4 @@
-// Package clientutils holds what the clients of several proxy protocols share.
-package clientutils
+package netutils
 
 import (
 	"context"

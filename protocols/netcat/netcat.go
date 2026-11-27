@@ -1,5 +1,5 @@
 // Package netcat reaches and accepts connections by running netcat, over the network cmd that
-// protocols/local registers. It registers the endpoint networks cmd-nc, cmd-nc-unix and
+// protocols/cmd registers. It registers the endpoint networks cmd-nc, cmd-nc-unix and
 // cmd-nc-udp and cmd-nc-unixgram, each an address one nc per connection dials, listens at or
 // binds, and nc, or netcat, the client that runs an nc per target: over tcp, udp or a unix
 // socket, stream or datagram.
@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
@@ -65,32 +66,38 @@ func line(prefix, template, family string) string {
 func NewClient(over permuteproxy.Network, prefix string) (permuteproxy.Network, error) {
 	// The prefix is literal text, so a '%' in it is not a placeholder.
 	prefix = strings.ReplaceAll(strings.TrimSpace(prefix), "%", "%%")
-	c := &client{base: over, bare: prefix == "", dial: map[string]permuteproxy.Network{}, listen: map[string]permuteproxy.Network{}}
-	engine := permuteproxy.ClientEngine{Base: over}
+	c := &client{base: over, bare: prefix == "", dial: map[string]cmdutils.Template{}, listen: map[string]cmdutils.Template{}}
 	for network, n := range networks {
-		for template, clients := range map[string]map[string]permuteproxy.Network{n.dial: c.dial, n.listen: c.listen} {
-			filled, err := engine.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: line(prefix, template, n.family)}})
-			if err != nil {
-				return nil, err
-			}
-			clients[network] = filled
+		c.dial[network] = cmdutils.Template(line(prefix, n.dial, n.family))
+		c.listen[network] = cmdutils.Template(line(prefix, n.listen, n.family))
+		if err := errors.Join(c.dial[network].Check(), c.listen[network].Check()); err != nil {
+			return nil, err
 		}
 	}
 	return c, nil
 }
 
-// client runs an nc per target; dial and listen hold, per network, the command client of its line.
+// client runs an nc per target; dial and listen hold, per network, the line it runs on the cmd network of base.
 type client struct {
 	base         permuteproxy.Network
 	bare         bool // no prefix, so nc runs where base runs commands
-	dial, listen map[string]permuteproxy.Network
+	dial, listen map[string]cmdutils.Template
+}
+
+// run fills t for address on network, a tcp or unix one, and runs the line on the cmd network of base.
+func run(ctx context.Context, base permuteproxy.Network, t cmdutils.Template, network, address string) (net.Conn, error) {
+	command, err := t.Fill(network, address)
+	if err != nil {
+		return nil, fmt.Errorf("dial %s %s: %w", network, address, err)
+	}
+	return base.DialContext(ctx, "cmd", command)
 }
 
 func datagram(network string) bool {
 	return strings.HasPrefix(network, "udp") || network == "unixgram"
 }
 
-// stream is the network a command client fills network's address for: it knows a host and
+// stream is the network a template fills network's address for: it knows a host and
 // port for tcp and a path for unix alone, and the line itself is what makes nc send datagrams.
 func stream(network string) string {
 	if network == "unixgram" || network == "cmd-nc-unixgram" {
@@ -113,9 +120,9 @@ func (c *client) DialContext(ctx context.Context, network, address string) (net.
 		return nil, fmt.Errorf("dial %s: %w", network, permuteproxy.ErrUnsupported)
 	}
 	if !datagram(network) {
-		return filled.DialContext(ctx, network, address)
+		return run(ctx, c.base, filled, network, address)
 	}
-	conn, err := filled.DialContext(ctx, stream(network), address)
+	conn, err := run(ctx, c.base, filled, stream(network), address)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +141,11 @@ func (c *client) Listen(ctx context.Context, network, address string) (net.Liste
 			return ln, err
 		}
 	}
-	return filled.Listen(ctx, network, address)
+	command, err := filled.Fill(network, address)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s %s: %w", network, address, err)
+	}
+	return c.base.Listen(ctx, "cmd", command)
 }
 
 // ListenPacket on udp at an unspecified host with port 0 binds no address of its own: each peer
@@ -146,22 +157,22 @@ func (c *client) ListenPacket(ctx context.Context, network, address string) (net
 		return nil, fmt.Errorf("listen packet %s: %w", network, permuteproxy.ErrUnsupported)
 	}
 	if host, port, err := net.SplitHostPort(address); network == "unixgram" || err != nil || port != "0" || host != "" && !net.ParseIP(host).IsUnspecified() {
-		return listenPacket(ctx, filled, network, address)
+		return listenPacket(ctx, c.base, filled, network, address)
 	}
 	return netutils.NewSessions(func(ctx context.Context, peer net.Addr) (net.Conn, error) {
 		return c.DialContext(ctx, network, peer.String())
 	}, netutils.SessionOptions{}), nil
 }
 
-// listenPacket runs the nc -u -l line of filled, a command client, as a datagram socket of
+// listenPacket runs filled, an nc -u -l line, on the cmd of over as a datagram socket of
 // network at address. nc serves a single peer: it answers whoever sends the first datagram and takes
 // datagrams from nobody else for as long as it runs, so the socket is good for one peer until
 // it is closed. nc does not tell who that peer is, so ReadFrom reports the command itself as
 // the peer and WriteTo reaches the peer only through that address; what is written before
 // the peer's first datagram waits in nc's stdin until it arrives. Datagrams cross nc's stdio
 // as a stream, so their boundaries are best-effort.
-func listenPacket(ctx context.Context, filled permuteproxy.Network, network, address string) (net.PacketConn, error) {
-	conn, err := filled.DialContext(ctx, stream(network), address)
+func listenPacket(ctx context.Context, over permuteproxy.Network, filled cmdutils.Template, network, address string) (net.PacketConn, error) {
+	conn, err := run(ctx, over, filled, stream(network), address)
 	if err != nil {
 		return nil, err
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/wzshiming/httpproxy"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/pool"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
@@ -44,7 +44,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			srv.Context = ctx
 			srv.ProxyDial = upstream.DialContext
 			srv.Authentication = auth
-			srv.BytesPool = pool.Bytes
+			srv.BytesPool = netutils.Buffers
 			return srv.Serve(ln)
 		},
 	}, nil

@@ -13,7 +13,7 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	"github.com/wzshiming/permuteproxy/protocols/local"
+	"github.com/wzshiming/permuteproxy/protocols/command"
 )
 
 func TestTemplates(t *testing.T) {
@@ -137,7 +137,7 @@ func TestNetcatNetworksDialCmdOnTheBase(t *testing.T) {
 func TestNetcatNetworksListenOnTheBase(t *testing.T) {
 	for _, tt := range []struct{ network, address, want string }{
 		{"cmd-nc", "127.0.0.1:80", "listen cmd nc -l 127.0.0.1 80"},
-		// A Local owns the socket file cleanup, so listening keeps the network's own name.
+		// A Runner owns the socket file cleanup, so listening keeps the network's own name.
 		{"cmd-nc-unix", "/tmp/a b.sock", "listen cmd-nc-unix /tmp/a b.sock"},
 	} {
 		t.Run(tt.network, func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestNetcatUnixListensWithoutABase(t *testing.T) {
 	}
 	ln, err := tr.Listen(context.Background())
 	if err != nil {
-		t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
+		t.Fatalf("Listen without a Base = %v, want the registered Runner listening", err)
 	}
 	ln.Close()
 }
@@ -378,7 +378,7 @@ func TestNetcatUDPListenServesOnePeer(t *testing.T) {
 	})
 }
 
-// cmd-nc-unixgram binds through nc -U -u -l on a Local, and is asked of a base under its own name.
+// cmd-nc-unixgram binds through nc -U -u -l on a Runner, and is asked of a base under its own name.
 func TestNetcatUnixgramBinds(t *testing.T) {
 	ctx := context.Background()
 	base := &hop{}
@@ -393,7 +393,7 @@ func TestNetcatUnixgramBinds(t *testing.T) {
 		t.Fatalf("base calls = %q, want %q", base.calls, want)
 	}
 	argv := make(chan []string, 1)
-	n := Local{&local.Local{}}
+	n := Runner{&command.Runner{}}
 	n.Command = func(ctx context.Context, name string, args ...string) (net.Conn, error) {
 		argv <- append([]string{name}, args...)
 		conn, _ := net.Pipe()
@@ -423,7 +423,7 @@ func freeUDP(t *testing.T) string {
 	return pc.LocalAddr().String()
 }
 
-// Without a Base the registered Network binds cmd-nc-udp, while a plain local.Local refuses it.
+// Without a Base the registered Network binds cmd-nc-udp, while a plain command.Runner refuses it.
 func TestNetcatUDPBindsWithoutABase(t *testing.T) {
 	requireCommand(t, "nc")
 	tr, err := permuteproxy.TransportEngine{}.Transport(chain("cmd-nc-udp", freeUDP(t)))
@@ -438,8 +438,8 @@ func TestNetcatUDPBindsWithoutABase(t *testing.T) {
 	if _, err := tr.Listen(context.Background()); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Errorf("Listen on cmd-nc-udp = %v, want ErrUnsupported", err)
 	}
-	if _, err := Network.Local.ListenPacket(context.Background(), "cmd-nc-udp", "127.0.0.1:53"); !errors.Is(err, permuteproxy.ErrUnsupported) {
-		t.Errorf("local.Network.ListenPacket(cmd-nc-udp) = %v, want ErrUnsupported", err)
+	if _, err := Network.Runner.ListenPacket(context.Background(), "cmd-nc-udp", "127.0.0.1:53"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("command.Network.ListenPacket(cmd-nc-udp) = %v, want ErrUnsupported", err)
 	}
 	if _, err := Network.ListenPacket(context.Background(), "cmd-nc-udp", "ho;st:53"); err == nil {
 		t.Error("ListenPacket bound a host a shell would not read as plain text")

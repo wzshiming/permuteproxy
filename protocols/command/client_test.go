@@ -1,19 +1,36 @@
-package permuteproxy
+package command
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
+
+	"github.com/wzshiming/permuteproxy"
 )
 
 // relayBase answers each cmd dial with a relay echoing the command line dialed.
-var relayBase = NetworkFuncs{DialContextFunc: func(_ context.Context, network, address string) (net.Conn, error) {
+var relayBase = permuteproxy.NetworkFuncs{DialContextFunc: func(_ context.Context, network, address string) (net.Conn, error) {
 	if network != "cmd" {
-		return nil, ErrUnsupported
+		return nil, permuteproxy.ErrUnsupported
 	}
-	return newRelay(address), nil
+	near, far := net.Pipe()
+	go func() {
+		defer far.Close()
+		buf := make([]byte, 64)
+		for {
+			n, err := far.Read(buf)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(far, "%s|%s", address, buf[:n]); err != nil {
+				return
+			}
+		}
+	}()
+	return near, nil
 }}
 
 func relayExchange(t *testing.T, conn net.Conn) string {
@@ -35,6 +52,7 @@ func TestTemplateClientFillsTheTarget(t *testing.T) {
 		uri, network, target, want string
 	}{
 		{"cmd:ssh -W %h:%p jump", "tcp", "example.com:443", "ssh -W example.com:443 jump|x"},
+		{"command:ssh -W %h:%p jump", "tcp", "example.com:443", "ssh -W example.com:443 jump|x"},
 		{"cmd:ssh -W %h:%p jump", "tcp6", "[::1]:22", "ssh -W ::1:22 jump|x"},
 		{"cmd:printf 100%% %h", "tcp", "host:1", "printf 100% host|x"},
 		{"cmd:ssh jump", "tcp", "host:1", "ssh jump|x"},
@@ -44,11 +62,11 @@ func TestTemplateClientFillsTheTarget(t *testing.T) {
 		{"cmd:nc -U %h", "unix", "./run/proxy.sock", "nc -U ./run/proxy.sock|x"},
 		{"cmd:relay %n '%h' [%p]", "unix", "/tmp/x", "relay unix '/tmp/x' []|x"},
 	} {
-		c, err := ParseURI(tt.uri)
+		c, err := permuteproxy.ParseURI(tt.uri)
 		if err != nil {
 			t.Fatalf("%s: %v", tt.uri, err)
 		}
-		n, err := ClientEngine{Base: relayBase}.Client(c)
+		n, err := permuteproxy.ClientEngine{Base: relayBase}.Client(c)
 		if err != nil {
 			t.Fatalf("%s: %v", tt.uri, err)
 		}
@@ -71,17 +89,17 @@ func TestTemplateClientRefuses(t *testing.T) {
 		{"cmd:nc %a", `placeholder "%a"`},
 		{"cmd:nc %h %", `placeholder "%"`},
 	} {
-		c, err := ParseURI(tt.uri)
+		c, err := permuteproxy.ParseURI(tt.uri)
 		if err != nil {
 			t.Fatalf("%s: %v", tt.uri, err)
 		}
-		_, err = ClientEngine{Base: relayBase}.Client(c)
-		if !errors.Is(err, ErrInvalidChain) || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("%s: err = %v, want ErrInvalidChain with %q", tt.uri, err, tt.want)
+		_, err = permuteproxy.ClientEngine{Base: relayBase}.Client(c)
+		if !errors.Is(err, permuteproxy.ErrInvalidChain) || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: err = %v, want permuteproxy.ErrInvalidChain with %q", tt.uri, err, tt.want)
 		}
 	}
 
-	n, err := ClientEngine{Base: relayBase}.Client(Chain{Endpoint: Endpoint{Network: "cmd", Address: "nc %h %p"}})
+	n, err := permuteproxy.ClientEngine{Base: relayBase}.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: "nc %h %p"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,27 +117,27 @@ func TestTemplateClientRefuses(t *testing.T) {
 			t.Errorf("listen %s %q succeeded", tt[0], tt[1])
 		}
 	}
-	if _, err := n.DialContext(ctx, "udp", "host:1"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("udp over a stream command: %v, want ErrUnsupported", err)
+	if _, err := n.DialContext(ctx, "udp", "host:1"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("udp over a stream command: %v, want permuteproxy.ErrUnsupported", err)
 	}
-	if _, err := n.DialContext(ctx, "unixgram", "/tmp/x"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("unixgram target: %v, want ErrUnsupported", err)
+	if _, err := n.DialContext(ctx, "unixgram", "/tmp/x"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("unixgram target: %v, want permuteproxy.ErrUnsupported", err)
 	}
-	if _, err := n.Listen(ctx, "udp", ":0"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("listen udp: %v, want ErrUnsupported", err)
+	if _, err := n.Listen(ctx, "udp", ":0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("listen udp: %v, want permuteproxy.ErrUnsupported", err)
 	}
-	if _, err := n.Listen(ctx, "tcp", ":0"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("listen over a base without Listen: %v, want ErrUnsupported", err)
+	if _, err := n.Listen(ctx, "tcp", ":0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+		t.Errorf("listen over a base without Listen: %v, want permuteproxy.ErrUnsupported", err)
 	}
 }
 
 func TestTemplateClientListens(t *testing.T) {
 	var listened []string
-	base := NetworkFuncs{ListenFunc: func(_ context.Context, network, address string) (net.Listener, error) {
+	base := permuteproxy.NetworkFuncs{ListenFunc: func(_ context.Context, network, address string) (net.Listener, error) {
 		listened = append(listened, network+" "+address)
 		return nil, errors.New("recorded")
 	}}
-	n, err := ClientEngine{Base: base}.Client(Chain{Endpoint: Endpoint{Network: "cmd", Address: "sh -c 'nc -l %h %p' %n"}})
+	n, err := permuteproxy.ClientEngine{Base: base}.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: "sh -c 'nc -l %h %p' %n"}})
 	if err != nil {
 		t.Fatal(err)
 	}

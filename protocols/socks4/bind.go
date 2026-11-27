@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/clientutils"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // The library's listener learns neither the address the proxy bound nor when to stop, so BIND is spoken here.
@@ -23,7 +23,7 @@ const (
 
 // listenBind asks the proxy to listen at address with BIND; an empty host is the wildcard, a name is resolved here to IPv4 as a dial's is.
 func listenBind(ctx context.Context, inner permuteproxy.Transport, username, address string) (net.Listener, error) {
-	return clientutils.ListenBind(ctx, address, func(ctx context.Context, address string) (net.Conn, net.Addr, error) {
+	return netutils.ListenBind(ctx, address, func(ctx context.Context, address string) (net.Conn, net.Addr, error) {
 		request, err := bindRequest(ctx, username, address)
 		if err != nil {
 			return nil, nil, err
@@ -33,7 +33,7 @@ func listenBind(ctx context.Context, inner permuteproxy.Transport, username, add
 			return nil, nil, err
 		}
 		var bound net.Addr
-		err = clientutils.Handshake(ctx, conn, time.Minute, func() error {
+		err = netutils.Handshake(ctx, conn, time.Minute, func() error {
 			if _, err := conn.Write(request); err != nil {
 				return err
 			}

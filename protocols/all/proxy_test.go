@@ -20,6 +20,7 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/all"
+	"github.com/wzshiming/permuteproxy/protocols/command"
 	"github.com/wzshiming/permuteproxy/protocols/local"
 	"github.com/wzshiming/permuteproxy/protocols/netcat"
 )
@@ -37,6 +38,31 @@ type probe struct {
 	boundPacket  chan net.Addr
 	accepted     chan struct{}
 	packetClosed chan struct{}
+}
+
+// bundled sends each call to the bundled implementation of its network, as a nil Base does; a probe counts over it.
+type bundled struct{}
+
+func (bundled) of(network string) permuteproxy.Network {
+	switch {
+	case network == "cmd":
+		return command.Network
+	case strings.HasPrefix(network, "cmd-nc"):
+		return netcat.Network
+	}
+	return local.Network
+}
+
+func (b bundled) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	return b.of(network).DialContext(ctx, network, address)
+}
+
+func (b bundled) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	return b.of(network).Listen(ctx, network, address)
+}
+
+func (b bundled) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	return b.of(network).ListenPacket(ctx, network, address)
 }
 
 func newProbe(n permuteproxy.Network) *probe {
@@ -357,7 +383,7 @@ func TestProxy(t *testing.T) {
 			}
 			// A quic row's server binds a udp socket at port 0, not a listener.
 			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
-			base, upstream := newProbe(netcat.Network), newProbe(testutils.System{})
+			base, upstream := newProbe(bundled{}), newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			bound := waitBound
 			if overUDP {
@@ -377,7 +403,7 @@ func TestProxy(t *testing.T) {
 					defer cancel()
 					cc := c
 					cc.Layers = append([]permuteproxy.Layer{{Scheme: scheme, Options: c.Layers[0].Options}}, c.Layers[1:]...)
-					clientBase := newProbe(local.Network)
+					clientBase := newProbe(bundled{})
 					n, err := permuteproxy.ClientEngine{Base: clientBase, Local: clientBase}.Client(cc)
 					if err != nil {
 						t.Fatal(err)

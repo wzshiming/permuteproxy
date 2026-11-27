@@ -15,7 +15,7 @@ import (
 	"github.com/wzshiming/cmux/pattern"
 
 	"github.com/wzshiming/permuteproxy"
-	"github.com/wzshiming/permuteproxy/internal/pool"
+	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
 )
 
@@ -46,7 +46,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 			conf := &anyproxy.Config{
 				Dialer:       upstream,
 				ListenConfig: upstream,
-				BytesPool:    pool.Bytes,
+				BytesPool:    netutils.Buffers,
 			}
 			proxy, err := anyproxy.NewAnyProxy(ctx, addrs, conf)
 			if err != nil {

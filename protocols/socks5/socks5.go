@@ -13,7 +13,6 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
-	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/internal/serverutils"
 )
 
@@ -271,7 +270,7 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 		srv.ProxyListenPacket = listenRelay
 		srv.ProxyOutgoingListenPacket = upstream.ListenPacket
 		srv.PacketForwardAddress = relayAddress
-		srv.BytesPool = pool.Bytes
+		srv.BytesPool = netutils.Buffers
 		if username := opts[KeyUsername]; username != "" {
 			srv.Authentication = socks5.UserAuth(username, opts[KeyPassword])
 		}
