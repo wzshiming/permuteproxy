@@ -3,6 +3,7 @@ package snappy
 import (
 	"context"
 	"net"
+	"sync"
 
 	"github.com/golang/snappy"
 
@@ -21,20 +22,27 @@ func NewAdapter(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 }
 
 func newConn(c net.Conn) net.Conn {
-	return conn{Conn: c, w: snappy.NewBufferedWriter(c), r: snappy.NewReader(c)}
+	return &conn{Conn: c, w: snappy.NewBufferedWriter(c), r: snappy.NewReader(c)}
 }
 
+// conn guards its reader and writer, which keep buffers no two calls may share, as a net.Conn takes concurrent calls.
 type conn struct {
 	net.Conn
-	w *snappy.Writer
-	r *snappy.Reader
+	wmu sync.Mutex
+	w   *snappy.Writer
+	rmu sync.Mutex
+	r   *snappy.Reader
 }
 
-func (c conn) Read(b []byte) (int, error) {
+func (c *conn) Read(b []byte) (int, error) {
+	c.rmu.Lock()
+	defer c.rmu.Unlock()
 	return c.r.Read(b)
 }
 
-func (c conn) Write(b []byte) (int, error) {
+func (c *conn) Write(b []byte) (int, error) {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	n, err := c.w.Write(b)
 	if err != nil {
 		return n, err

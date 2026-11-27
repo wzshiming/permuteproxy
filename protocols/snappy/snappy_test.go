@@ -112,3 +112,41 @@ func TestRoundTripThroughEngine(t *testing.T) {
 		t.Fatalf("carrier held %q, decoding to %q, %v; want snappy frames of %q", base.sent(), sent, err, msg)
 	}
 }
+
+func TestConcurrentWritesStayWhole(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	base := permuteproxy.NetworkFuncs{DialContextFunc: func(context.Context, string, string) (net.Conn, error) { return client, nil }}
+	conn, err := transport(t, permuteproxy.Engine{Base: base}, "snappy://127.0.0.1:1").Dial(context.Background(), permuteproxy.Stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const writers, writes, size = 4, 50, 1 << 10
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Go(func() {
+			// Each writer sends blocks of its own byte, so a torn block shows as a mix.
+			block := bytes.Repeat([]byte{byte('a' + w)}, size)
+			for range writes {
+				if _, err := conn.Write(block); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	go func() {
+		wg.Wait()
+		conn.Close()
+	}()
+	r := snappy.NewReader(server)
+	block := make([]byte, size)
+	for i := range writers * writes {
+		if _, err := io.ReadFull(r, block); err != nil {
+			t.Fatalf("block %d: %v", i, err)
+		}
+		if !bytes.Equal(block, bytes.Repeat(block[:1], size)) {
+			t.Fatalf("block %d mixes the bytes of two writes", i)
+		}
+	}
+}
