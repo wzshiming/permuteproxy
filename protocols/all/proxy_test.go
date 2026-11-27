@@ -1,4 +1,4 @@
-package permuteproxy_test
+package all_test
 
 import (
 	"context"
@@ -636,5 +636,32 @@ func TestClientRefusesPacket(t *testing.T) {
 				t.Fatalf("base dials = %d, want 0", got)
 			}
 		})
+	}
+}
+
+func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
+	under := &testutils.CountingNetwork{}
+	client, err := permuteproxy.Engine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.(io.Closer).Close()
+	for _, tt := range []struct {
+		network, address string
+		plane            permuteproxy.Plane
+	}{
+		{"cmd-nc", "127.0.0.1:80", permuteproxy.Stream},
+		{"cmd-nc-udp", "127.0.0.1:53", permuteproxy.Packet},
+	} {
+		tr, err := permuteproxy.Engine{Base: client}.Transport(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: tt.network, Address: tt.address}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tr.Dial(context.Background(), tt.plane); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Errorf("Dial %s through a socks5 client = %v, want ErrUnsupported", tt.network, err)
+		}
+	}
+	if got := under.Calls.Load(); got != 0 {
+		t.Fatalf("the socks5 client reached its server: %d calls", got)
 	}
 }

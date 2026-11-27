@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +16,6 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
-	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
 )
 
 func init() {
@@ -55,12 +55,16 @@ func (h *hop) ListenPacket(_ context.Context, network, address string) (net.Pack
 	return nil, errHop
 }
 
-func TestCommandNetworkRegistrations(t *testing.T) {
+func TestNetworkRegistrations(t *testing.T) {
 	for _, tt := range []struct {
 		uri   string
 		want  permuteproxy.Endpoint // the address as the network's AddressKind reads it
 		plane permuteproxy.Plane
 	}{
+		{"tcp://127.0.0.1:80/p", permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:80"}, permuteproxy.Stream},
+		{"udp://127.0.0.1:53/p", permuteproxy.Endpoint{Network: "udp", Address: "127.0.0.1:53"}, permuteproxy.Packet},
+		{"unix://./s.sock", permuteproxy.Endpoint{Network: "unix", Address: "./s.sock"}, permuteproxy.Stream},
+		{"unixgram://./s.sock", permuteproxy.Endpoint{Network: "unixgram", Address: "./s.sock"}, permuteproxy.Packet},
 		{"cmd:nc host 1", permuteproxy.Endpoint{Network: "cmd", Address: "nc host 1"}, permuteproxy.Stream},
 		{"cmd-nc://127.0.0.1:80", permuteproxy.Endpoint{Network: "cmd-nc", Address: "127.0.0.1:80"}, permuteproxy.Stream},
 		{"cmd-nc-unix://./s.sock", permuteproxy.Endpoint{Network: "cmd-nc-unix", Address: "./s.sock"}, permuteproxy.Stream},
@@ -151,6 +155,49 @@ func TestNetcatUnixListensWithoutABase(t *testing.T) {
 		t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
 	}
 	ln.Close()
+}
+
+func TestSystemNetworksWithoutABase(t *testing.T) {
+	ctx := context.Background()
+	for _, network := range []string{"tcp", "udp", "unix", "unixgram"} {
+		t.Run(network, func(t *testing.T) {
+			address := "127.0.0.1:0"
+			if strings.HasPrefix(network, "unix") {
+				if network == "unixgram" && runtime.GOOS == "windows" {
+					t.Skip("unixgram needs a POSIX system")
+				}
+				address = socketPath(t)
+			}
+			tr, err := permuteproxy.Engine{}.Transport(chain(network, address))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var peer net.Addr
+			if tr.Planes() == permuteproxy.Packet {
+				pc, err := tr.ListenPacket(ctx)
+				if err != nil {
+					t.Fatalf("ListenPacket without a Base = %v, want the registered Local binding", err)
+				}
+				peer = testutils.ServePacketEcho(t, pc)
+			} else {
+				ln, err := tr.Listen(ctx)
+				if err != nil {
+					t.Fatalf("Listen without a Base = %v, want the registered Local listening", err)
+				}
+				peer = testutils.ServeEcho(t, ln)
+			}
+			tr, err = permuteproxy.Engine{}.Transport(chain(network, peer.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn, err := tr.Dial(ctx, tr.Planes())
+			if err != nil {
+				t.Fatalf("Dial without a Base = %v, want the registered Local dialing", err)
+			}
+			defer conn.Close()
+			testutils.RoundTrip(t, conn, "ping", "ping")
+		})
+	}
 }
 
 func TestCommandNetworksRefuseInvalidValues(t *testing.T) {
@@ -323,33 +370,6 @@ func TestCommandPacketNetworksRefuseListening(t *testing.T) {
 				t.Errorf("ListenPacket on %s %s = %v, want ErrUnsupported", c.Endpoint.Network, base, err)
 			}
 		}
-	}
-}
-
-func TestCommandNetworksRefusedByABaseWithoutCmd(t *testing.T) {
-	under := &hop{}
-	client, err := permuteproxy.Engine{Base: under}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "socks5"}}, Endpoint: permuteproxy.Endpoint{Network: "tcp", Address: "127.0.0.1:1080"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.(io.Closer).Close()
-	for _, tt := range []struct {
-		network, address string
-		plane            permuteproxy.Plane
-	}{
-		{"cmd-nc", "127.0.0.1:80", permuteproxy.Stream},
-		{"cmd-nc-udp", "127.0.0.1:53", permuteproxy.Packet},
-	} {
-		tr, err := permuteproxy.Engine{Base: client}.Transport(chain(tt.network, tt.address))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tr.Dial(context.Background(), tt.plane); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Errorf("Dial %s through a socks5 client = %v, want ErrUnsupported", tt.network, err)
-		}
-	}
-	if len(under.calls) != 0 {
-		t.Fatalf("the socks5 client reached its server: %q", under.calls)
 	}
 }
 

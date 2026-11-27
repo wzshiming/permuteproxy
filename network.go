@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-
-	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
 // ErrUnsupported is returned, before any I/O, for an operation a network, transport or layer does not offer.
@@ -73,32 +71,14 @@ func (b borrowed) Lossy(network string) bool {
 	return isLossy(b.Network, network)
 }
 
-var native Network = &NetworkFuncs{
-	DialContextFunc:  dialNative,
-	ListenFunc:       (&net.ListenConfig{}).Listen,
-	ListenPacketFunc: (&net.ListenConfig{}).ListenPacket,
-}
-
-// dialNative binds datagram networks to an unconnected socket; the rest go through net.Dialer.
-func dialNative(ctx context.Context, network, address string) (net.Conn, error) {
-	if _, plane, _ := lookupBase(network); plane == Packet {
-		return netutils.DialPacket(ctx, network, address, (&net.ListenConfig{}).ListenPacket)
-	}
-	return (&net.Dialer{}).DialContext(ctx, network, address)
-}
-
 // byName is the Network a nil Engine.Base or Engine.Upstream stands for, resolving each call by its network name.
 type byName struct{}
 
-// resolve is network's registered implementation, else the system for tcp, udp, unix, unixgram and their families, else a Network refusing every call.
+// resolve is the registered implementation of network's base, else a Network refusing every call.
 func (byName) resolve(network string) Network {
 	base, _, _ := lookupBase(network)
 	if ns, _ := lookupNetwork(base); ns.Network != nil {
 		return ns.Network
-	}
-	switch base {
-	case "tcp", "udp", "unix", "unixgram":
-		return native
 	}
 	return NetworkFuncs{}
 }

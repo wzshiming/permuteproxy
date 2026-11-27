@@ -1,14 +1,13 @@
 package tlsutils
 
 import (
-	"context"
 	"crypto/tls"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 
-	"github.com/wzshiming/hostmatcher"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -18,12 +17,12 @@ func NewACME(hosts []string, dir string) *tls.Config {
 		Prompt: autocert.AcceptTOS,
 	}
 	if len(hosts) > 0 {
-		matcher := hostmatcher.NewMatcher(hosts)
-		m.HostPolicy = func(ctx context.Context, host string) error {
-			if !matcher.Match(host) {
-				return fmt.Errorf("not allow host %q", host)
-			}
-			return nil
+		names := make([]string, len(hosts))
+		for i, host := range hosts {
+			names[i] = strings.TrimSpace(host)
+		}
+		if !slices.Contains(names, "*") {
+			m.HostPolicy = autocert.HostWhitelist(names...)
 		}
 	}
 	if dir == "" {

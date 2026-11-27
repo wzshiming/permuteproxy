@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,5 +65,35 @@ func TestNewServerReadsAcmeCertificatesFromCacheDir(t *testing.T) {
 	}
 	if !bytes.Equal(cert.Certificate[0], certDER) {
 		t.Fatal("served certificate is not the one cached in tls_acme_cache_dir")
+	}
+}
+
+func TestNewServerACMEHostPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name, hosts, host string
+		admitted          bool
+	}{
+		{"a listed name passes", "proxy.test", "proxy.test", true},
+		{"an unlisted name is refused", "proxy.test", "other.test", false},
+		{"a subdomain of a listed name is refused", "proxy.test", "www.proxy.test", false},
+		{"a star admits any name", "*", "any.test", true},
+		{"a listed name is trimmed of blanks", "other.test, proxy.test ", "proxy.test", true},
+		{"a star among names admits any name", "proxy.test, *", "any.test", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			// An unusable account key stops an admitted name before autocert contacts the CA.
+			if err := os.WriteFile(filepath.Join(dir, "acme_account+key"), []byte("unusable"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			config, err := NewServer(url.Values{"tls_acme_host": {tt.hosts}, "tls_acme_cache_dir": {dir}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = config.GetCertificate(&tls.ClientHelloInfo{ServerName: tt.host})
+			if err == nil || strings.Contains(err.Error(), "invalid account key") != tt.admitted {
+				t.Fatalf("GetCertificate(%q) with tls_acme_host=%q: %v; want it past the host policy: %t", tt.host, tt.hosts, err, tt.admitted)
+			}
+		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/testutils"
+	_ "github.com/wzshiming/permuteproxy/protocols/local" // a zero Engine reaches udp through Local
 	"github.com/wzshiming/permuteproxy/protocols/quic"
 )
 

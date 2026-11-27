@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wzshiming/permuteproxy"
+	"github.com/wzshiming/permuteproxy/internal/testutils"
 )
 
 func TestLocalRefusesNetworksItDoesNotHandle(t *testing.T) {
@@ -73,4 +74,24 @@ func TestDialPacket(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDialFamilies(t *testing.T) {
+	ctx := context.Background()
+	udp, err := Network.DialContext(ctx, "udp4", testutils.UDPEcho(t).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udp.Close()
+	echoes(t, udp, "ping")
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	tcp, err := Network.DialContext(ctx, "tcp4", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcp.Close()
 }

@@ -72,7 +72,7 @@ func TestServerFirstReturnCancelsOther(t *testing.T) {
 			}
 			// The serves belong to this test, so the declared server is assembled directly.
 			inner := &bound{network: &fakeNet{name: "base"}, stream: "tcp", packet: "udp", address: "x:1"}
-			srv, err := declaredServer(0, Stream|Packet, funcs, nil).server(inner, native, Options{})
+			srv, err := declaredServer(0, Stream|Packet, funcs, nil).server(inner, testutils.System{}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,8 +117,8 @@ func TestServerStopReleasesCarriers(t *testing.T) {
 					return err
 				},
 			}
-			inner := &bound{network: native, stream: "tcp", packet: "udp", address: "127.0.0.1:0"}
-			srv, err := declaredServer(0, Stream|Packet, funcs, nil).server(inner, native, Options{})
+			inner := &bound{network: testutils.System{}, stream: "tcp", packet: "udp", address: "127.0.0.1:0"}
+			srv, err := declaredServer(0, Stream|Packet, funcs, nil).server(inner, testutils.System{}, Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
