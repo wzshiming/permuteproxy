@@ -85,3 +85,25 @@ func (e ClientEngine) template(c Chain) (Network, error) {
 		},
 	}, nil
 }
+
+// selfClient reports whether c is one network that declares its own client, such as nc:ssh jump.
+func (c Chain) selfClient() bool {
+	ns, _ := lookupNetwork(c.Endpoint.Network)
+	return len(c.Layers) == 0 && ns.NewClient != nil
+}
+
+// network builds the client the network of a selfClient chain declares, over Base.
+func (e ClientEngine) network(c Chain) (Network, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	ns, _ := lookupNetwork(c.Endpoint.Network)
+	n, err := ns.NewClient(borrowed{orByName(e.Base)}, c.Endpoint.Address)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("network %q: %w", c.Endpoint.Network, reject(nil, err))
+	case n == nil:
+		return nil, fmt.Errorf("network %q: NewClient returned nil: %w", c.Endpoint.Network, ErrInvalidChain)
+	}
+	return n, nil
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 	"github.com/wzshiming/permuteproxy/internal/pool"
 	"github.com/wzshiming/permuteproxy/internal/protoutils"
+	"github.com/wzshiming/permuteproxy/protocols/netcat"
 )
 
 const (
@@ -75,7 +76,7 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 	}
 	udp, ok := opts[keyUDPCommand]
 	if !ok {
-		udp = cmdutils.NetcatDialUDP
+		udp = netcat.DialUDP
 	}
 	if _, err := split(udp); err != nil {
 		return nil, fmt.Errorf("%s: %w", keyUDPCommand, err)

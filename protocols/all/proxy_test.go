@@ -21,6 +21,7 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/testutils"
 	_ "github.com/wzshiming/permuteproxy/protocols/all"
 	"github.com/wzshiming/permuteproxy/protocols/local"
+	"github.com/wzshiming/permuteproxy/protocols/netcat"
 )
 
 // probe counts the operations a chain performs on an injected network, reports bound addresses and
@@ -310,7 +311,7 @@ func TestProxy(t *testing.T) {
 			}
 			// A quic row's server binds a udp socket at port 0, not a listener.
 			overUDP := c.Layers[len(c.Layers)-1].Scheme == "quic"
-			base, upstream := newProbe(local.Network), newProbe(testutils.System{})
+			base, upstream := newProbe(netcat.Network), newProbe(testutils.System{})
 			_, done := start(t, permuteproxy.ServerEngine{Base: base, Upstream: upstream}, c)
 			bound := waitBound
 			if overUDP {
