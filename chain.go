@@ -41,7 +41,7 @@ type resolved struct {
 }
 
 func (c Chain) resolve() (*resolved, error) {
-	if c.Endpoint.Address == "" {
+	if c.Endpoint.Address == "" && !c.selfClient() {
 		return nil, fmt.Errorf("endpoint: empty address: %w", ErrInvalidChain)
 	}
 	r := &resolved{layers: c.Layers, own: len(c.Layers), dial: c.Endpoint.Address, listen: c.Endpoint.Address}

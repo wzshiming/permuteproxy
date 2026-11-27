@@ -16,7 +16,7 @@ import (
 	"github.com/wzshiming/permuteproxy/internal/netutils"
 )
 
-// Local is the process-local Network: system networking plus cmd, which the cmd-* networks run on.
+// Local is the process-local Network: system networking plus cmd, which cmd-packet and the networks of protocols/netcat run on.
 type Local struct {
 	// Command starts a subprocess whose stdio carries the connection. nil runs it through os/exec:
 	// Close returns at once, the command sees EOF on stdin, output it still writes is discarded and
@@ -169,9 +169,7 @@ func (l *Local) DialContext(ctx context.Context, network, address string) (net.C
 func (l *Local) Listen(ctx context.Context, network, address string) (net.Listener, error) {
 	switch network {
 	case "cmd":
-		return l.listenCommand(ctx, network, address)
-	case "cmd-nc-unix":
-		return l.listenNetcatUnix(ctx, network, address)
+		return l.ListenCommand(ctx, address, nil)
 	}
 	ln, err := (&net.ListenConfig{}).Listen(ctx, network, address)
 	return ln, unsupported(err)

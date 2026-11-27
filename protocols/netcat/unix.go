@@ -1,4 +1,4 @@
-package local
+package netcat
 
 import (
 	"context"
@@ -11,39 +11,56 @@ import (
 	"github.com/wzshiming/permuteproxy"
 	"github.com/wzshiming/permuteproxy/internal/cmdutils"
 	"github.com/wzshiming/permuteproxy/internal/netutils"
+	"github.com/wzshiming/permuteproxy/protocols/local"
 )
 
-// listenNetcatUnix removes the socket file an nc leaves behind only when a peer sent a byte
-// through it, the one proof that nc bound the path, and it is still the inode recorded then; any
-// other file there stays, even one an idle or killed nc made, as it may as well be a competitor's.
-func (l *Local) listenNetcatUnix(ctx context.Context, network, address string) (net.Listener, error) {
+// Local is a local.Local that also listens on cmd-nc-unix, where each connection is an nc -Ul
+// of its own and the socket file an nc leaves behind is removed, and binds cmd-nc-udp as one
+// nc -u -l, which serves a single peer. A Base given to an engine does either only if it is one.
+type Local struct{ *local.Local }
+
+// Network is the Local over local.Network, the registered implementation of cmd-nc-unix.
+var Network = Local{local.Network}
+
+// Listen removes the socket file an nc leaves behind only when a peer sent a byte through it,
+// the one proof that nc bound the path, and it is still the inode recorded then; any other file
+// there stays, even one an idle or killed nc made, as it may as well be a competitor's.
+func (l Local) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	if network != "cmd-nc-unix" {
+		return l.Local.Listen(ctx, network, address)
+	}
 	// The path enters an nc command line, so it must be one the network's declaration accepts.
 	if err := (permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: network, Address: address}}).Validate(); err != nil {
 		return nil, err
 	}
-	line := strings.ReplaceAll(cmdutils.NetcatListenUnix, "%h", cmdutils.Quote([]string{address}))
-	args, err := splitCommand(line)
-	if err != nil {
-		return nil, err
-	}
-	dial, err := l.dial()
-	if err != nil {
-		return nil, err
-	}
+	line := strings.ReplaceAll(ListenUnix, "%h", cmdutils.Quote([]string{address}))
 	socket := &socketFile{path: address}
-	spawn := func(ctx context.Context, name string, args ...string) (net.Conn, error) {
-		socket.before()
-		// Debian's nc unlinks whatever the path holds before it binds, so it only gets a free path.
-		if _, err := os.Lstat(address); err == nil {
-			return nil, &os.PathError{Op: "listen", Path: address, Err: os.ErrExist}
+	return l.Local.ListenCommand(ctx, line, func(start local.CommandFunc) local.CommandFunc {
+		return func(ctx context.Context, name string, args ...string) (net.Conn, error) {
+			socket.before()
+			// Debian's nc unlinks whatever the path holds before it binds, so it only gets a free path.
+			if _, err := os.Lstat(address); err == nil {
+				return nil, &os.PathError{Op: "listen", Path: address, Err: os.ErrExist}
+			}
+			conn, err := start(ctx, name, args...)
+			if err != nil {
+				return nil, err
+			}
+			return socket.track(conn), nil
 		}
-		conn, err := dial(ctx, name, args...)
-		if err != nil {
-			return nil, err
-		}
-		return socket.track(conn), nil
+	})
+}
+
+// ListenPacket binds cmd-nc-udp at address as one nc -u -l, a socket for the single peer nc serves.
+func (l Local) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	if network != "cmd-nc-udp" {
+		return l.Local.ListenPacket(ctx, network, address)
 	}
-	return cmdutils.Listen(ctx, spawn, localAddr, netutils.NewNetAddr("cmd", line), args, l.waitDelay())
+	filled, err := permuteproxy.ClientEngine{Base: l.Local}.Client(permuteproxy.Chain{Endpoint: permuteproxy.Endpoint{Network: "cmd", Address: ListenUDP}})
+	if err != nil {
+		return nil, err
+	}
+	return listenPacket(ctx, filled, address)
 }
 
 type socketFile struct {

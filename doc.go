@@ -15,7 +15,10 @@
 // cmd:ssh -W %h:%p jump, is a client as well: each dial of a tcp or unix address
 // runs the command with the target's host, or its socket path, for %h, its port
 // for %p and the network for %n, and a listener runs it once per connection, as
-// cmd:nc -l %h %p accepts one. A carrier is on one of
+// cmd:nc -l %h %p accepts one. protocols/netcat registers nc:, such a client
+// running netcat for a tcp, udp or unix target behind the prefix its address gives,
+// as nc:ssh jump runs it on jump, and the endpoint networks cmd-nc, cmd-nc-unix and
+// cmd-nc-udp. A carrier is on one of
 // two planes: Stream, reliable ordered byte streams as tcp carries, and Packet,
 // datagrams each with its peer as udp carries. A network carries one plane; a layer
 // declares the planes it requires, provides and preserves, and a chain is valid

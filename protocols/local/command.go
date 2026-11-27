@@ -55,7 +55,12 @@ func (l *Local) dialCommand(ctx context.Context, network, address string) (net.C
 	return cmdutils.DialContext(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args)
 }
 
-func (l *Local) listenCommand(ctx context.Context, network, address string) (net.Listener, error) {
+// CommandFunc starts a command whose stdio is the conn, as Local.Command does.
+type CommandFunc = func(ctx context.Context, name string, args ...string) (net.Conn, error)
+
+// ListenCommand listens as Listen does on cmd at address, a command line run once per connection;
+// wrap, when set, is given what starts a command and returns what the listener starts each through.
+func (l *Local) ListenCommand(ctx context.Context, address string, wrap func(start CommandFunc) CommandFunc) (net.Listener, error) {
 	args, err := splitCommand(address)
 	if err != nil {
 		return nil, err
@@ -64,5 +69,8 @@ func (l *Local) listenCommand(ctx context.Context, network, address string) (net
 	if err != nil {
 		return nil, err
 	}
-	return cmdutils.Listen(ctx, dial, localAddr, netutils.NewNetAddr(network, address), args, l.waitDelay())
+	if wrap != nil {
+		dial = cmdutils.DialFunc(wrap(CommandFunc(dial)))
+	}
+	return cmdutils.Listen(ctx, dial, localAddr, netutils.NewNetAddr("cmd", address), args, l.waitDelay())
 }

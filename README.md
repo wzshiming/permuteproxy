@@ -38,8 +38,11 @@ Any proxy protocol can be stacked on any adapters and network that fit it, so on
 | `http+snappy+quic://127.0.0.1:8443` | HTTP proxy, compressed, over QUIC streams on udp |
 | `ssh+unix:///run/proxy.sock` | SSH over a unix socket |
 | `cmd:ssh -W %h:%p jump` | a command run per dial as the client |
+| `nc:ssh jump` | netcat run per dial as the client, here on `jump` through ssh |
 
 A command client fills `%h` with the host, or the socket path of a unix address, `%p` with the port and `%n` with the network, anywhere in the line, quotes included, as in `cmd:sh -c 'nc %h %p'`. Its `Listen` runs the command once per connection, so `cmd:nc -l %h %p` accepts at an address. A host or path with a character a shell would not read as plain text is refused.
+
+`nc:` is the command client of netcat over tcp, udp and unix sockets, run behind what follows the scheme, so `nc:ssh jump` runs it on `jump`.
 
 The same URI serves the proxy on one side and dials through it on the other:
 
