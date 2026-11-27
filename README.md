@@ -39,6 +39,8 @@ Any proxy protocol can be stacked on any adapters and network that fit it, so on
 | `ssh+unix:///run/proxy.sock` | SSH over a unix socket |
 | `cmd:ssh -W %h:%p jump` | a command run per dial as the client |
 
+A command client fills `%h` with the host, or the socket path of a unix address, `%p` with the port and `%n` with the network, anywhere in the line, quotes included, as in `cmd:sh -c 'nc %h %p'`. Its `Listen` runs the command once per connection, so `cmd:nc -l %h %p` accepts at an address. A host or path with a character a shell would not read as plain text is refused.
+
 The same URI serves the proxy on one side and dials through it on the other:
 
 ```go

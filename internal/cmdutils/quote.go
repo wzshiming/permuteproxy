@@ -11,10 +11,15 @@ const plain = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789%+,
 func Quote(argv []string) string {
 	words := make([]string, len(argv))
 	for i, word := range argv {
-		if word == "" || strings.Trim(word, plain) != "" {
+		if word == "" || !Plain(word) {
 			word = "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
 		}
 		words[i] = word
 	}
 	return strings.Join(words, " ")
+}
+
+// Plain reports whether word has only bytes a shell reads as plain text, so that it needs no quoting.
+func Plain(word string) bool {
+	return strings.Trim(word, plain) == ""
 }
