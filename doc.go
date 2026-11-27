@@ -4,13 +4,14 @@
 // without it a chain naming them fails with ErrInvalidChain.
 //
 // A Chain lists layers outermost-first over an Endpoint; ParseURI reads one from a
-// URI such as socks5+tls://127.0.0.1:1080 and Chain.URI writes it back. An Engine
-// builds a chain at three entry points: Engine.Transport stacks adapter layers into
-// a Transport that dials and listens at the endpoint, Engine.Client builds the
-// client of the outermost proxy layer as a Network, and Engine.Server builds its
-// server, which reaches its targets through Engine.Upstream. A carrier is on one of
-// two planes: Stream, reliable ordered byte streams as tcp carries, and Packet,
-// datagrams each with its peer as udp carries. A network carries one plane; a layer
-// declares the planes it requires, provides and preserves, and a chain is valid
-// only where they fit.
+// URI such as socks5+tls://127.0.0.1:1080 and Chain.URI writes it back. A chain is
+// built at three entry points: NewTransport stacks adapter layers into a Transport
+// that dials and listens at the endpoint, NewClient builds the client of the
+// outermost proxy layer as a Network, and NewServer builds its server. They reach
+// the endpoint and a server's targets by the registered networks; an Engine's
+// methods of the same names build through its Base and Upstream instead. A carrier
+// is on one of two planes: Stream, reliable ordered byte streams as tcp carries, and
+// Packet, datagrams each with its peer as udp carries. A network carries one plane;
+// a layer declares the planes it requires, provides and preserves, and a chain is
+// valid only where they fit.
 package permuteproxy

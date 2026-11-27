@@ -463,3 +463,35 @@ func TestUpstreamNeverCheckedForLossy(t *testing.T) {
 	}
 	assertCalls(t, "base.listen tcp 127.0.0.1:1", "upstream.listenpacket udp 127.0.0.1:0")
 }
+
+func TestNewFuncsBuildAsTheZeroEngine(t *testing.T) {
+	calls = nil
+	ctx := context.Background()
+	tr, err := NewTransport(mk("fakenet", "test-tls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tr.Dial(ctx, Stream); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-tls.new", "impl.dial fakenet 127.0.0.1:1", "test-tls.client")
+	if _, err := NewTransport(mk("fakenet", "test-socks5")); !errors.Is(err, ErrInvalidChain) {
+		t.Fatalf("NewTransport of a proxy chain = %v, want ErrInvalidChain", err)
+	}
+
+	n, err := NewClient(mk("fakenet", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if _, err := n.DialContext(ctx, "tcp", "target:80"); err != nil {
+		t.Fatal(err)
+	}
+	assertCalls(t, "test-socks5.dial stream tcp target:80")
+
+	srv, err := NewServer(mk("fakenet", "test-socks5"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRun(t, srv, "impl.listen fakenet 127.0.0.1:1", "test-socks5.serve upstream=default")
+}

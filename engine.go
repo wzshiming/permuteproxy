@@ -90,3 +90,18 @@ func (e Engine) Server(c Chain) (Server, error) {
 	}
 	return s, nil
 }
+
+// NewTransport builds an adapter chain as the zero Engine does, reaching the endpoint by its network's registered implementation.
+func NewTransport(c Chain) (Transport, error) {
+	return Engine{}.Transport(c)
+}
+
+// NewClient builds the client of a proxy chain's outermost layer as the zero Engine does.
+func NewClient(c Chain) (Network, error) {
+	return Engine{}.Client(c)
+}
+
+// NewServer builds the server of a proxy chain's outermost layer as the zero Engine does, reaching its targets by their networks' registered implementations.
+func NewServer(c Chain) (Server, error) {
+	return Engine{}.Server(c)
+}
