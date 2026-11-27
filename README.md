@@ -34,7 +34,9 @@ Any proxy protocol can be stacked on any adapters and network that fit it, so on
 | --- | --- |
 | `socks5://127.0.0.1:1080` | SOCKS5 over tcp |
 | `https://127.0.0.1:8443` | HTTP proxy over TLS, an alias of `http+tls` |
-| `socks5+snappy+tls://127.0.0.1:1080` | SOCKS5, compressed, over TLS |
+| `socks5+snappy+tls://127.0.0.1:1080` | SOCKS5, compressed by snappy, over TLS |
+| `socks5+lz4+tls://127.0.0.1:1080` | SOCKS5, compressed by LZ4, over TLS |
+| `socks5+zstd+tls://127.0.0.1:1080` | SOCKS5, compressed by zstd, over TLS |
 | `http+snappy+quic://127.0.0.1:8443` | HTTP proxy, compressed, over QUIC streams on udp |
 | `ssh+unix:///run/proxy.sock` | SSH over a unix socket |
 | `cmd:ssh -W %h:%p jump` | a command run per dial as the client |

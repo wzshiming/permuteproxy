@@ -4,9 +4,10 @@ go 1.26.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.4
-	github.com/golang/snappy v1.0.0
 	github.com/google/go-cmp v0.7.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/klauspost/compress v1.20.5
+	github.com/pierrec/lz4/v4 v4.1.34
 	github.com/wzshiming/anyproxy v0.10.0
 	github.com/wzshiming/cmux v0.6.0
 	github.com/wzshiming/httpproxy v0.7.0

@@ -5,7 +5,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/golang/snappy"
+	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/snappy"
 
 	"github.com/wzshiming/permuteproxy"
 )
@@ -29,8 +30,10 @@ func NewAdapter(permuteproxy.Options) (*permuteproxy.AdapterFuncs, error) {
 	}}, nil
 }
 
+// newConn writes the snappy framing format, each write compressed and sent on the calling goroutine so a conn starts none of its own.
 func newConn(c net.Conn) net.Conn {
-	return &conn{Conn: c, w: snappy.NewBufferedWriter(c), r: snappy.NewReader(c)}
+	w := s2.NewWriter(c, s2.WriterSnappyCompat(), s2.WriterFlushOnWrite(), s2.WriterConcurrency(1))
+	return &conn{Conn: c, w: w, r: snappy.NewReader(c)}
 }
 
 // conn guards its reader and writer, which keep buffers no two calls may share, as a net.Conn takes concurrent calls.
@@ -51,11 +54,7 @@ func (c *conn) Read(b []byte) (int, error) {
 func (c *conn) Write(b []byte) (int, error) {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	n, err := c.w.Write(b)
-	if err != nil {
-		return n, err
-	}
-	return n, c.w.Flush()
+	return c.w.Write(b)
 }
 
 type listener struct {

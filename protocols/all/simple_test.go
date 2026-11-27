@@ -45,6 +45,8 @@ func TestSimple(t *testing.T) {
 		{scheme: "https", query: "?tls_self_signed=true&tls_skip_verify=true"},
 		{scheme: "socks5+snappy+tls", query: "?tls_self_signed=true&tls_skip_verify=true"},
 		{scheme: "http+snappy+quic", query: "?tls_self_signed=true&tls_skip_verify=true"},
+		{scheme: "socks5+lz4+tls", query: "?tls_self_signed=true&tls_skip_verify=true"},
+		{scheme: "http+zstd+quic", query: "?tls_self_signed=true&tls_skip_verify=true"},
 	} {
 		t.Run(chain.scheme, func(t *testing.T) {
 			uri := chain.scheme + "://user:pass@" + testutils.ReservePort(t) + chain.query

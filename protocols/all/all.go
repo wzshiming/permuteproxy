@@ -5,6 +5,7 @@ import (
 	_ "github.com/wzshiming/permuteproxy/protocols/anyproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/httpproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/local"
+	_ "github.com/wzshiming/permuteproxy/protocols/lz4"
 	_ "github.com/wzshiming/permuteproxy/protocols/netcat"
 	_ "github.com/wzshiming/permuteproxy/protocols/quic"
 	_ "github.com/wzshiming/permuteproxy/protocols/shadowsocks"
@@ -13,4 +14,5 @@ import (
 	_ "github.com/wzshiming/permuteproxy/protocols/socks5"
 	_ "github.com/wzshiming/permuteproxy/protocols/sshproxy"
 	_ "github.com/wzshiming/permuteproxy/protocols/tls"
+	_ "github.com/wzshiming/permuteproxy/protocols/zstd"
 )
