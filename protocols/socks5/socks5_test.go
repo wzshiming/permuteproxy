@@ -702,8 +702,8 @@ func TestClientRefusesUnlistedNetworks(t *testing.T) {
 		if _, err := n.ListenPacket(ctx, "unixgram", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 			t.Fatalf("ListenPacket(unixgram) = %v, want ErrUnsupported", err)
 		}
-		if _, err := n.Listen(ctx, "tcp", "127.0.0.1:0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
-			t.Fatalf("Listen(tcp) = %v, want ErrUnsupported", err)
+		if _, err := n.Listen(ctx, "unix", "proxy.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
+			t.Fatalf("Listen(unix) = %v, want ErrUnsupported", err)
 		}
 		if base.dials.Load() != 0 || base.packets.Load() != 0 {
 			t.Fatalf("base dials %d packets %d, want none", base.dials.Load(), base.packets.Load())

@@ -130,7 +130,7 @@ func TestURIKeepsNameAndKeys(t *testing.T) {
 	}
 }
 
-func TestClientRefusesUnixgramAndListen(t *testing.T) {
+func TestClientRefusesUnixgramAndCmdListen(t *testing.T) {
 	ctx := context.Background()
 	base := &testutils.CountingNetwork{}
 	n, err := permuteproxy.ClientEngine{Base: base}.Client(permuteproxy.Chain{Layers: []permuteproxy.Layer{{Scheme: "ssh"}}, Endpoint: permuteproxy.Endpoint{Address: "127.0.0.1:1"}})
@@ -140,7 +140,7 @@ func TestClientRefusesUnixgramAndListen(t *testing.T) {
 	if _, err := n.DialContext(ctx, "unixgram", "./test.sock"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 		t.Fatalf("DialContext(unixgram) = %v, want ErrUnsupported", err)
 	}
-	for _, network := range []string{"tcp", "unix"} {
+	for _, network := range []string{"cmd", "udp", "unixgram"} {
 		if _, err := n.Listen(ctx, network, "127.0.0.1:0"); !errors.Is(err, permuteproxy.ErrUnsupported) {
 			t.Fatalf("Listen(%s) = %v, want ErrUnsupported", network, err)
 		}

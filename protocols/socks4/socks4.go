@@ -32,6 +32,9 @@ func NewClient(opts permuteproxy.Options) (*permuteproxy.ClientFuncs, error) {
 			}
 			return dialer.DialContext(ctx, network, address)
 		},
+		Listen: func(ctx context.Context, inner permuteproxy.Transport, _, address string) (net.Listener, error) {
+			return listenBind(ctx, inner, username, address)
+		},
 	}, nil
 }
 
