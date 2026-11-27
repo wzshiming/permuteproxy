@@ -16,6 +16,46 @@ The following is the implementation of other proxy protocols
 - [SSH Proxy](https://github.com/wzshiming/sshproxy)
 - [Any Proxy](https://github.com/wzshiming/anyproxy)
 
+## Usage
+
+Serve a proxy and dial through it, each from a URI:
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/wzshiming/permuteproxy"
+	_ "github.com/wzshiming/permuteproxy/protocols/all"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// Server: serves until ctx ends.
+	go func() {
+		log.Fatal(permuteproxy.ListenAndServe(ctx, "socks5://user:pass@127.0.0.1:1080"))
+	}()
+
+	// Client: dials its targets through the proxy.
+	client, err := permuteproxy.NewClient("socks5://user:pass@127.0.0.1:1080")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	conn, err := client.DialContext(ctx, "tcp", "example.com:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+}
+```
+
+`NewServer` returns the server instead of running it, and `ClientEngine`, `ServerEngine` and `TransportEngine` build a chain over networks of your own.
+
 ## License
 
 Licensed under the MIT License. See [LICENSE](https://github.com/wzshiming/permuteproxy/blob/master/LICENSE) for the full license text.

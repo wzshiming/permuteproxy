@@ -18,4 +18,7 @@
 // datagrams each with its peer as udp carries. A network carries one plane; a layer
 // declares the planes it requires, provides and preserves, and a chain is valid
 // only where they fit.
+//
+// NewClient, NewServer and ListenAndServe build a proxy chain straight from its URI
+// with the zero engines, for a caller that injects no network of its own.
 package permuteproxy
