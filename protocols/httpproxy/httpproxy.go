@@ -3,7 +3,6 @@ package httpproxy
 import (
 	"context"
 	"net"
-	"net/http"
 	"time"
 
 	"github.com/wzshiming/httpproxy"
@@ -41,16 +40,12 @@ func NewServer(opts permuteproxy.Options) (*permuteproxy.ServerFuncs, error) {
 	}
 	return &permuteproxy.ServerFuncs{
 		Serve: func(ctx context.Context, ln net.Listener, upstream permuteproxy.Network) error {
-			srv := &http.Server{
-				Handler: &httpproxy.ProxyHandler{
-					ProxyDial:      upstream.DialContext,
-					Authentication: auth,
-					BytesPool:      pool.Bytes,
-				},
-				BaseContext: func(net.Listener) context.Context { return ctx },
-			}
-			defer srv.Close()
-			return srv.Serve(httpproxy.NewListenerCompatibilityReadDeadline(ln))
+			srv := httpproxy.NewServer()
+			srv.Context = ctx
+			srv.ProxyDial = upstream.DialContext
+			srv.Authentication = auth
+			srv.BytesPool = pool.Bytes
+			return srv.Serve(ln)
 		},
 	}, nil
 }

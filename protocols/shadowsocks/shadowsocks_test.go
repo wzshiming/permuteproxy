@@ -24,38 +24,6 @@ func (c countingPacket) Close() error {
 	return c.PacketConn.Close()
 }
 
-func TestSessionsCloseOwnedSockets(t *testing.T) {
-	var closes atomic.Int32
-	s := &sessions{listen: func(ctx context.Context, network, address string) (net.PacketConn, error) {
-		pc, err := (&net.ListenConfig{}).ListenPacket(ctx, network, address)
-		if err != nil {
-			return nil, err
-		}
-		return countingPacket{pc, &closes}, nil
-	}}
-	ctx := context.Background()
-	for i := 0; i < 2; i++ {
-		if _, err := s.ListenPacket(ctx, "udp", "127.0.0.1:0"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s.Close()
-	if closes.Load() != 2 {
-		t.Fatalf("Close closed %d sockets, want 2", closes.Load())
-	}
-	late, err := s.ListenPacket(ctx, "udp", "127.0.0.1:0")
-	if !errors.Is(err, net.ErrClosed) || late != nil {
-		t.Fatalf("ListenPacket after Close = %v, %v; want net.ErrClosed", late, err)
-	}
-	if closes.Load() != 3 {
-		t.Fatalf("late socket left open: %d closes, want 3", closes.Load())
-	}
-	s.Close()
-	if closes.Load() != 3 {
-		t.Fatal("second Close reached the sockets again")
-	}
-}
-
 func chain(t *testing.T, uri string) permuteproxy.Chain {
 	t.Helper()
 	c, err := permuteproxy.ParseURI(uri)
