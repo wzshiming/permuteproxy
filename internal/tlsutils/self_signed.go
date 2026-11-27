@@ -1,8 +1,9 @@
 package tlsutils
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -10,35 +11,38 @@ import (
 	"time"
 )
 
+// selfSignedLife is how long a self-signed certificate stays valid, longer than a listener is expected to run.
+const selfSignedLife = 10 * 365 * 24 * time.Hour
+
+// NewSelfSigned makes a config serving a fresh certificate that no CA vouches for, valid from now on.
 func NewSelfSigned() (*tls.Config, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	notAfter := time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC)
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 127))
+	if err != nil {
+		return nil, err
+	}
+	// The hour before now admits a peer whose clock runs behind.
+	notBefore := time.Now().Add(-time.Hour)
 	tmpl := x509.Certificate{
-		SerialNumber:          new(big.Int).SetInt64(0),
+		SerialNumber:          serial,
 		Subject:               pkix.Name{},
-		NotAfter:              notAfter,
-		NotBefore:             notAfter.AddDate(1000, 0, 0),
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		NotBefore:             notBefore,
+		NotAfter:              notBefore.Add(selfSignedLife),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-
-	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
+	certDER, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
 	if err != nil {
 		return nil, err
 	}
-	cert, err := x509.ParseCertificate(certDERBytes)
-	if err != nil {
-		return nil, err
-	}
-
 	return &tls.Config{
 		Certificates: []tls.Certificate{
 			{
-				Certificate: [][]byte{cert.Raw},
+				Certificate: [][]byte{certDER},
 				PrivateKey:  key,
 			},
 		},
