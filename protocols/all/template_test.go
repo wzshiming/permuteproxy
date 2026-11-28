@@ -123,7 +123,7 @@ func TestCommandTemplateChains(t *testing.T) {
 	nc := parse(t, "cmd:nc %h %p")
 
 	t.Run("socks5 over template", func(t *testing.T) {
-		base := newProbe(bundled{})
+		base := newProbe(permuteproxy.DefaultNetwork)
 		_, done := start(t, permuteproxy.ServerEngine{Base: base}, parse(t, "socks5://127.0.0.1:0"))
 		addr := waitBound(t, base, done)
 		hop1, err := permuteproxy.ClientEngine{}.Client(nc)
@@ -141,7 +141,7 @@ func TestCommandTemplateChains(t *testing.T) {
 	})
 
 	t.Run("template over ssh", func(t *testing.T) {
-		hop2, err := permuteproxy.ClientEngine{Base: sshExec(t, bundled{})}.Client(nc)
+		hop2, err := permuteproxy.ClientEngine{Base: sshExec(t, permuteproxy.DefaultNetwork)}.Client(nc)
 		if err != nil {
 			t.Fatal(err)
 		}

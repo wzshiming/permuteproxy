@@ -81,7 +81,7 @@ func main() {
 }
 ```
 
-`NewServer` returns the server instead of running it, and `ClientEngine`, `ServerEngine` and `TransportEngine` build a chain over networks of your own.
+`NewServer` returns the server instead of running it, and `ClientEngine`, `ServerEngine` and `TransportEngine` build a chain over networks of your own. A network an engine is not given is `DefaultNetwork`, which reaches every registered network by its name, as `DefaultNetwork.DialContext(ctx, "cmd", "ssh -W host:22 jump")` runs a command; use it directly, or wrap it as the base of an engine.
 
 ## License
 

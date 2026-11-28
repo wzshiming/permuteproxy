@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 
@@ -12,24 +13,24 @@ import (
 
 // TransportEngine builds adapter chains into transports, borrowing Base without ever closing it.
 type TransportEngine struct {
-	Base Network // reaches the endpoint; nil resolves each call by network name: the registered implementation, else ErrUnsupported
+	Base Network // reaches the endpoint; nil is DefaultNetwork
 }
 
 // ClientEngine builds proxy chains into clients, borrowing Base and Local without ever closing them.
 type ClientEngine struct {
-	Base  Network // reaches the endpoint; nil resolves each call as a nil TransportEngine.Base does
-	Local Network // what clients bind their own sockets through; nil resolves each call as a nil Base does
+	Base  Network // reaches the endpoint; nil is DefaultNetwork
+	Local Network // what clients bind their own sockets through; nil is DefaultNetwork
 }
 
 // ServerEngine builds proxy chains into servers, borrowing Base and Upstream without ever closing them.
 type ServerEngine struct {
-	Base     Network // reaches the endpoint; nil resolves each call as a nil TransportEngine.Base does
-	Upstream Network // what servers reach their targets through; nil resolves each call as a nil Base does
+	Base     Network // reaches the endpoint; nil is DefaultNetwork
+	Upstream Network // what servers reach their targets through; nil is DefaultNetwork
 }
 
 // build stacks r's layers from the innermost out to from over base.
 func build(base Network, r *resolved, from int) (Transport, error) {
-	n, layered := orByName(base), len(r.layers) > 0
+	n, layered := orDefault(base), len(r.layers) > 0
 	dial := bind(n, r.stream, r.packet, r.dial, layered)
 	// The layers get what the carrier offers once a lossy network took its datagrams, not what resolve assumed.
 	r.offer(dial.Planes())
@@ -85,7 +86,7 @@ func (e ClientEngine) Client(c Chain) (Network, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := r.specs[0].client(inner, borrowed{orByName(e.Local)}, c.Layers[0].Options.clone(), r.planes[0])
+	n, err := r.specs[0].client(inner, borrowed{orDefault(e.Local)}, c.Layers[0].Options.clone(), r.planes[0])
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", c.Layers[0].Scheme, err)
@@ -104,7 +105,7 @@ func (e ServerEngine) Server(c Chain) (Server, error) {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: serve over %v: %w", scheme, p, ErrUnsupported)
 	}
-	s, err := spec.server(inner, borrowed{orByName(e.Upstream)}, c.Layers[0].Options.clone())
+	s, err := spec.server(inner, borrowed{orDefault(e.Upstream)}, c.Layers[0].Options.clone())
 	if err != nil {
 		closeIf(inner)
 		return nil, fmt.Errorf("layer %q: %w", scheme, err)
@@ -148,41 +149,142 @@ func (b borrowed) Lossy(network string) bool {
 	return isLossy(b.Network, network)
 }
 
-// byName is the Network an engine's nil Base, Local or Upstream stands for, resolving each call by its network name.
-type byName struct{}
+// DefaultNetwork resolves each call by its network name to what is registered under it: the
+// network's implementation or, for a network declared by expression, as cmd-nc is, that
+// expression built for the call. It refuses any other name with ErrUnsupported. An engine's
+// nil Base, Local or Upstream stands for it, and it is the base to wrap for a caller that
+// reaches some names another way.
+var DefaultNetwork Network = defaultNetwork{}
 
-// resolve is the registered implementation of network's base, else a Network refusing every call.
-func (byName) resolve(network string) Network {
+// defaultNetwork is the type of DefaultNetwork; it holds nothing, as each call looks its network up in the registry.
+type defaultNetwork struct{}
+
+// resolve is the registered spec of network's base and its implementation, else a Network refusing every call.
+func (defaultNetwork) resolve(network string) (string, NetworkSpec, Network) {
 	base, _, _ := lookupBase(network)
-	if ns, _ := lookupNetwork(base); ns.Network != nil {
-		return ns.Network
+	ns, _ := lookupNetwork(base)
+	if ns.Network != nil {
+		return base, ns, ns.Network
 	}
-	return NetworkFuncs{}
+	return base, ns, NetworkFuncs{}
 }
 
-func (n byName) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	return n.resolve(network).DialContext(ctx, network, address)
+func (n defaultNetwork) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	base, ns, impl := n.resolve(network)
+	if ns.Dial == "" {
+		return impl.DialContext(ctx, network, address)
+	}
+	return dialOnce(ctx, n, Chain{Endpoint: Endpoint{Network: base, Address: address}}, ns.Plane)
 }
 
-func (n byName) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	return n.resolve(network).Listen(ctx, network, address)
+// Listen goes to the implementation unless the network declares a Listen expression, as a chain's own listening does.
+func (n defaultNetwork) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	base, ns, impl := n.resolve(network)
+	if ns.Listen == "" {
+		return impl.Listen(ctx, network, address)
+	}
+	t, err := TransportEngine{Base: n}.Transport(Chain{Endpoint: Endpoint{Network: base, Address: address}})
+	if err != nil {
+		return nil, err
+	}
+	ln, err := t.Listen(ctx)
+	if err != nil {
+		closeIf(t)
+		return nil, err
+	}
+	return listenerCloser{ln, closeBoth(ln, t)}, nil
 }
 
-func (n byName) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
-	return n.resolve(network).ListenPacket(ctx, network, address)
+func (n defaultNetwork) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	base, ns, impl := n.resolve(network)
+	if ns.Listen == "" {
+		return impl.ListenPacket(ctx, network, address)
+	}
+	t, err := TransportEngine{Base: n}.Transport(Chain{Endpoint: Endpoint{Network: base, Address: address}})
+	if err != nil {
+		return nil, err
+	}
+	pc, err := t.ListenPacket(ctx)
+	if err != nil {
+		closeIf(t)
+		return nil, err
+	}
+	return packetCloser{pc, closeBoth(pc, t)}, nil
 }
 
-// Lossy forwards what network's resolved implementation reports.
-func (n byName) Lossy(network string) bool {
-	return isLossy(n.resolve(network), network)
+// Lossy forwards what network's implementation reports, and reports a network whose Dial expression loses datagram boundaries.
+func (n defaultNetwork) Lossy(network string) bool {
+	_, ns, impl := n.resolve(network)
+	if ns.Dial != "" {
+		// RegisterNetwork has checked the expression.
+		x, _ := parseExpression(ns.Dial)
+		if _, lossy, _ := x.offers(); lossy&ns.Plane != 0 {
+			return true
+		}
+	}
+	return isLossy(impl, network)
 }
 
-func orByName(n Network) Network {
+func orDefault(n Network) Network {
 	if n != nil {
 		return n
 	}
-	return byName{}
+	return DefaultNetwork
 }
+
+// dialOnce builds c's adapter chain over base for one dial on plane; the conn's Close releases what was built.
+func dialOnce(ctx context.Context, base Network, c Chain, plane Plane) (net.Conn, error) {
+	t, err := TransportEngine{Base: base}.Transport(c)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := t.Dial(ctx, plane)
+	if err != nil {
+		closeIf(t)
+		return nil, err
+	}
+	if _, ok := t.(io.Closer); !ok {
+		return conn, nil
+	}
+	if pc, ok := conn.(net.PacketConn); ok {
+		return netutils.ConnWithProcess(packetConnCloser{conn, pc, closeBoth(conn, t)}, conn), nil
+	}
+	return netutils.ConnWithCloser(conn, closeBoth(conn, t)), nil
+}
+
+// closeBoth closes c and then what t owns, both once.
+func closeBoth(c io.Closer, t Transport) func() error {
+	return sync.OnceValue(func() error { return errors.Join(c.Close(), closeIf(t)) })
+}
+
+type listenerCloser struct {
+	net.Listener
+	close func() error
+}
+
+func (l listenerCloser) Close() error { return l.close() }
+
+type packetCloser struct {
+	net.PacketConn
+	close func() error
+}
+
+func (p packetCloser) Close() error { return p.close() }
+
+// packetConnCloser keeps a dialed datagram conn a net.PacketConn.
+type packetConnCloser struct {
+	net.Conn
+	packet net.PacketConn
+	close  func() error
+}
+
+func (p packetConnCloser) ReadFrom(b []byte) (int, net.Addr, error) { return p.packet.ReadFrom(b) }
+
+func (p packetConnCloser) WriteTo(b []byte, addr net.Addr) (int, error) {
+	return p.packet.WriteTo(b, addr)
+}
+
+func (p packetConnCloser) Close() error { return p.close() }
 
 // assembled is a Transport of functions that owns what close releases.
 type assembled struct {

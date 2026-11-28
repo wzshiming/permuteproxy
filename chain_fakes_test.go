@@ -52,7 +52,7 @@ func netName(n Network) string {
 	if l, ok := n.(*lossyNet); ok {
 		return l.name
 	}
-	if _, ok := n.(byName); ok {
+	if _, ok := n.(defaultNetwork); ok {
 		return "default"
 	}
 	return "?"

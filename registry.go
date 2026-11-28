@@ -60,7 +60,7 @@ func (s LayerSpec) accepts(key string) bool {
 type NetworkSpec struct {
 	Plane       Plane       // Stream or Packet, the one plane the network carries; left zero with Dial, which derives it
 	AddressKind AddressKind // how a URI writes the network's address
-	Network     Network     // its implementation, what an engine's nil Base, Local or Upstream resolves the name to; nil leaves it unimplemented
+	Network     Network     // its implementation, what DefaultNetwork resolves the name to; nil leaves it unimplemented
 	Dial        string      // expression that dials this network through layers and another network, its values quoted for one parse, so a command parsing them again (ssh, sh -c) must not take a path %h
 	Listen      string      // optional expression for listening
 	// NewClient, when set, makes a chain of this network alone a client, as nc:ssh jump is: it
