@@ -22,6 +22,10 @@
 // client as well, as the command lines cmd:ssh -W %h:%p jump of protocols/command and
 // nc:ssh jump of protocols/netcat are.
 //
+// An engine's nil network is DefaultNetwork, which resolves each call by its network name
+// to what is registered under it; it is exported for a caller that needs the registered
+// networks as one Network, to dial and listen through or to wrap as a base.
+//
 // NewClient, NewServer and ListenAndServe build a proxy chain straight from its URI
 // with the zero engines, for a caller that injects no network of its own.
 package permuteproxy

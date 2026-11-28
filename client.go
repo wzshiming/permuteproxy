@@ -2,7 +2,6 @@ package permuteproxy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -153,7 +152,7 @@ func (e ClientEngine) network(c Chain) (Network, error) {
 		return nil, err
 	}
 	ns, _ := lookupNetwork(c.Endpoint.Network)
-	n, err := ns.NewClient(borrowed{orByName(e.Base)}, c.Endpoint.Address)
+	n, err := ns.NewClient(borrowed{orDefault(e.Base)}, c.Endpoint.Address)
 	switch {
 	case err != nil:
 		return nil, fmt.Errorf("network %q: %w", c.Endpoint.Network, reject(nil, err))
@@ -256,14 +255,5 @@ func (d derivation) dial(ctx context.Context, a *assembledNetwork, address strin
 	if err != nil {
 		return nil, fmt.Errorf("dial %s %s: %w", d.network, address, err)
 	}
-	tr, err := TransportEngine{Base: a}.Transport(d.x.over(text))
-	if err != nil {
-		return nil, err
-	}
-	conn, err := tr.Dial(ctx, d.plane)
-	if err != nil {
-		closeIf(tr)
-		return nil, err
-	}
-	return netutils.ConnWithCloser(conn, sync.OnceValue(func() error { return errors.Join(conn.Close(), closeIf(tr)) })), nil
+	return dialOnce(ctx, a, d.x.over(text), d.plane)
 }
